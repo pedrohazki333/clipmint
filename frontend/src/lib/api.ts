@@ -1,6 +1,17 @@
 import axios from "axios";
 import type { Job, JobDetail, Clip, CreateJobPayload } from "./types";
 
+/** Extrai uma mensagem legível de um erro de API (detail do FastAPI ou fallback). */
+export function getApiErrorMessage(err: unknown, fallback: string): string {
+  if (axios.isAxiosError(err)) {
+    const detail = err.response?.data?.detail;
+    if (typeof detail === "string") return detail;
+    // Erros de validação do FastAPI vêm como lista de {msg, loc, ...}
+    if (Array.isArray(detail) && detail[0]?.msg) return detail[0].msg;
+  }
+  return fallback;
+}
+
 const api = axios.create({
   baseURL: "/api",
   headers: { "Content-Type": "application/json" },

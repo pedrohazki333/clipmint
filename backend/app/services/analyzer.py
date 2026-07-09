@@ -23,9 +23,6 @@ from prompt_engine.prompt_builder import PromptBuilder
 
 logger = logging.getLogger(__name__)
 
-CLAUDE_MODEL = "claude-sonnet-4-6"
-MAX_TOKENS = 4096
-
 
 @dataclass
 class ViralClip:
@@ -185,13 +182,18 @@ async def analyze_virality(
     client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
     message = await client.messages.create(
-        model=CLAUDE_MODEL,
-        max_tokens=MAX_TOKENS,
+        model=settings.claude_model,
+        max_tokens=settings.claude_max_tokens,
         system=system_prompt,
         messages=[{"role": "user", "content": user_prompt}],
     )
 
-    raw_response = message.content[0].text
+    text_blocks = [b.text for b in message.content if b.type == "text"]
+    if not text_blocks:
+        raise RuntimeError(
+            f"Claude returned no text content (stop_reason={message.stop_reason})"
+        )
+    raw_response = text_blocks[0]
     logger.info(f"[{job_id}] Claude response received ({len(raw_response)} chars)")
 
     try:
@@ -224,11 +226,18 @@ async def analyze_virality(
 
     logger.info(f"[{job_id}] {len(filtered)} clips passed threshold filter")
 
-    # Divide clips longos
+    # Divide clips longos — partes que ficarem abaixo da duração mínima são descartadas
     final_clips_data: List[dict] = []
     for c in filtered:
-        parts = _split_clip(c, words, max_dur)
-        final_clips_data.extend(parts)
+        for part in _split_clip(c, words, max_dur):
+            part_dur = part["end"] - part["start"]
+            if part_dur < min_dur:
+                logger.debug(
+                    f"[{job_id}] Split part [{part['start']:.1f}-{part['end']:.1f}] "
+                    f"skipped: duration {part_dur:.1f}s < min {min_dur}s"
+                )
+                continue
+            final_clips_data.append(part)
 
     # Converte para dataclasses
     viral_clips: List[ViralClip] = []

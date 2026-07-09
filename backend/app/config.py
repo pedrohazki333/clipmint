@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     assemblyai_api_key: str = ""
     anthropic_api_key: str = ""
 
+    # Claude
+    claude_model: str = "claude-sonnet-4-6"
+    claude_max_tokens: int = 8192
+
     # Storage
     storage_dir: str = "./storage"
 

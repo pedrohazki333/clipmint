@@ -11,6 +11,7 @@ O pipeline nunca crasha silenciosamente — erros são capturados e persistidos.
 
 import json
 import logging
+from dataclasses import asdict
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -101,9 +102,7 @@ async def run_pipeline(job_id: str) -> None:
         # ── 4. Análise de viralidade ──────────────────────────────────────────
         await _update_job_status(job_id, "analyzing")
 
-        # Carrega palavras do JSON salvo
-        with open(transcription.words_json_path, "r", encoding="utf-8") as f:
-            words = json.load(f)
+        words = [asdict(w) for w in transcription.words]
 
         analysis = await analyze_virality(
             job_id=job_id,

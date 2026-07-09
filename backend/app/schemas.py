@@ -1,13 +1,26 @@
+import re
 from datetime import datetime
 from typing import Optional, List, Literal
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, field_validator
+
+_YOUTUBE_URL_RE = re.compile(
+    r"^https?://(www\.|m\.)?(youtube\.com/(watch\?|shorts/|live/)|youtu\.be/)"
+)
 
 
 # ─── Job ───────────────────────────────────────────────────────────────────────
 
 class JobCreate(BaseModel):
     youtube_url: str
-    subtitle_mode: str = "word_highlight"  # word_highlight | traditional | none
+    subtitle_mode: Literal["word_highlight", "traditional", "none"] = "word_highlight"
+
+    @field_validator("youtube_url")
+    @classmethod
+    def validate_youtube_url(cls, v: str) -> str:
+        v = v.strip()
+        if not _YOUTUBE_URL_RE.match(v):
+            raise ValueError("URL inválida: forneça um link do YouTube (youtube.com ou youtu.be)")
+        return v
 
 
 class JobResponse(BaseModel):

@@ -1,23 +1,23 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import type { Job, SubtitleMode } from "@/lib/types";
-import { createJob, listJobs } from "@/lib/api";
+import { createJob, listJobs, getApiErrorMessage } from "@/lib/api";
 import UrlInput from "@/components/UrlInput";
 import JobCard from "@/components/JobCard";
+
+const ACTIVE_POLLING_INTERVAL = 5000; // ms — só roda enquanto houver job em andamento
+const TERMINAL_STATUSES = new Set(["done", "error"]);
 
 export default function Home() {
   const router = useRouter();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [fetchError, setFetchError] = useState("");
+  const [submitError, setSubmitError] = useState("");
 
-  useEffect(() => {
-    fetchJobs();
-  }, []);
-
-  async function fetchJobs() {
+  const fetchJobs = useCallback(async () => {
     try {
       const data = await listJobs();
       setJobs(data);
@@ -25,16 +25,28 @@ export default function Home() {
     } catch {
       setFetchError("Não foi possível carregar os jobs. Verifique se o backend está rodando.");
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    fetchJobs();
+  }, [fetchJobs]);
+
+  // Atualiza a lista automaticamente enquanto houver jobs em andamento
+  const hasActiveJobs = jobs.some((job) => !TERMINAL_STATUSES.has(job.status));
+  useEffect(() => {
+    if (!hasActiveJobs) return;
+    const interval = setInterval(fetchJobs, ACTIVE_POLLING_INTERVAL);
+    return () => clearInterval(interval);
+  }, [hasActiveJobs, fetchJobs]);
 
   async function handleSubmit(url: string, subtitleMode: SubtitleMode) {
     setIsSubmitting(true);
+    setSubmitError("");
     try {
       const job = await createJob({ youtube_url: url, subtitle_mode: subtitleMode });
       router.push(`/jobs/${job.id}`);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Erro ao criar job.";
-      alert(msg);
+      setSubmitError(getApiErrorMessage(err, "Erro ao criar job. Tente novamente."));
     } finally {
       setIsSubmitting(false);
     }
@@ -49,6 +61,11 @@ export default function Home() {
           Cole a URL de um vídeo do YouTube para extrair os melhores trechos automaticamente.
         </p>
         <UrlInput onSubmit={handleSubmit} isLoading={isSubmitting} />
+        {submitError && (
+          <p className="mt-3 text-sm text-red-400 bg-red-900/20 rounded px-3 py-2">
+            {submitError}
+          </p>
+        )}
       </div>
 
       {/* Jobs list */}

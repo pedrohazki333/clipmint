@@ -115,6 +115,8 @@ All settings live in `.env` (see `.env.example`):
 |---|---|---|
 | `ASSEMBLYAI_API_KEY` | — | AssemblyAI API key |
 | `ANTHROPIC_API_KEY` | — | Anthropic API key |
+| `CLAUDE_MODEL` | `claude-sonnet-4-6` | Claude model used for viral analysis |
+| `CLAUDE_MAX_TOKENS` | `8192` | Max output tokens for the analysis response |
 | `VIRALITY_THRESHOLD` | `7.0` | Minimum score (0–10) for a segment to become a clip |
 | `MIN_CLIP_DURATION` | `15` | Minimum clip length in seconds |
 | `MAX_CLIP_DURATION` | `90` | Maximum clip length — longer segments get split |

@@ -1,7 +1,7 @@
+import asyncio
 import json
 import logging
 from dataclasses import dataclass
-from pathlib import Path
 from typing import List, Optional
 
 import assemblyai as aai
@@ -48,13 +48,8 @@ async def transcribe_audio(job_id: str, audio_path: str) -> TranscriptionResult:
 
     transcriber = aai.Transcriber(config=config)
 
-    # AssemblyAI SDK é síncrono — executar em thread pool para não bloquear o event loop
-    import asyncio
-    loop = asyncio.get_event_loop()
-    transcript = await loop.run_in_executor(
-        None,
-        lambda: transcriber.transcribe(audio_path),
-    )
+    # AssemblyAI SDK é síncrono — executar em thread separada para não bloquear o event loop
+    transcript = await asyncio.to_thread(transcriber.transcribe, audio_path)
 
     if transcript.status == aai.TranscriptStatus.error:
         raise RuntimeError(f"AssemblyAI error: {transcript.error}")

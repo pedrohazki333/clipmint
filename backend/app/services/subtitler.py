@@ -10,10 +10,7 @@ Modos:
 """
 
 import logging
-from pathlib import Path
 from typing import List
-
-from app.utils.ffmpeg import run_ffmpeg
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +18,8 @@ logger = logging.getLogger(__name__)
 
 # Fonte principal das legendas
 FONT_NAME = "Arial"
-FONT_SIZE_WORD = 42       # word_highlight mode
-FONT_SIZE_TRADITIONAL = 26
+FONT_SIZE_WORD = 84       # word_highlight mode — grande, estilo TikTok
+FONT_SIZE_TRADITIONAL = 48
 
 # Cores no formato ASS (&HAABBGGRR — alpha, blue, green, red)
 COLOR_WHITE = "&H00FFFFFF"
@@ -30,8 +27,14 @@ COLOR_YELLOW = "&H0000FFFF"
 COLOR_BLACK_OUTLINE = "&H00000000"
 COLOR_SHADOW = "&H80000000"
 
-# Posição vertical (% do height, 0=topo, 100=base) — próximo à base
-VERTICAL_MARGIN = 90  # pixels da borda inferior
+# Margem vertical em pixels a partir da borda inferior (PlayResY=1920)
+# word_highlight fica no terço inferior alto (~33% da altura), zona segura
+# do TikTok/Reels — acima dos botões de UI e da descrição
+MARGIN_V_WORD = 640
+MARGIN_V_TRADITIONAL = 200
+
+# Quanto tempo (s) a última palavra da linha permanece na tela após ser falada
+LINE_HOLD = 0.30
 
 
 def _ass_time(seconds: float) -> str:
@@ -53,9 +56,8 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: WordHighlight,{FONT_NAME},{FONT_SIZE_WORD},{COLOR_WHITE},&H000000FF,{COLOR_BLACK_OUTLINE},{COLOR_SHADOW},-1,0,0,0,100,100,0,0,1,3,1,2,20,20,{VERTICAL_MARGIN},1
-Style: WordActive,{FONT_NAME},{FONT_SIZE_WORD},{COLOR_YELLOW},&H000000FF,{COLOR_BLACK_OUTLINE},{COLOR_SHADOW},-1,0,0,0,100,100,0,0,1,3,1,2,20,20,{VERTICAL_MARGIN},1
-Style: Traditional,{FONT_NAME},{FONT_SIZE_TRADITIONAL},{COLOR_WHITE},&H000000FF,{COLOR_BLACK_OUTLINE},{COLOR_SHADOW},-1,0,0,0,100,100,0,0,1,3,1,2,20,20,{VERTICAL_MARGIN},1
+Style: WordHighlight,{FONT_NAME},{FONT_SIZE_WORD},{COLOR_WHITE},&H000000FF,{COLOR_BLACK_OUTLINE},{COLOR_SHADOW},-1,0,0,0,100,100,0,0,1,5,2,2,40,40,{MARGIN_V_WORD},1
+Style: Traditional,{FONT_NAME},{FONT_SIZE_TRADITIONAL},{COLOR_WHITE},&H000000FF,{COLOR_BLACK_OUTLINE},{COLOR_SHADOW},-1,0,0,0,100,100,0,0,1,4,1,2,40,40,{MARGIN_V_TRADITIONAL},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -69,42 +71,52 @@ def _generate_word_highlight_events(
     """
     Gera eventos ASS no modo word_highlight (karaokê).
 
-    Para cada palavra, mostra a linha completa com a palavra atual em amarelo.
-    Agrupa palavras em linhas de até 5 palavras.
+    Para cada palavra, mostra a linha completa com a palavra atual em amarelo
+    e levemente ampliada. Os eventos são contínuos: cada um dura do início da
+    palavra ativa até o início da próxima — a linha nunca pisca entre palavras,
+    mesmo com pausas na fala. A última palavra segura a linha por LINE_HOLD
+    (limitado ao início da linha seguinte).
     """
     events = []
-    LINE_SIZE = 5
+    LINE_SIZE = 3  # poucas palavras por linha — fonte grande sem quebrar
 
     # Agrupa palavras em linhas
     lines: List[List[dict]] = []
     for i in range(0, len(words), LINE_SIZE):
         lines.append(words[i:i + LINE_SIZE])
 
-    for line_words in lines:
-        line_start = line_words[0]["start"] - start_offset
-        line_end = line_words[-1]["end"] - start_offset
-
-        if line_start < 0:
-            continue
+    for line_idx, line_words in enumerate(lines):
+        next_line_start = (
+            lines[line_idx + 1][0]["start"] - start_offset
+            if line_idx + 1 < len(lines)
+            else None
+        )
 
         for active_idx, active_word in enumerate(line_words):
-            word_start = active_word["start"] - start_offset
-            word_end = active_word["end"] - start_offset
+            event_start = max(0.0, active_word["start"] - start_offset)
 
-            if word_start < 0:
+            # Timing contínuo: o evento vai até a próxima palavra assumir
+            if active_idx + 1 < len(line_words):
+                event_end = line_words[active_idx + 1]["start"] - start_offset
+            else:
+                event_end = active_word["end"] - start_offset + LINE_HOLD
+                if next_line_start is not None:
+                    event_end = min(event_end, next_line_start)
+
+            if event_end <= event_start:
                 continue
 
-            # Monta texto da linha com a palavra ativa em amarelo
+            # Palavra ativa em amarelo, ampliada; {\r} restaura o estilo base
             parts = []
             for i, w in enumerate(line_words):
                 if i == active_idx:
-                    parts.append(r"{\c&H0000FFFF&}" + w["text"] + r"{\c&H00FFFFFF&}")
+                    parts.append(r"{\c&H0000FFFF&\fscx112\fscy112}" + w["text"] + r"{\r}")
                 else:
                     parts.append(w["text"])
             line_text = " ".join(parts)
 
             events.append(
-                f"Dialogue: 0,{_ass_time(word_start)},{_ass_time(word_end)},"
+                f"Dialogue: 0,{_ass_time(event_start)},{_ass_time(event_end)},"
                 f"WordHighlight,,0,0,0,,{line_text}"
             )
 
@@ -183,27 +195,3 @@ def generate_ass_subtitles(
         f.write(content)
 
     logger.info(f"Subtitles written to: {output_path} ({len(events)} events)")
-
-
-async def burn_subtitles(
-    input_video: str,
-    ass_path: str,
-    output_video: str,
-) -> None:
-    """
-    Queima as legendas .ASS no vídeo usando FFmpeg.
-
-    Args:
-        input_video: Caminho do vídeo sem legenda.
-        ass_path: Caminho do arquivo .ASS.
-        output_video: Caminho de saída com legenda queimada.
-    """
-    await run_ffmpeg(
-        "-i", input_video,
-        "-vf", f"ass={ass_path}",
-        "-c:a", "copy",
-        "-preset", "fast",
-        "-crf", "23",
-        output_video,
-        description=f"Burning subtitles from {ass_path}",
-    )

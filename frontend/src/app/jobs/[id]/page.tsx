@@ -92,7 +92,12 @@ export default function JobPage() {
 
         {/* Pipeline status */}
         <div className="pt-2">
-          <JobStatus status={job.status} errorMessage={job.error_message} />
+          <JobStatus
+            status={job.status}
+            errorMessage={job.error_message}
+            clipsReady={readyClips.length}
+            clipsTotal={allClips.length}
+          />
         </div>
 
         {job.status === "done" && (
@@ -108,7 +113,7 @@ export default function JobPage() {
         <div>
           <h2 className="text-lg font-semibold text-gray-300 mb-4">Clips gerados</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {allClips
+            {[...allClips]
               .sort((a, b) => b.virality_score - a.virality_score)
               .map((clip) => (
                 <ClipCard key={clip.id} clip={clip} />
