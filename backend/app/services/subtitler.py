@@ -27,10 +27,10 @@ COLOR_YELLOW = "&H0000FFFF"
 COLOR_BLACK_OUTLINE = "&H00000000"
 COLOR_SHADOW = "&H80000000"
 
-# Margem vertical em pixels a partir da borda inferior (PlayResY=1920)
-# word_highlight fica no terço inferior alto (~33% da altura), zona segura
-# do TikTok/Reels — acima dos botões de UI e da descrição
-MARGIN_V_WORD = 640
+# Margem vertical em pixels a partir da borda inferior (PlayResY=1920).
+# No layout capa+vídeo (vídeo ocupa 768–1920px), MarginV 440 posiciona a
+# legenda a ~62% da área do vídeo — abaixo do rosto, acima da UI do TikTok
+MARGIN_V_WORD = 440
 MARGIN_V_TRADITIONAL = 200
 
 # Quanto tempo (s) a última palavra da linha permanece na tela após ser falada

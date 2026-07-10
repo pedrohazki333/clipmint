@@ -1,32 +1,40 @@
 """
-Serviço de corte e crop de vídeo usando FFmpeg.
+Serviço de corte e composição de clips usando FFmpeg.
 
-Responsável por:
-  1. Cortar o segmento com seek preciso (input seeking é frame-accurate em re-encode).
-  2. Aplicar crop 9:16 dinâmico que acompanha o rosto (face tracker via sendcmd),
-     com fallback para crop estático centralizado.
-  3. Escalar para 1080x1920 com filtro lanczos.
-  4. Queimar legendas ASS — tudo em uma única passagem FFmpeg.
+Layout final 1080x1920:
+  - Capa estática no topo (print de expressão marcante — layout.generate_cover)
+  - Banner de título (pílula vermelha — layout.generate_banner) sobre a emenda
+  - Vídeo com crop dinâmico (face tracking) rodando embaixo, com legendas
 
-Filtergraph: [sendcmd →] crop → scale:lanczos → ass
-Resolução de saída: 1080x1920 (Full HD vertical).
+Filtergraph: [sendcmd →] crop → scale → pad(canvas) → overlay(capa)
+             → overlay(banner) → ass
+Tudo em uma única passagem FFmpeg.
 """
 
+import asyncio
 import logging
 from pathlib import Path
 
 from app.config import settings
 from app.services.face_tracker import track_faces, SNAP_THRESHOLD
+from app.services.layout import generate_banner, generate_cover, COVER_H
 from app.services.subtitler import generate_ass_subtitles
+from app.services.watermark import detect_brand_regions, user_watermark_path
 from app.utils.ffmpeg import run_ffmpeg, get_video_dimensions, probe_video
 
 logger = logging.getLogger(__name__)
 
-OUTPUT_WIDTH = 1080
-OUTPUT_HEIGHT = 1920
+CANVAS_W = 1080
+CANVAS_H = 1920
 
-# Passo de interpolação dos comandos de crop (s) — 1/30s = atualização por frame,
-# cada frame do vídeo recebe sua própria posição (deltas de ~1px, movimento contínuo)
+# Área do vídeo (parte inferior do canvas); a capa ocupa o topo
+VIDEO_W = CANVAS_W
+VIDEO_H = CANVAS_H - COVER_H  # 1152
+
+# Centro vertical do banner fica exatamente na emenda capa/vídeo
+BANNER_CENTER_Y = COVER_H
+
+# Passo de interpolação dos comandos de crop (s) — 1/30s = atualização por frame
 TRACK_CMD_INTERVAL = 1 / 30
 
 
@@ -38,10 +46,11 @@ async def cut_and_crop(
     end_time: float,
     words: list[dict],
     subtitle_mode: str,
+    banner_text: str = "",
 ) -> tuple[str, int]:
     """
-    Corta o segmento do vídeo, aplica crop 9:16 com face tracking e queima
-    legendas em uma passagem.
+    Corta o segmento e monta o clip final: capa + banner + vídeo com face
+    tracking e legendas.
 
     Args:
         job_id: ID do job para logging e organização dos arquivos.
@@ -51,6 +60,7 @@ async def cut_and_crop(
         end_time: Fim do clip em segundos.
         words: Lista de palavras com timestamps para geração de legendas.
         subtitle_mode: 'word_highlight', 'traditional', ou 'none'.
+        banner_text: Título exibido na pílula vermelha (vazio = sem banner).
 
     Returns:
         Tupla (output_path, file_size_bytes).
@@ -64,18 +74,37 @@ async def cut_and_crop(
         f"[{start_time:.1f}s–{end_time:.1f}s] ({duration:.1f}s)"
     )
 
-    # Face tracking: trajetória do rosto no segmento para posicionar o crop
-    tracking = await track_faces(video_path, start_time, end_time)
+    # Detecta marcas de terceiros primeiro (a capa precisa das regiões);
+    # face tracking + capa rodam em paralelo na sequência
+    watermark = user_watermark_path()
+    brand = await asyncio.to_thread(
+        detect_brand_regions, video_path, start_time, end_time
+    )
+    qr_regions = brand["qr"]
+    all_regions = brand["qr"] + brand["static"]
+
+    cover_path = str(clip_dir / f"{clip_id}_cover.png")
+    tracking, cover_method = await asyncio.gather(
+        track_faces(video_path, start_time, end_time),
+        asyncio.to_thread(
+            generate_cover, video_path, start_time, end_time, cover_path,
+            watermark_path=watermark,
+            qr_regions=brand["qr"],
+            static_regions=brand["static"],
+        ),
+    )
     logger.info(
         f"[{job_id}] Face tracking: method={tracking['method']}, "
         f"keyframes={len(tracking.get('keyframes', []))}, "
-        f"confidence={tracking['confidence']:.0%}"
+        f"confidence={tracking['confidence']:.0%} | cover: {cover_method} | "
+        f"QR: {len(qr_regions)} | static marks: {len(brand['static'])} | "
+        f"watermark: {'yes' if watermark else 'no'}"
     )
 
     src_width, src_height = await get_video_dimensions(video_path)
     logger.info(f"[{job_id}] Source: {src_width}x{src_height}")
 
-    crop_w, crop_h = _crop_dimensions(src_width, src_height)
+    crop_w, crop_h = _crop_dimensions(src_width, src_height, VIDEO_W / VIDEO_H)
     cy = _clamp(
         int(src_height * tracking["center_y"] - crop_h / 2), 0, src_height - crop_h
     )
@@ -84,9 +113,7 @@ async def cut_and_crop(
     if tracking["method"] == "mediapipe" and len(keyframes) >= 2:
         # Crop dinâmico: sendcmd atualiza o x do crop ao longo do tempo
         cmd_path = str(clip_dir / f"{clip_id}_track.cmd")
-        x0 = _write_track_commands(
-            cmd_path, keyframes, duration, src_width, crop_w
-        )
+        x0 = _write_track_commands(cmd_path, keyframes, duration, src_width, crop_w)
         crop_filter = (
             f"sendcmd=f={_escape_filter_path(cmd_path)},"
             f"crop@dyn={crop_w}:{crop_h}:{x0}:{cy}"
@@ -95,9 +122,77 @@ async def cut_and_crop(
         x0 = _crop_x(tracking["center_x"], src_width, crop_w)
         crop_filter = f"crop={crop_w}:{crop_h}:{x0}:{cy}"
 
-    scale_filter = f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:flags=lanczos"
+    # ── Monta o filter_complex ────────────────────────────────────────────────
+    inputs = ["-ss", str(start_time), "-i", video_path]
+    n_inputs = 1
+    parts: list[str] = []
 
-    # Monta filtergraph — ordem correta: crop → scale → legendas
+    # Neutralização de marcas de terceiros ANTES do crop (coordenadas da
+    # fonte): delogo borra QRs e logos de canal; a logo do usuário é
+    # sobreposta nos QRs. Como acontece pré-crop, acompanha o face tracking.
+    src_label = "0:v"
+    if all_regions:
+        delogos = ",".join(
+            _delogo_filter(x, y, w, h, src_width, src_height)
+            for (x, y, w, h) in all_regions
+        )
+        parts.append(f"[{src_label}]{delogos}[clean]")
+        src_label = "clean"
+
+        if watermark and qr_regions:
+            from PIL import Image
+
+            logo_w, logo_h = Image.open(watermark).size
+            wm_idx = n_inputs
+            inputs += ["-i", watermark]
+            n_inputs += 1
+
+            wm_labels = [f"wm{i}" for i in range(len(qr_regions))]
+            if len(qr_regions) > 1:
+                parts.append(
+                    f"[{wm_idx}:v]split={len(qr_regions)}"
+                    + "".join(f"[{l}]" for l in wm_labels)
+                )
+            else:
+                parts.append(f"[{wm_idx}:v]null[{wm_labels[0]}]")
+
+            for i, (x, y, w, h) in enumerate(qr_regions):
+                scale = min(w * 0.95 / logo_w, h * 0.95 / logo_h)
+                lw = max(2, int(logo_w * scale) // 2 * 2)
+                lh = max(2, int(logo_h * scale) // 2 * 2)
+                ox = x + (w - lw) // 2
+                oy = y + (h - lh) // 2
+                parts.append(f"[{wm_labels[i]}]scale={lw}:{lh}[ws{i}]")
+                parts.append(f"[{src_label}][ws{i}]overlay={ox}:{oy}[qr{i}]")
+                src_label = f"qr{i}"
+
+    # vídeo → área inferior do canvas (pad preserva fps/timing do vídeo)
+    cover_idx = n_inputs
+    inputs += ["-i", cover_path]
+    n_inputs += 1
+    parts.append(
+        f"[{src_label}]{crop_filter},"
+        f"scale={VIDEO_W}:{VIDEO_H}:flags=lanczos,"
+        f"pad={CANVAS_W}:{CANVAS_H}:0:{COVER_H}:black[base]"
+    )
+    parts.append(f"[base][{cover_idx}:v]overlay=0:0[withcover]")
+    last_label = "withcover"
+
+    if banner_text.strip():
+        banner_path = str(clip_dir / f"{clip_id}_banner.png")
+        _, banner_h = await asyncio.to_thread(
+            generate_banner, banner_text, banner_path
+        )
+        banner_y = BANNER_CENTER_Y - banner_h // 2
+        banner_idx = n_inputs
+        inputs += ["-i", banner_path]
+        n_inputs += 1
+        parts.append(
+            f"[{last_label}][{banner_idx}:v]"
+            f"overlay=(main_w-overlay_w)/2:{banner_y}[withbanner]"
+        )
+        last_label = "withbanner"
+
     if subtitle_mode != "none":
         ass_path = str(clip_dir / f"{clip_id}.ass")
         generate_ass_subtitles(
@@ -107,20 +202,22 @@ async def cut_and_crop(
             subtitle_mode=subtitle_mode,
             output_path=ass_path,
         )
-        vf = f"{crop_filter},{scale_filter},ass={_escape_filter_path(ass_path)}"
+        parts.append(f"[{last_label}]ass={_escape_filter_path(ass_path)}[outv]")
     else:
-        vf = f"{crop_filter},{scale_filter}"
+        parts.append(f"[{last_label}]null[outv]")
+
+    chain = ";".join(parts)
 
     final_path = str(clip_dir / f"{clip_id}.mp4")
 
     # Input seeking (-ss antes de -i) é frame-accurate com re-encode e zera o
-    # timestamp do filtergraph — os keyframes do tracking (relativos ao início
-    # do clip) casam 1:1 com o tempo visto pelo sendcmd.
+    # timestamp do filtergraph — os keyframes do tracking casam 1:1 com o sendcmd.
     await run_ffmpeg(
-        "-ss", str(start_time),
-        "-i", video_path,
+        *inputs,
         "-t", str(duration),
-        "-vf", vf,
+        "-filter_complex", chain,
+        "-map", "[outv]",
+        "-map", "0:a?",
         "-c:v", "libx264",
         "-preset", "slow",
         "-crf", "18",
@@ -190,9 +287,22 @@ def _interp(keyframes: list[tuple[float, float]], t: float) -> float:
     return keyframes[-1][1]
 
 
-def _crop_dimensions(src_width: int, src_height: int) -> tuple[int, int]:
-    """Maior área 9:16 que cabe no vídeo fonte (largura par para o x264)."""
-    target_ratio = 9 / 16
+def _delogo_filter(
+    x: int, y: int, w: int, h: int, src_w: int, src_h: int
+) -> str:
+    """Filtro delogo com a região clampada aos limites exigidos pelo FFmpeg
+    (a região precisa ficar estritamente dentro do frame)."""
+    x = max(1, min(x, src_w - 3))
+    y = max(1, min(y, src_h - 3))
+    w = max(2, min(w, src_w - x - 1))
+    h = max(2, min(h, src_h - y - 1))
+    return f"delogo=x={x}:y={y}:w={w}:h={h}"
+
+
+def _crop_dimensions(
+    src_width: int, src_height: int, target_ratio: float
+) -> tuple[int, int]:
+    """Maior área com a proporção alvo que cabe no vídeo fonte (dimensões pares)."""
     if src_width / src_height > target_ratio:
         crop_h = src_height
         crop_w = int(src_height * target_ratio)

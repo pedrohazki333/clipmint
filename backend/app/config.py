@@ -39,9 +39,13 @@ class Settings(BaseSettings):
     def transcripts_dir(self) -> Path:
         return Path(self.storage_dir) / "transcripts"
 
+    @property
+    def branding_dir(self) -> Path:
+        return Path(self.storage_dir) / "branding"
+
     def ensure_dirs(self) -> None:
         """Cria os diretórios de storage se não existirem."""
-        for d in [self.downloads_dir, self.clips_dir, self.transcripts_dir]:
+        for d in [self.downloads_dir, self.clips_dir, self.transcripts_dir, self.branding_dir]:
             d.mkdir(parents=True, exist_ok=True)
 
 

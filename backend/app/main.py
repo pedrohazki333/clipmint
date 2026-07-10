@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.database import init_db
-from app.routers import jobs, clips
+from app.routers import jobs, clips, settings as settings_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -43,6 +43,7 @@ app.add_middleware(
 
 app.include_router(jobs.router, prefix="/api")
 app.include_router(clips.router, prefix="/api")
+app.include_router(settings_router.router, prefix="/api")
 
 
 @app.get("/health")

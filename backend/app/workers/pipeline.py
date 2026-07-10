@@ -167,6 +167,7 @@ async def run_pipeline(job_id: str) -> None:
                     end_time=vc.end,
                     words=words,
                     subtitle_mode=subtitle_mode,
+                    banner_text=vc.hook or vc.suggested_title or "",
                 )
 
                 async with AsyncSessionLocal() as db:

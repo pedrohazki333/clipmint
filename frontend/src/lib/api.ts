@@ -41,6 +41,31 @@ export function getDownloadUrl(clipId: string): string {
   return `/api/clips/${clipId}/download`;
 }
 
+export async function uploadWatermark(file: File): Promise<void> {
+  const form = new FormData();
+  form.append("file", file);
+  await api.post("/settings/watermark", form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+}
+
+export async function deleteWatermark(): Promise<void> {
+  await api.delete("/settings/watermark");
+}
+
+export async function hasWatermark(): Promise<boolean> {
+  try {
+    await api.get("/settings/watermark", { responseType: "blob" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function getWatermarkUrl(): string {
+  return "/api/settings/watermark";
+}
+
 export async function validateClip(
   clipId: string,
   payload: { performance: "viral" | "muito_bom" | "bom"; aprendizado: string; views?: number }

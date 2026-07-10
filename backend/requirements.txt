@@ -14,3 +14,4 @@ mediapipe==0.10.18
 opencv-python-headless==4.10.0.84
 python-multipart==0.0.19
 aiofiles==24.1.0
+pillow>=10.4.0

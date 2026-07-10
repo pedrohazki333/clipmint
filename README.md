@@ -20,7 +20,7 @@ queued → downloading → transcribing → analyzing → clipping → done (or 
 1. **Download** — `yt-dlp` fetches the video and extracts the audio track.
 2. **Transcribe** — AssemblyAI produces a full transcript with per-word timestamps.
 3. **Analyze** — the transcript and video metadata are sent to Claude, which returns candidate segments scored 0–10 for viral potential, each with a hook, suggested title, tags, and reasoning. Segments below the configurable threshold are discarded; segments longer than the max duration are split at natural pauses or sentence boundaries.
-4. **Clip** — FFmpeg cuts each segment, crops it to 9:16, and burns in subtitles.
+4. **Clip** — FFmpeg composes the final 1080x1920 layout: a static cover (the most expressive face frame, picked via MediaPipe), a red title banner with the AI-generated hook, and the face-tracked video below with burned-in subtitles.
 
 ## Features
 
@@ -28,6 +28,7 @@ queued → downloading → transcribing → analyzing → clipping → done (or 
 - **Three subtitle modes** — `word_highlight` (TikTok-style karaoke, word by word), `traditional` (text blocks), or `none`. Subtitles are generated as `.ASS` files and burned in with FFmpeg.
 - **Self-improving prompts (few-shot learning)** — after posting a clip, you can validate it in the UI with its real-world performance (`bom` / `muito_bom` / `viral`), view count, and what you learned. Validated clips are saved as JSON examples and automatically injected into the analysis prompt for future jobs, prioritizing top performers and category diversity.
 - **Smart splitting** — clips exceeding the max duration are split in two at the most natural point (sentence end or longest pause) near the midpoint.
+- **User watermark + brand cleanup** — upload your logo once and every clip is branded with it. QR codes in the source footage are detected (OpenCV) and covered with your logo; third-party channel marks are detected via edge persistence across scene cuts and blurred out, with face/person zones always protected.
 - **Simple local stack** — SQLite database, filesystem storage, FastAPI background tasks. No Redis, no Celery, no cloud dependencies beyond the two APIs.
 
 ## Stack
@@ -56,8 +57,10 @@ clipmint/
 │   │       ├── downloader.py    # yt-dlp wrapper
 │   │       ├── transcriber.py   # AssemblyAI wrapper
 │   │       ├── analyzer.py      # Claude API integration
-│   │       ├── clipper.py       # FFmpeg cut + 9:16 crop + subtitles
+│   │       ├── clipper.py       # FFmpeg cut + face-tracked crop + layout compositing
+│   │       ├── layout.py        # Cover (expressive frame) + red title banner
 │   │       ├── subtitler.py     # .ASS subtitle generation (3 modes)
+│   │       ├── watermark.py     # User logo + QR/third-party mark detection
 │   │       └── face_tracker.py  # MediaPipe face tracking (placeholder)
 │   └── prompt_engine/
 │       ├── core_prompt.txt      # Base system prompt
@@ -133,6 +136,9 @@ All settings live in `.env` (see `.env.example`):
 | `GET` | `/api/clips/{id}` | Clip details |
 | `GET` | `/api/clips/{id}/download` | Download the rendered clip (MP4) |
 | `POST` | `/api/clips/{id}/validate` | Save a clip as a validated few-shot example |
+| `POST` | `/api/settings/watermark` | Upload the user watermark/logo (PNG/JPEG/WebP) |
+| `GET` | `/api/settings/watermark` | Get the current watermark |
+| `DELETE` | `/api/settings/watermark` | Remove the watermark |
 | `GET` | `/health` | Health check |
 
 ## Roadmap

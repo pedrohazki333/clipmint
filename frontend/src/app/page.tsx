@@ -6,6 +6,7 @@ import type { Job, SubtitleMode } from "@/lib/types";
 import { createJob, listJobs, getApiErrorMessage } from "@/lib/api";
 import UrlInput from "@/components/UrlInput";
 import JobCard from "@/components/JobCard";
+import WatermarkSettings from "@/components/WatermarkSettings";
 
 const ACTIVE_POLLING_INTERVAL = 5000; // ms — só roda enquanto houver job em andamento
 const TERMINAL_STATUSES = new Set(["done", "error"]);
@@ -67,6 +68,9 @@ export default function Home() {
           </p>
         )}
       </div>
+
+      {/* Marca d'água */}
+      <WatermarkSettings />
 
       {/* Jobs list */}
       <div>
