@@ -133,6 +133,7 @@ All settings live in `.env` (see `.env.example`):
 | `POST` | `/api/jobs` | Create a job (YouTube URL + subtitle mode) and start the pipeline |
 | `GET` | `/api/jobs` | List all jobs |
 | `GET` | `/api/jobs/{id}` | Job details, including generated clips |
+| `DELETE` | `/api/jobs/{id}` | Delete a job with its clips, transcript and stored files |
 | `GET` | `/api/clips/{id}` | Clip details |
 | `GET` | `/api/clips/{id}/download` | Download the rendered clip (MP4) |
 | `POST` | `/api/clips/{id}/validate` | Save a clip as a validated few-shot example |

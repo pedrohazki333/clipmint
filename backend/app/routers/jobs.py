@@ -1,13 +1,15 @@
 import logging
+import shutil
 from typing import List
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.database import get_db
-from app.models import Job
+from app.models import Clip, Job, Transcript
 from app.schemas import JobCreate, JobResponse, JobDetailResponse
 from app.workers.pipeline import run_pipeline
 
@@ -64,3 +66,35 @@ async def get_job(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
+
+
+@router.delete("/jobs/{job_id}", status_code=204)
+async def delete_job(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """
+    Exclui o job e tudo associado a ele: clips e transcript no banco,
+    vídeo/áudio baixados, clips renderizados e o JSON de palavras.
+
+    Jobs em andamento também podem ser excluídos (cobre jobs travados após
+    restart); o pipeline detecta a ausência do job e encerra sem crashar.
+    """
+    result = await db.execute(select(Job).where(Job.id == job_id))
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Registros no banco (sem FK cascade configurado — remoção explícita)
+    await db.execute(delete(Clip).where(Clip.job_id == job_id))
+    await db.execute(delete(Transcript).where(Transcript.job_id == job_id))
+    await db.delete(job)
+    await db.commit()
+
+    # Arquivos no storage (caminhos derivados do ID, não do banco)
+    shutil.rmtree(settings.downloads_dir / job_id, ignore_errors=True)
+    shutil.rmtree(settings.clips_dir / job_id, ignore_errors=True)
+    words_json = settings.transcripts_dir / f"{job_id}_words.json"
+    words_json.unlink(missing_ok=True)
+
+    logger.info(f"Job {job_id} deleted (records + storage)")

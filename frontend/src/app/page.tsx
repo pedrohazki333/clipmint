@@ -7,6 +7,7 @@ import { createJob, listJobs, getApiErrorMessage } from "@/lib/api";
 import UrlInput from "@/components/UrlInput";
 import JobCard from "@/components/JobCard";
 import WatermarkSettings from "@/components/WatermarkSettings";
+import BannerColorSettings from "@/components/BannerColorSettings";
 
 const ACTIVE_POLLING_INTERVAL = 5000; // ms — só roda enquanto houver job em andamento
 const TERMINAL_STATUSES = new Set(["done", "error"]);
@@ -72,6 +73,9 @@ export default function Home() {
       {/* Marca d'água */}
       <WatermarkSettings />
 
+      {/* Cores do banner */}
+      <BannerColorSettings />
+
       {/* Jobs list */}
       <div>
         <div className="flex items-center justify-between mb-4">
@@ -96,7 +100,7 @@ export default function Home() {
 
         <div className="flex flex-col gap-3">
           {jobs.map((job) => (
-            <JobCard key={job.id} job={job} />
+            <JobCard key={job.id} job={job} onDeleted={fetchJobs} />
           ))}
         </div>
       </div>

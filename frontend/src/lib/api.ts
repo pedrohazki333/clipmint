@@ -32,6 +32,10 @@ export async function getJob(jobId: string): Promise<JobDetail> {
   return data;
 }
 
+export async function deleteJob(jobId: string): Promise<void> {
+  await api.delete(`/jobs/${jobId}`);
+}
+
 export async function getClip(clipId: string): Promise<Clip> {
   const { data } = await api.get<Clip>(`/clips/${clipId}`);
   return data;
@@ -64,6 +68,32 @@ export async function hasWatermark(): Promise<boolean> {
 
 export function getWatermarkUrl(): string {
   return "/api/settings/watermark";
+}
+
+export interface BannerColors {
+  bg_color: string;
+  text_color: string;
+  customized: boolean;
+}
+
+export async function getBannerColors(): Promise<BannerColors> {
+  const { data } = await api.get<BannerColors>("/settings/banner-colors");
+  return data;
+}
+
+export async function saveBannerColors(
+  bg_color: string,
+  text_color: string
+): Promise<BannerColors> {
+  const { data } = await api.put<BannerColors>("/settings/banner-colors", {
+    bg_color,
+    text_color,
+  });
+  return data;
+}
+
+export async function resetBannerColors(): Promise<void> {
+  await api.delete("/settings/banner-colors");
 }
 
 export async function validateClip(

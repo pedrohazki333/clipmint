@@ -1,11 +1,15 @@
 import io
+import json
 import logging
+import re
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from PIL import Image, UnidentifiedImageError
+from pydantic import BaseModel, field_validator
 
 from app.config import settings
+from app.services.layout import load_banner_colors
 
 logger = logging.getLogger(__name__)
 
@@ -64,3 +68,60 @@ async def delete_watermark() -> None:
     if path.exists():
         path.unlink()
         logger.info("Watermark removed")
+
+
+# ─── Cores do banner ──────────────────────────────────────────────────────────
+
+_HEX_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+
+def _banner_colors_file():
+    return settings.branding_dir / "banner_colors.json"
+
+
+def _normalize_hex(value: str) -> str:
+    v = value.lstrip("#")
+    if len(v) == 3:
+        v = "".join(c * 2 for c in v)
+    return f"#{v.upper()}"
+
+
+class BannerColors(BaseModel):
+    bg_color: str
+    text_color: str
+
+    @field_validator("bg_color", "text_color")
+    @classmethod
+    def _valid_hex(cls, v: str) -> str:
+        v = v.strip()
+        if not _HEX_RE.match(v):
+            raise ValueError("Cor inválida: use hexadecimal no formato #RRGGBB (ex: #ED2828)")
+        return _normalize_hex(v)
+
+
+@router.get("/settings/banner-colors")
+async def get_banner_colors() -> dict:
+    """Cores atuais do banner (padrões se nada foi customizado)."""
+    bg, text, customized = load_banner_colors()
+    return {"bg_color": bg, "text_color": text, "customized": customized}
+
+
+@router.put("/settings/banner-colors")
+async def set_banner_colors(colors: BannerColors) -> dict:
+    """Define as cores do banner (fundo da pílula e fonte) em hexadecimal."""
+    settings.branding_dir.mkdir(parents=True, exist_ok=True)
+    _banner_colors_file().write_text(
+        json.dumps({"bg_color": colors.bg_color, "text_color": colors.text_color}),
+        encoding="utf-8",
+    )
+    logger.info(f"Banner colors saved: bg={colors.bg_color} text={colors.text_color}")
+    return {"bg_color": colors.bg_color, "text_color": colors.text_color, "customized": True}
+
+
+@router.delete("/settings/banner-colors", status_code=204)
+async def reset_banner_colors() -> None:
+    """Volta às cores padrão do banner (vermelho/branco)."""
+    path = _banner_colors_file()
+    if path.exists():
+        path.unlink()
+        logger.info("Banner colors reset to default")

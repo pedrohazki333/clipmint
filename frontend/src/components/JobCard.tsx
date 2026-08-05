@@ -1,5 +1,9 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { Job } from "@/lib/types";
+import { deleteJob } from "@/lib/api";
 
 const STATUS_LABELS: Record<string, string> = {
   queued: "Na fila",
@@ -23,17 +27,51 @@ const STATUS_COLORS: Record<string, string> = {
 
 interface Props {
   job: Job;
+  onDeleted?: () => void;
 }
 
-export default function JobCard({ job }: Props) {
+export default function JobCard({ job, onDeleted }: Props) {
   const label = STATUS_LABELS[job.status] ?? job.status;
   const color = STATUS_COLORS[job.status] ?? "text-gray-400";
 
+  const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (confirmTimer.current) clearTimeout(confirmTimer.current);
+    };
+  }, []);
+
+  async function handleDeleteClick(e: React.MouseEvent) {
+    // O card inteiro é um Link — o clique no botão não pode navegar
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!confirming) {
+      setConfirming(true);
+      confirmTimer.current = setTimeout(() => setConfirming(false), 3000);
+      return;
+    }
+
+    if (confirmTimer.current) clearTimeout(confirmTimer.current);
+    setDeleting(true);
+    try {
+      await deleteJob(job.id);
+      onDeleted?.();
+    } catch {
+      setDeleting(false);
+      setConfirming(false);
+    }
+  }
+
   return (
     <Link href={`/jobs/${job.id}`}>
-      <div className="rounded-xl bg-gray-900 border border-gray-800 hover:border-gray-600 p-4 transition-colors cursor-pointer">
+      <div className="group rounded-xl bg-gray-900 border border-gray-800 hover:border-gray-600 p-4 transition-colors cursor-pointer">
         <div className="flex items-start gap-4">
           {job.thumbnail_url && (
+            // eslint-disable-next-line @next/next/no-img-element
             <img
               src={job.thumbnail_url}
               alt={job.video_title ?? "thumbnail"}
@@ -54,6 +92,18 @@ export default function JobCard({ job }: Props) {
               </span>
             </div>
           </div>
+          <button
+            onClick={handleDeleteClick}
+            disabled={deleting}
+            title="Excluir job e todos os arquivos"
+            className={`flex-shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium border transition-colors ${
+              confirming
+                ? "bg-red-600 border-red-500 text-white hover:bg-red-500"
+                : "bg-gray-800 border-gray-700 text-gray-500 hover:text-red-400 hover:border-red-900 opacity-0 group-hover:opacity-100"
+            } ${deleting ? "opacity-50 cursor-wait" : ""}`}
+          >
+            {deleting ? "Excluindo..." : confirming ? "Confirmar?" : "Excluir"}
+          </button>
         </div>
         {job.status === "error" && job.error_message && (
           <p className="mt-2 text-xs text-red-400 bg-red-900/20 rounded px-2 py-1 truncate">

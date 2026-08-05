@@ -16,6 +16,7 @@ Formato final (1080x1920):
 """
 
 import glob
+import json
 import logging
 import math
 import os
@@ -41,6 +42,9 @@ _FONT_CANDIDATES = [
 
 _BANNER_RED = (237, 40, 40, 255)
 _BANNER_RED_DARK = (163, 18, 18, 255)
+_BANNER_TEXT_WHITE = (255, 255, 255, 255)
+BANNER_DEFAULT_BG_HEX = "#ED2828"
+BANNER_DEFAULT_TEXT_HEX = "#FFFFFF"
 _BANNER_MAX_TEXT_W = 840   # largura máxima de uma linha de texto
 _BANNER_PAD_X = 60
 _BANNER_PAD_Y = 34
@@ -49,6 +53,47 @@ _LINE_SPACING = 1.08
 
 # Remove emojis/símbolos que a fonte não renderiza
 _EMOJI_RE = re.compile(r"[\U0001F000-\U0001FAFF←-⯿️‍]")
+
+
+_HEX_COLOR_RE = re.compile(r"^#?(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+
+def parse_hex_color(value: Optional[str], fallback: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+    """Converte '#RGB'/'#RRGGBB' em RGBA; hex inválido cai no fallback (nunca quebra o pipeline)."""
+    if not value:
+        return fallback
+    value = value.strip()
+    if not _HEX_COLOR_RE.match(value):
+        logger.warning(f"Invalid banner hex color {value!r}, using default")
+        return fallback
+    v = value.lstrip("#")
+    if len(v) == 3:
+        v = "".join(c * 2 for c in v)
+    return (int(v[0:2], 16), int(v[2:4], 16), int(v[4:6], 16), 255)
+
+
+def _darken(color: tuple[int, int, int, int], factor: float = 0.6) -> tuple[int, int, int, int]:
+    r, g, b, a = color
+    return (int(r * factor), int(g * factor), int(b * factor), a)
+
+
+def load_banner_colors() -> tuple[str, str, bool]:
+    """
+    Cores configuradas do banner: (bg_hex, text_hex, customized).
+    Lê storage/branding/banner_colors.json; sem arquivo (ou inválido), padrões.
+    """
+    from app.config import settings
+
+    path = settings.branding_dir / "banner_colors.json"
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            bg = data.get("bg_color") or BANNER_DEFAULT_BG_HEX
+            text = data.get("text_color") or BANNER_DEFAULT_TEXT_HEX
+            return bg, text, True
+        except (OSError, json.JSONDecodeError):
+            logger.warning(f"Could not read {path}, using default banner colors")
+    return BANNER_DEFAULT_BG_HEX, BANNER_DEFAULT_TEXT_HEX, False
 
 
 def _load_font(size: int) -> ImageFont.FreeTypeFont:
@@ -86,13 +131,31 @@ def _balanced_wrap(
     return best
 
 
-def generate_banner(text: str, output_path: str) -> tuple[int, int]:
+def generate_banner(
+    text: str,
+    output_path: str,
+    bg_color: Optional[str] = None,
+    text_color: Optional[str] = None,
+) -> tuple[int, int]:
     """
-    Gera o PNG da pílula vermelha com o título em branco.
+    Gera o PNG da pílula com o título.
+
+    Cores em hex (#RGB/#RRGGBB); None usa a configuração salva
+    (storage/branding/banner_colors.json) ou os padrões (vermelho/branco).
 
     Returns:
         (width, height) da imagem gerada — usado para posicionar o overlay.
     """
+    if bg_color is None or text_color is None:
+        stored_bg, stored_text, _ = load_banner_colors()
+        bg_color = bg_color or stored_bg
+        text_color = text_color or stored_text
+
+    pill_rgba = parse_hex_color(bg_color, _BANNER_RED)
+    text_rgba = parse_hex_color(text_color, _BANNER_TEXT_WHITE)
+    # Lábio 3D: tom escuro derivado do fundo (padrão mantém o vermelho escuro original)
+    lip_rgba = _BANNER_RED_DARK if pill_rgba == _BANNER_RED else _darken(pill_rgba)
+
     text = _EMOJI_RE.sub("", text).strip().upper()
     if not text:
         text = "ASSISTA ATÉ O FINAL"
@@ -130,17 +193,17 @@ def generate_banner(text: str, output_path: str) -> tuple[int, int]:
     img = Image.new("RGBA", (pill_w, pill_h + _BANNER_LIP), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    # Lábio 3D (vermelho escuro, deslocado para baixo) + pílula principal
+    # Lábio 3D (tom escuro, deslocado para baixo) + pílula principal
     draw.rounded_rectangle(
         [0, _BANNER_LIP, pill_w - 1, pill_h + _BANNER_LIP - 1],
-        radius=radius, fill=_BANNER_RED_DARK,
+        radius=radius, fill=lip_rgba,
     )
-    draw.rounded_rectangle([0, 0, pill_w - 1, pill_h - 1], radius=radius, fill=_BANNER_RED)
+    draw.rounded_rectangle([0, 0, pill_w - 1, pill_h - 1], radius=radius, fill=pill_rgba)
 
     y = _BANNER_PAD_Y + (line_h - ascent - descent) // 2
     for line in lines:
         x = (pill_w - font.getlength(line)) / 2
-        draw.text((x, y), line, font=font, fill=(255, 255, 255, 255))
+        draw.text((x, y), line, font=font, fill=text_rgba)
         y += line_h
 
     img.save(output_path)
