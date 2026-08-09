@@ -54,3 +54,71 @@ export interface CreateJobPayload {
   youtube_url: string;
   subtitle_mode: SubtitleMode;
 }
+
+// ─── Referências (aprender com clipe viral de outro criador) ──────────────────
+
+export type ReferenceStatus =
+  | "queued"
+  | "downloading_source"
+  | "transcribing"
+  | "aligning"
+  | "analyzing"
+  | "done"
+  | "error";
+
+export type Performance = "viral" | "muito_bom" | "bom";
+
+export interface ReferenceAnalysis {
+  hook: string;
+  suggested_title: string;
+  virality_score: number;
+  reason: string;
+  tags: string[];
+  why_this_cut: string;
+}
+
+export interface Reference {
+  id: string;
+  source_url: string;
+  source_title: string | null;
+  source_channel: string | null;
+  source_duration: number | null;
+  language: string | null;
+  source_start: number | null;
+  source_end: number | null;
+  alignment_confidence: number | null;
+  clip_duration: number | null;
+  analysis: ReferenceAnalysis | null;
+  opening_phrase: string | null;
+  transcript_excerpt: string | null;
+  performance: Performance | null;
+  views: number | null;
+  notas: string | null;
+  status: ReferenceStatus;
+  error_message: string | null;
+  published: boolean;
+  example_path: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UpdateReferencePayload {
+  source_start?: number;
+  source_end?: number;
+  performance?: Performance;
+  views?: number;
+  notas?: string;
+  reanalyze?: boolean;
+}
+
+// ─── Padrões aprendidos (Fase 3) ──────────────────────────────────────────────
+
+export interface LearnedPatterns {
+  patterns: string[];
+  patterns_text: string;
+  generated_at: string | null;
+  n_examples: number;
+  available_examples: number;
+  stats: Record<string, unknown> | null;
+  stale: boolean;
+}

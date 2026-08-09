@@ -1,5 +1,13 @@
 import axios from "axios";
-import type { Job, JobDetail, Clip, CreateJobPayload } from "./types";
+import type {
+  Job,
+  JobDetail,
+  Clip,
+  CreateJobPayload,
+  Reference,
+  UpdateReferencePayload,
+  LearnedPatterns,
+} from "./types";
 
 /** Extrai uma mensagem legível de um erro de API (detail do FastAPI ou fallback). */
 export function getApiErrorMessage(err: unknown, fallback: string): string {
@@ -102,4 +110,61 @@ export async function validateClip(
 ): Promise<{ clip_id: string; example_path: string }> {
   const { data } = await api.post(`/clips/${clipId}/validate`, payload);
   return data;
+}
+
+// ─── Referências (aprender com clipe viral de outro criador) ──────────────────
+
+export async function createReference(sourceUrl: string, clip: File): Promise<Reference> {
+  const form = new FormData();
+  form.append("source_url", sourceUrl);
+  form.append("clip", clip);
+  const { data } = await api.post<Reference>("/references", form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return data;
+}
+
+export async function listReferences(): Promise<Reference[]> {
+  const { data } = await api.get<Reference[]>("/references");
+  return data;
+}
+
+export async function getReference(id: string): Promise<Reference> {
+  const { data } = await api.get<Reference>(`/references/${id}`);
+  return data;
+}
+
+export async function updateReference(
+  id: string,
+  payload: UpdateReferencePayload
+): Promise<Reference> {
+  const { data } = await api.patch<Reference>(`/references/${id}`, payload);
+  return data;
+}
+
+export async function confirmReference(
+  id: string
+): Promise<{ reference_id: string; example_path: string }> {
+  const { data } = await api.post(`/references/${id}/confirm`);
+  return data;
+}
+
+export async function deleteReference(id: string): Promise<void> {
+  await api.delete(`/references/${id}`);
+}
+
+// ─── Padrões aprendidos (Fase 3) ──────────────────────────────────────────────
+
+export async function getPatterns(): Promise<LearnedPatterns> {
+  const { data } = await api.get<LearnedPatterns>("/patterns");
+  return data;
+}
+
+export async function minePatterns(): Promise<LearnedPatterns> {
+  const { data } = await api.post<LearnedPatterns>("/patterns/mine");
+  return data;
+}
+
+export async function deletePatterns(): Promise<void> {
+  await api.delete("/patterns");
 }

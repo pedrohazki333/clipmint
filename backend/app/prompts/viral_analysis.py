@@ -42,6 +42,11 @@ You evaluate virality based on 8 criteria, each scored 0-10:
 The final virality score (0.0-10.0) is a weighted average:
 - Hook (25%) + Share-worthiness (20%) + Surprise (15%) + Tension (15%) + Relatability (10%) + Controversy (5%) + Humor (5%) + Info Value (5%)
 
+DURATION STRATEGY:
+- The viral sweet spot is {preferred_min}-{preferred_max}s: one idea, delivered fast, payoff early. Whenever a moment lands its full punch inside this window, cut it there — do not pad it to feel "complete".
+- Cuts longer than {preferred_max}s are allowed up to {max_duration}s, but only when the segment genuinely needs the build-up (a story whose payoff depends on its setup, an argument that collapses if trimmed).
+- Never stretch or trim a clip just to hit a length target; natural speech boundaries always win.
+
 IMPORTANT RULES:
 - Clips MUST be between {min_duration}s and {max_duration}s duration
 - Prefer clips that start mid-sentence only if the hook is incredibly strong; otherwise start at a natural speech boundary
@@ -65,6 +70,7 @@ USER_PROMPT_TEMPLATE = """Analyze this video transcript and identify all segment
 
 ## Task
 Find ALL segments that score {threshold}+ on the virality scale.
+Favor tight {preferred_min}-{preferred_max}s cuts for reach; go longer (up to {max_duration}s) only when the moment truly needs its build-up.
 Return ONLY valid JSON — no markdown, no explanation outside the JSON.
 
 ## Required JSON Format
@@ -158,6 +164,8 @@ def build_analysis_prompt(
     threshold: float,
     min_duration: int,
     max_duration: int,
+    preferred_min: int = 25,
+    preferred_max: int = 40,
 ) -> tuple[str, str]:
     """
     Constrói os prompts system e user para análise de viralidade.
@@ -167,6 +175,8 @@ def build_analysis_prompt(
     system = SYSTEM_PROMPT.format(
         min_duration=min_duration,
         max_duration=max_duration,
+        preferred_min=preferred_min,
+        preferred_max=preferred_max,
     )
 
     transcript_text = format_transcript_with_timestamps(words)
@@ -179,6 +189,8 @@ def build_analysis_prompt(
         threshold=threshold,
         min_duration=min_duration,
         max_duration=max_duration,
+        preferred_min=preferred_min,
+        preferred_max=preferred_max,
     )
 
     return system, user

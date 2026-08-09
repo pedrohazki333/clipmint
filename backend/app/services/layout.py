@@ -35,6 +35,11 @@ COVER_W, COVER_H = 1080, 768
 # ─── Banner ───────────────────────────────────────────────────────────────────
 
 _FONT_CANDIDATES = [
+    # Windows
+    "C:/Windows/Fonts/arialbd.ttf",       # Arial Bold
+    "C:/Windows/Fonts/seguisb.ttf",       # Segoe UI Semibold
+    "C:/Windows/Fonts/impact.ttf",
+    # Linux
     "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",

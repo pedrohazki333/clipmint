@@ -1,0 +1,381 @@
+"""
+Router de referências — aprender a cortar a partir de um clipe viral de outro criador.
+
+Fluxo de uso:
+  1. POST /references  (URL do vídeo original + upload do clipe viral)
+       → cria a referência e dispara o pipeline em background.
+  2. GET /references/{id}  → acompanha status e vê a análise gerada.
+  3. PATCH /references/{id}  → ajusta o intervalo localizado / performance / notas
+       (opcionalmente re-roda a análise reversa com o novo intervalo).
+  4. POST /references/{id}/confirm  → publica como exemplo few-shot validado,
+       entrando automaticamente no PromptBuilder.
+"""
+
+import json
+import logging
+import shutil
+
+import anthropic
+from dataclasses import asdict
+from datetime import datetime, timezone
+from pathlib import Path
+
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import settings
+from app.database import get_db
+from app.models import ReferenceExample
+from app.schemas import ReferenceConfirmResponse, ReferenceResponse, ReferenceUpdateRequest
+from app.services.reference_analyzer import analyze_reference
+from app.workers.reference_pipeline import _opening_phrase, run_reference_pipeline
+from app.schemas import _YOUTUBE_URL_RE  # reutiliza o validador de URL do YouTube
+from prompt_engine.pattern_miner import (
+    clear_learned,
+    load_learned,
+    load_validated_examples,
+    mine_and_write,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(tags=["references"])
+
+_VALIDATED_DIR = Path(__file__).parent.parent.parent / "prompt_engine" / "examples" / "validated"
+_ALLOWED_CLIP_EXT = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
+_MAX_CLIP_BYTES = 500 * 1024 * 1024  # 500MB
+
+
+def _to_response(ref: ReferenceExample) -> ReferenceResponse:
+    """Monta o ReferenceResponse parseando o analysis_json."""
+    analysis = None
+    if ref.analysis_json:
+        try:
+            analysis = json.loads(ref.analysis_json)
+        except json.JSONDecodeError:
+            analysis = None
+
+    return ReferenceResponse(
+        id=ref.id,
+        source_url=ref.source_url,
+        source_title=ref.source_title,
+        source_channel=ref.source_channel,
+        source_duration=ref.source_duration,
+        language=ref.language,
+        source_start=ref.source_start,
+        source_end=ref.source_end,
+        alignment_confidence=ref.alignment_confidence,
+        clip_duration=ref.clip_duration,
+        analysis=analysis,
+        opening_phrase=ref.opening_phrase,
+        transcript_excerpt=ref.transcript_excerpt,
+        performance=ref.performance,
+        views=ref.views,
+        notas=ref.notas,
+        status=ref.status,
+        error_message=ref.error_message,
+        published=bool(ref.published),
+        example_path=ref.example_path,
+        created_at=ref.created_at,
+        updated_at=ref.updated_at,
+    )
+
+
+async def _get_or_404(reference_id: str, db: AsyncSession) -> ReferenceExample:
+    result = await db.execute(
+        select(ReferenceExample).where(ReferenceExample.id == reference_id)
+    )
+    ref = result.scalar_one_or_none()
+    if not ref:
+        raise HTTPException(status_code=404, detail="Referência não encontrada")
+    return ref
+
+
+@router.post("/references", response_model=ReferenceResponse, status_code=201)
+async def create_reference(
+    background_tasks: BackgroundTasks,
+    source_url: str = Form(...),
+    clip: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+) -> ReferenceResponse:
+    """Cria uma referência (URL do original + clipe viral) e inicia o pipeline."""
+    source_url = source_url.strip()
+    if not _YOUTUBE_URL_RE.match(source_url):
+        raise HTTPException(
+            status_code=422,
+            detail="URL inválida: forneça o link do YouTube do vídeo ORIGINAL (youtube.com ou youtu.be)",
+        )
+
+    ext = Path(clip.filename or "").suffix.lower()
+    if ext not in _ALLOWED_CLIP_EXT:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Formato de clipe inválido ({ext or 'sem extensão'}). Aceitos: {', '.join(sorted(_ALLOWED_CLIP_EXT))}",
+        )
+
+    data = await clip.read()
+    if len(data) > _MAX_CLIP_BYTES:
+        raise HTTPException(status_code=413, detail="Clipe muito grande (máx. 500MB)")
+    if not data:
+        raise HTTPException(status_code=422, detail="Arquivo de clipe vazio")
+
+    # Cria o registro primeiro para ter o ID e nomear o arquivo do clipe
+    ref = ReferenceExample(source_url=source_url, clip_path="", status="queued")
+    db.add(ref)
+    await db.commit()
+    await db.refresh(ref)
+
+    settings.references_dir.mkdir(parents=True, exist_ok=True)
+    clip_path = settings.references_dir / f"{ref.id}_clip{ext}"
+    clip_path.write_bytes(data)
+
+    ref.clip_path = str(clip_path)
+    await db.commit()
+    await db.refresh(ref)
+
+    logger.info(f"Reference {ref.id} created (source={source_url}, clip={clip_path.name})")
+    background_tasks.add_task(run_reference_pipeline, ref.id)
+
+    return _to_response(ref)
+
+
+@router.get("/references", response_model=list[ReferenceResponse])
+async def list_references(db: AsyncSession = Depends(get_db)) -> list[ReferenceResponse]:
+    """Lista todas as referências em ordem decrescente de criação."""
+    result = await db.execute(
+        select(ReferenceExample).order_by(ReferenceExample.created_at.desc())
+    )
+    return [_to_response(r) for r in result.scalars().all()]
+
+
+@router.get("/references/{reference_id}", response_model=ReferenceResponse)
+async def get_reference(
+    reference_id: str, db: AsyncSession = Depends(get_db)
+) -> ReferenceResponse:
+    """Detalhes de uma referência, incluindo a análise reversa gerada."""
+    ref = await _get_or_404(reference_id, db)
+    return _to_response(ref)
+
+
+@router.patch("/references/{reference_id}", response_model=ReferenceResponse)
+async def update_reference(
+    reference_id: str,
+    payload: ReferenceUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ReferenceResponse:
+    """
+    Ajusta o intervalo localizado, a performance real, views e notas.
+
+    Se `reanalyze=True` e o intervalo mudar, re-roda a análise reversa do Claude
+    com o novo trecho (recarrega as palavras do original do disco).
+    """
+    ref = await _get_or_404(reference_id, db)
+
+    span_changed = False
+    if payload.source_start is not None and payload.source_start != ref.source_start:
+        ref.source_start = payload.source_start
+        span_changed = True
+    if payload.source_end is not None and payload.source_end != ref.source_end:
+        ref.source_end = payload.source_end
+        span_changed = True
+
+    if ref.source_start is not None and ref.source_end is not None:
+        if ref.source_end <= ref.source_start:
+            raise HTTPException(status_code=422, detail="source_end deve ser maior que source_start")
+        ref.clip_duration = ref.source_end - ref.source_start
+
+    if payload.performance is not None:
+        ref.performance = payload.performance
+    if payload.views is not None:
+        ref.views = payload.views
+    if payload.notas is not None:
+        ref.notas = payload.notas
+
+    if payload.reanalyze and span_changed:
+        words_path = settings.transcripts_dir / f"{reference_id}_src_words.json"
+        if not words_path.exists():
+            raise HTTPException(
+                status_code=409,
+                detail="Transcrição do vídeo original indisponível para reanálise",
+            )
+        source_words = json.loads(words_path.read_text(encoding="utf-8"))
+        analysis = await analyze_reference(
+            reference_id=reference_id,
+            source_words=source_words,
+            source_start=ref.source_start,
+            source_end=ref.source_end,
+            title=ref.source_title or "",
+            channel=ref.source_channel or "",
+            language=ref.language or "",
+        )
+        ref.analysis_json = json.dumps(asdict(analysis), ensure_ascii=False)
+        ref.opening_phrase = _opening_phrase(source_words, ref.source_start)
+        excerpt_words = [
+            w["text"] for w in source_words
+            if w["start"] >= ref.source_start and w["end"] <= ref.source_end
+        ]
+        ref.transcript_excerpt = " ".join(excerpt_words[:60])
+
+    ref.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(ref)
+    return _to_response(ref)
+
+
+@router.post("/references/{reference_id}/confirm", response_model=ReferenceConfirmResponse, status_code=201)
+async def confirm_reference(
+    reference_id: str, db: AsyncSession = Depends(get_db)
+) -> ReferenceConfirmResponse:
+    """
+    Publica a referência como exemplo few-shot validado.
+
+    Grava o JSON em prompt_engine/examples/validated/ no mesmo schema dos clipes
+    validados (com source="external_reference"), de onde o PromptBuilder o injeta
+    automaticamente nas próximas análises.
+    """
+    ref = await _get_or_404(reference_id, db)
+
+    if ref.status != "done":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Referência ainda não está pronta (status: {ref.status})",
+        )
+    if ref.source_start is None or ref.source_end is None:
+        raise HTTPException(status_code=400, detail="Intervalo do clipe não localizado")
+
+    analysis: dict = {}
+    if ref.analysis_json:
+        try:
+            analysis = json.loads(ref.analysis_json)
+        except json.JSONDecodeError:
+            analysis = {}
+
+    # "aprendizado" alimenta o few-shot como "por que funcionou": preferimos a nota
+    # do usuário; senão, a explicação do corte gerada pela IA.
+    aprendizado = (ref.notas or "").strip() or analysis.get("why_this_cut", "") or analysis.get("reason", "")
+
+    example = {
+        "clip_id": ref.id,
+        "source": "external_reference",
+        "validated_at": datetime.now(timezone.utc).isoformat(),
+        "video": {
+            "url": ref.source_url,
+            "title": ref.source_title or "",
+            "channel": ref.source_channel or "",
+            "language": ref.language or "",
+            "duration": ref.source_duration or 0,
+        },
+        "clip": {
+            "start": ref.source_start,
+            "end": ref.source_end,
+            "duration": ref.clip_duration or (ref.source_end - ref.source_start),
+            "opening_phrase": ref.opening_phrase or "",
+            "virality_score": analysis.get("virality_score", 0),
+            "hook": analysis.get("hook", ""),
+            "suggested_title": analysis.get("suggested_title", ""),
+            "reason": analysis.get("reason", ""),
+            "tags": analysis.get("tags", []),
+        },
+        "validation": {
+            "performance": ref.performance or "bom",
+            "aprendizado": aprendizado,
+            "views": ref.views,
+        },
+    }
+
+    _VALIDATED_DIR.mkdir(parents=True, exist_ok=True)
+    output_path = _VALIDATED_DIR / f"example_ref_{ref.id}.json"
+    output_path.write_text(json.dumps(example, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    ref.published = 1
+    ref.example_path = str(output_path)
+    ref.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    logger.info(f"[{reference_id}] Published as validated example → {output_path}")
+    return ReferenceConfirmResponse(reference_id=ref.id, example_path=str(output_path))
+
+
+@router.get("/patterns")
+async def get_patterns() -> dict:
+    """
+    Retorna os padrões aprendidos atuais + quantos exemplos validados existem hoje.
+
+    `stale` indica que há mais exemplos do que os usados na última mineração,
+    sugerindo recalcular.
+    """
+    available = len(load_validated_examples())
+    learned = load_learned()
+    if not learned:
+        return {
+            "patterns": [],
+            "patterns_text": "",
+            "generated_at": None,
+            "n_examples": 0,
+            "available_examples": available,
+            "stats": None,
+            "stale": available > 0,
+        }
+    return {
+        "patterns": learned.get("patterns", []),
+        "patterns_text": learned.get("patterns_text", ""),
+        "generated_at": learned.get("generated_at"),
+        "n_examples": learned.get("n_examples", 0),
+        "available_examples": available,
+        "stats": learned.get("stats"),
+        "stale": available != learned.get("n_examples", 0),
+    }
+
+
+@router.post("/patterns/mine")
+async def mine_patterns() -> dict:
+    """Recalcula os padrões aprendidos a partir de todos os exemplos validados."""
+    examples = load_validated_examples()
+    if not examples:
+        raise HTTPException(
+            status_code=400,
+            detail="Nenhum exemplo validado ainda. Confirme ao menos uma referência ou clipe antes de minerar padrões.",
+        )
+    try:
+        result = await mine_and_write(examples)
+    except anthropic.AuthenticationError:
+        raise HTTPException(
+            status_code=502,
+            detail="Chave da API do Claude inválida. Verifique ANTHROPIC_API_KEY no .env.",
+        )
+    except anthropic.APIError as e:
+        raise HTTPException(status_code=502, detail=f"Falha na API do Claude: {e}")
+    result["available_examples"] = len(examples)
+    result["stale"] = False
+    return result
+
+
+@router.delete("/patterns", status_code=204)
+async def delete_patterns() -> None:
+    """Remove os padrões aprendidos (volta a usar só core + few-shot)."""
+    clear_learned()
+
+
+@router.delete("/references/{reference_id}", status_code=204)
+async def delete_reference(
+    reference_id: str, db: AsyncSession = Depends(get_db)
+) -> None:
+    """Exclui a referência e seus arquivos (clipe, download do original, transcrições, exemplo publicado)."""
+    ref = await _get_or_404(reference_id, db)
+    published_path = ref.example_path
+    clip_path = ref.clip_path
+    await db.delete(ref)
+    await db.commit()
+
+    # Arquivos no storage (caminhos derivados do ID)
+    if clip_path:
+        Path(clip_path).unlink(missing_ok=True)
+    (settings.references_dir / f"{reference_id}_clip.wav").unlink(missing_ok=True)
+    shutil.rmtree(settings.downloads_dir / reference_id, ignore_errors=True)
+    (settings.transcripts_dir / f"{reference_id}_src_words.json").unlink(missing_ok=True)
+    (settings.transcripts_dir / f"{reference_id}_clip_words.json").unlink(missing_ok=True)
+    if published_path:
+        Path(published_path).unlink(missing_ok=True)
+
+    logger.info(f"Reference {reference_id} deleted (records + storage)")

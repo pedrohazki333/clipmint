@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     virality_threshold: float = 7.0
     max_clip_duration: int = 90
     min_clip_duration: int = 15
+    # Faixa preferida de duração (sweet spot de alcance/viralização). Os limites
+    # hard continuam em min/max_clip_duration; isto só orienta a escolha do corte.
+    preferred_clip_min: int = 25
+    preferred_clip_max: int = 40
 
     @property
     def downloads_dir(self) -> Path:
@@ -43,9 +47,13 @@ class Settings(BaseSettings):
     def branding_dir(self) -> Path:
         return Path(self.storage_dir) / "branding"
 
+    @property
+    def references_dir(self) -> Path:
+        return Path(self.storage_dir) / "references"
+
     def ensure_dirs(self) -> None:
         """Cria os diretórios de storage se não existirem."""
-        for d in [self.downloads_dir, self.clips_dir, self.transcripts_dir, self.branding_dir]:
+        for d in [self.downloads_dir, self.clips_dir, self.transcripts_dir, self.branding_dir, self.references_dir]:
             d.mkdir(parents=True, exist_ok=True)
 
 

@@ -1,0 +1,77 @@
+{
+  "patterns": [
+    "Place the hook within the first 36% of the source video — cut clips that open mid-action or mid-revelation rather than from the very beginning.",
+    "Keep hooks to roughly 5 words: short enough to land instantly, long enough to create a clear curiosity gap or shock (e.g. an age, a challenge, a contradiction).",
+    "Prioritize clips under 90 seconds; 30–50 seconds is the sweet spot — if the moment can be told completely in 30s, do not pad it.",
+    "Select moments with a complete narrative arc (setup → tension → payoff) even within a very short clip; linear structure outperforms isolated highlight moments.",
+    "Favor clips that combine an absurd or controversial premise with a humorous or authentic delivery tone — the contrast between the two drives shareability.",
+    "Anchor hooks to a concrete, surprising detail (a number, a direct challenge, an unexpected fact) rather than vague emotional language."
+  ],
+  "patterns_text": "## LEARNED PATTERNS (distilled from clips that performed well)\nApply these calibrated guidelines when selecting and cutting clips:\n\n- Place the hook within the first 36% of the source video — cut clips that open mid-action or mid-revelation rather than from the very beginning.\n- Keep hooks to roughly 5 words: short enough to land instantly, long enough to create a clear curiosity gap or shock (e.g. an age, a challenge, a contradiction).\n- Prioritize clips under 90 seconds; 30–50 seconds is the sweet spot — if the moment can be told completely in 30s, do not pad it.\n- Select moments with a complete narrative arc (setup → tension → payoff) even within a very short clip; linear structure outperforms isolated highlight moments.\n- Favor clips that combine an absurd or controversial premise with a humorous or authentic delivery tone — the contrast between the two drives shareability.\n- Anchor hooks to a concrete, surprising detail (a number, a direct challenge, an unexpected fact) rather than vague emotional language.",
+  "stats": {
+    "n_examples": 2,
+    "sources": {
+      "own_clip": 1,
+      "external_reference": 1
+    },
+    "duration": {
+      "median": 50.8,
+      "min": 16.5,
+      "max": 85.1,
+      "count": 2
+    },
+    "cut_position": {
+      "with_duration": 1,
+      "mean": 0.36,
+      "buckets": {
+        "inicio": 0,
+        "meio": 1,
+        "fim": 0
+      }
+    },
+    "hook_words": {
+      "median": 5.0,
+      "max": 5
+    },
+    "top_tags": [
+      [
+        "revelation",
+        1
+      ],
+      [
+        "humor",
+        1
+      ],
+      [
+        "storytelling",
+        1
+      ],
+      [
+        "controversial",
+        1
+      ],
+      [
+        "motivação",
+        1
+      ],
+      [
+        "classe social",
+        1
+      ],
+      [
+        "autenticidade",
+        1
+      ],
+      [
+        "pobreza",
+        1
+      ]
+    ],
+    "performance": {
+      "bom": 1,
+      "muito_bom": 1
+    }
+  },
+  "n_examples": 2,
+  "generated_at": "2026-08-06T11:30:57.107955+00:00"
+}

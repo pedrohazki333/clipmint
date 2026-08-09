@@ -172,11 +172,15 @@ async def analyze_virality(
         threshold=threshold,
         min_duration=min_dur,
         max_duration=max_dur,
+        preferred_min=settings.preferred_clip_min,
+        preferred_max=settings.preferred_clip_max,
     )
 
     system_prompt = PromptBuilder().build(
         min_duration=min_dur,
         max_duration=max_dur,
+        preferred_min=settings.preferred_clip_min,
+        preferred_max=settings.preferred_clip_max,
     )
 
     client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)

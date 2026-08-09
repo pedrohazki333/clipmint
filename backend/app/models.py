@@ -49,6 +49,58 @@ class Transcript(Base):
     job = relationship("Job", back_populates="transcript")
 
 
+class ReferenceExample(Base):
+    """
+    Exemplo de aprendizado a partir de um clipe viral de OUTRO criador.
+
+    O usuário fornece a URL do vídeo original + o arquivo do clipe viral.
+    O pipeline localiza onde o clipe foi cortado dentro do original (alinhamento
+    de transcrições), pede ao Claude uma análise reversa de por que aquele trecho
+    viralizou e, após confirmação do usuário, publica o resultado como exemplo
+    validado few-shot em prompt_engine/examples/validated/.
+
+    Pipeline de status:
+      queued → downloading_source → transcribing → aligning → analyzing → done
+      (qualquer etapa pode ir para: error)
+    """
+
+    __tablename__ = "reference_examples"
+
+    id = Column(String, primary_key=True, default=uuid4_hex)
+    source_url = Column(String, nullable=False)      # URL do vídeo original (YouTube)
+    clip_path = Column(String, nullable=False)       # arquivo do clipe viral enviado
+
+    # Metadados do vídeo original (preenchidos após download)
+    source_title = Column(String, nullable=True)
+    source_channel = Column(String, nullable=True)
+    source_duration = Column(Float, nullable=True)
+    language = Column(String, nullable=True)
+
+    # Resultado do alinhamento clipe ↔ original
+    source_start = Column(Float, nullable=True)
+    source_end = Column(Float, nullable=True)
+    alignment_confidence = Column(Float, nullable=True)  # 0.0–1.0
+    clip_duration = Column(Float, nullable=True)
+
+    # Análise reversa gerada pelo Claude (JSON serializado)
+    analysis_json = Column(Text, nullable=True)      # {hook, suggested_title, reason, tags, virality_score}
+    opening_phrase = Column(String, nullable=True)
+    transcript_excerpt = Column(Text, nullable=True)
+
+    # Dados fornecidos pelo usuário na confirmação (performance real)
+    performance = Column(String, nullable=True)      # viral | muito_bom | bom
+    views = Column(Integer, nullable=True)
+    notas = Column(Text, nullable=True)
+
+    # Estado
+    status = Column(String, default="queued")        # ver docstring
+    error_message = Column(String, nullable=True)
+    published = Column(Integer, default=0)           # 1 = já gravado em validated/
+    example_path = Column(String, nullable=True)     # caminho do JSON publicado
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class Clip(Base):
     __tablename__ = "clips"
 

@@ -157,6 +157,7 @@ async def run_pipeline(job_id: str) -> None:
         logger.info(f"[{job_id}] Created {len(clip_records)} clip records")
 
         # Processa cada clip
+        failures: list[str] = []
         for clip_id, vc in clip_records:
             try:
                 file_path, file_size = await cut_and_crop(
@@ -182,6 +183,7 @@ async def run_pipeline(job_id: str) -> None:
 
             except Exception as e:
                 logger.error(f"[{job_id}] Failed to process clip {clip_id}: {e}", exc_info=True)
+                failures.append(str(e))
                 async with AsyncSessionLocal() as db:
                     result = await db.execute(select(Clip).where(Clip.id == clip_id))
                     clip = result.scalar_one_or_none()
@@ -190,6 +192,19 @@ async def run_pipeline(job_id: str) -> None:
                         await db.commit()
 
         # ── 6. Finaliza ───────────────────────────────────────────────────────
+        # Nenhum clip renderizado = o job falhou, mesmo tendo chegado até aqui.
+        # Sem isso a UI mostra "Pronto / 100%" com a lista de clips toda em erro.
+        if len(failures) == len(clip_records):
+            raise RuntimeError(
+                f"Nenhum clip pôde ser renderizado ({len(failures)} falha(s)). "
+                f"Primeiro erro: {failures[0][:500]}"
+            )
+
+        if failures:
+            logger.warning(
+                f"[{job_id}] {len(failures)} of {len(clip_records)} clip(s) failed to render"
+            )
+
         await _update_job_status(job_id, "done")
         logger.info(f"[{job_id}] Pipeline complete!")
 

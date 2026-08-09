@@ -36,6 +36,8 @@ class PromptBuilder:
         self,
         min_duration: int = 15,
         max_duration: int = 90,
+        preferred_min: int = 25,
+        preferred_max: int = 40,
         nicho: Optional[str] = None,
         max_examples: int = 6,
         max_per_category: int = 2,
@@ -46,6 +48,8 @@ class PromptBuilder:
         Args:
             min_duration: Duração mínima de clip em segundos (repassado ao core_prompt).
             max_duration: Duração máxima de clip em segundos (repassado ao core_prompt).
+            preferred_min / preferred_max: Faixa preferida (sweet spot) de duração,
+                usada na estratégia de duração do core_prompt.
             nicho: Filtro opcional de nicho (não implementado ainda, reservado para futuro).
             max_examples: Número máximo de exemplos a injetar (default: 6).
             max_per_category: Máximo de exemplos por tag primária (default: 2).
@@ -54,19 +58,46 @@ class PromptBuilder:
             String com o system prompt completo, pronto para envio ao Claude.
         """
         core = _CORE_PROMPT_PATH.read_text(encoding="utf-8").strip()
-        core = core.format(min_duration=min_duration, max_duration=max_duration)
+        core = core.format(
+            min_duration=min_duration,
+            max_duration=max_duration,
+            preferred_min=preferred_min,
+            preferred_max=preferred_max,
+        )
+
+        prompt = core
+
+        # Padrões destilados do conjunto de exemplos (Fase 3) — heurísticas persistentes.
+        learned = self._load_learned_patterns()
+        if learned:
+            prompt += "\n\n" + learned
 
         examples = self._load_examples()
         if not examples:
-            logger.debug("No validated examples found — using core prompt only.")
-            return core
+            logger.debug("No validated examples found — using core prompt (+ patterns).")
+            return prompt
 
         selected = self._select_examples(examples, max_examples, max_per_category)
         if not selected:
-            return core
+            return prompt
 
         logger.info(f"Injecting {len(selected)} validated example(s) into system prompt.")
-        return core + "\n\n" + self._format_section(selected)
+        return prompt + "\n\n" + self._format_section(selected)
+
+    def _load_learned_patterns(self) -> Optional[str]:
+        """Retorna a seção de padrões aprendidos (learned_patterns.json), se existir."""
+        try:
+            from prompt_engine.pattern_miner import load_learned
+        except ImportError:
+            return None
+        data = load_learned()
+        if not data:
+            return None
+        text = data.get("patterns_text", "").strip()
+        if text:
+            logger.info("Injecting learned patterns into system prompt.")
+            return text
+        return None
 
     # ── Internal helpers ────────────────────────────────────────────────────────
 

@@ -2,10 +2,13 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import type { Job, SubtitleMode } from "@/lib/types";
-import { createJob, listJobs, getApiErrorMessage } from "@/lib/api";
+import type { Job, Reference, SubtitleMode } from "@/lib/types";
+import { createJob, listJobs, listReferences, getApiErrorMessage } from "@/lib/api";
 import UrlInput from "@/components/UrlInput";
 import JobCard from "@/components/JobCard";
+import ReferenceForm from "@/components/ReferenceForm";
+import ReferenceCard from "@/components/ReferenceCard";
+import LearnedPatterns from "@/components/LearnedPatterns";
 import WatermarkSettings from "@/components/WatermarkSettings";
 import BannerColorSettings from "@/components/BannerColorSettings";
 
@@ -15,6 +18,7 @@ const TERMINAL_STATUSES = new Set(["done", "error"]);
 export default function Home() {
   const router = useRouter();
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [references, setReferences] = useState<Reference[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [fetchError, setFetchError] = useState("");
   const [submitError, setSubmitError] = useState("");
@@ -29,17 +33,32 @@ export default function Home() {
     }
   }, []);
 
+  const fetchReferences = useCallback(async () => {
+    try {
+      const data = await listReferences();
+      setReferences(data);
+    } catch {
+      // silencioso — a lista de referências é secundária
+    }
+  }, []);
+
   useEffect(() => {
     fetchJobs();
-  }, [fetchJobs]);
+    fetchReferences();
+  }, [fetchJobs, fetchReferences]);
 
-  // Atualiza a lista automaticamente enquanto houver jobs em andamento
+  // Atualiza as listas automaticamente enquanto houver trabalho em andamento
   const hasActiveJobs = jobs.some((job) => !TERMINAL_STATUSES.has(job.status));
+  const hasActiveReferences = references.some((r) => !TERMINAL_STATUSES.has(r.status));
+  const hasActiveWork = hasActiveJobs || hasActiveReferences;
   useEffect(() => {
-    if (!hasActiveJobs) return;
-    const interval = setInterval(fetchJobs, ACTIVE_POLLING_INTERVAL);
+    if (!hasActiveWork) return;
+    const interval = setInterval(() => {
+      fetchJobs();
+      fetchReferences();
+    }, ACTIVE_POLLING_INTERVAL);
     return () => clearInterval(interval);
-  }, [hasActiveJobs, fetchJobs]);
+  }, [hasActiveWork, fetchJobs, fetchReferences]);
 
   async function handleSubmit(url: string, subtitleMode: SubtitleMode) {
     setIsSubmitting(true);
@@ -69,6 +88,23 @@ export default function Home() {
           </p>
         )}
       </div>
+
+      {/* Aprender com clipe viral de outro criador */}
+      <ReferenceForm />
+
+      {references.length > 0 && (
+        <div>
+          <h2 className="text-lg font-semibold text-gray-300 mb-4">Referências</h2>
+          <div className="flex flex-col gap-3">
+            {references.map((r) => (
+              <ReferenceCard key={r.id} reference={r} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Padrões aprendidos */}
+      <LearnedPatterns />
 
       {/* Marca d'água */}
       <WatermarkSettings />

@@ -100,6 +100,7 @@ async def validate_clip(
             "title": job.video_title or "",
             "channel": job.channel_name or "",
             "language": transcript.language if transcript else "",
+            "duration": job.duration_seconds or 0,
         },
         "clip": {
             "start": clip.start_time,

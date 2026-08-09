@@ -1,0 +1,34 @@
+{
+  "clip_id": "d3ad78aa5973416294ebaac84294f814",
+  "source": "external_reference",
+  "validated_at": "2026-08-06T11:30:30.657531+00:00",
+  "video": {
+    "url": "https://www.youtube.com/watch?v=35r1WQ02Ce8",
+    "title": "JEFF BALA, BRYAN SANT & MATHEUS MELO - Podpah #1066",
+    "channel": "PodpahTV",
+    "language": "pt",
+    "duration": 7519.0
+  },
+  "clip": {
+    "start": 2712.957,
+    "end": 2729.483,
+    "duration": 16.526000000000295,
+    "opening_phrase": "você.",
+    "virality_score": 8.4,
+    "hook": "Você quis ou PRECISAVA vencer?",
+    "suggested_title": "25 anos comendo pão com ovo — isso é PRECISAR vencer",
+    "reason": "The clip opens with a razor-sharp binary question — 'você quis ou precisava vencer?' — that instantly creates contrast and demands self-reflection from the viewer. The answer lands within 3 seconds and reframes the entire concept of ambition: it's not want, it's NEED. The line '25 anos da minha vida comendo pão com ovo' is the viral core — it's brutally specific, universally legible across Brazilian working-class audiences, and carries zero self-pity. The soft undercut 'não que é ruim, mas que também não dava mais, né?' adds emotional texture: it's not a sob story, it's a dignified reckoning. That nuance is what makes it shareable rather than cringe-inspiring. The clip distills a complex class-consciousness conversation into 17 seconds of lived truth.",
+    "tags": [
+      "motivação",
+      "classe social",
+      "autenticidade",
+      "pobreza",
+      "superação"
+    ]
+  },
+  "validation": {
+    "performance": "muito_bom",
+    "aprendizado": "O hook no comecinho e o vídeo ser curto e direto com um tom de humor do participante. 30s são mais que suficientes para um vídeo viralizar e atrai público para página.",
+    "views": 292000
+  }
+}

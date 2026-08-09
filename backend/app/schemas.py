@@ -83,3 +83,45 @@ class ValidateClipRequest(BaseModel):
 class ValidateClipResponse(BaseModel):
     example_path: str
     clip_id: str
+
+
+# ─── Referência (aprender com clipe viral de outro criador) ───────────────────
+
+class ReferenceResponse(BaseModel):
+    id: str
+    source_url: str
+    source_title: Optional[str]
+    source_channel: Optional[str]
+    source_duration: Optional[float]
+    language: Optional[str]
+    source_start: Optional[float]
+    source_end: Optional[float]
+    alignment_confidence: Optional[float]
+    clip_duration: Optional[float]
+    analysis: Optional[dict] = None       # analysis_json parseado
+    opening_phrase: Optional[str]
+    transcript_excerpt: Optional[str]
+    performance: Optional[str]
+    views: Optional[int]
+    notas: Optional[str]
+    status: str
+    error_message: Optional[str]
+    published: bool
+    example_path: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+
+class ReferenceUpdateRequest(BaseModel):
+    """Ajustes do usuário sobre a referência analisada."""
+    source_start: Optional[float] = None
+    source_end: Optional[float] = None
+    performance: Optional[Literal["viral", "muito_bom", "bom"]] = None
+    views: Optional[int] = None
+    notas: Optional[str] = None
+    reanalyze: bool = False               # re-roda a análise reversa com o novo intervalo
+
+
+class ReferenceConfirmResponse(BaseModel):
+    reference_id: str
+    example_path: str

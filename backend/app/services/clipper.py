@@ -347,5 +347,17 @@ async def _log_clip_quality(
 
 
 def _escape_filter_path(path: str) -> str:
-    """Escapa o caminho para uso seguro dentro de um filtro FFmpeg."""
-    return path.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:")
+    """
+    Escapa o caminho para uso seguro dentro de um filtro FFmpeg.
+
+    O valor passa por DOIS níveis de parsing (filtergraph e opções do filtro),
+    então cada caractere especial precisa de duas barras invertidas para
+    sobreviver aos dois. Separadores do Windows são convertidos para '/' — o
+    FFmpeg aceita ambos e assim não é preciso escapar barra invertida (que
+    exigiria quatro delas e some silenciosamente se faltar alguma).
+    """
+    return (
+        path.replace("\\", "/")
+        .replace("'", "\\\\'")
+        .replace(":", "\\\\:")
+    )
