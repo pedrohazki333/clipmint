@@ -12,7 +12,10 @@ from app.services.facecam import (
     CamPhase,
     FacecamRect,
     _Obs,
+    _TILE_SPAN,
     _cam_track,
+    _dedupe,
+    _tiles,
     _phase_spans,
     _box_from_face,
     _fit_cam_rect,
@@ -479,7 +482,8 @@ def test_gameplay_slice_dodges_every_phase_box():
 
 
 def test_gameplay_slice_centers_when_no_position_clears_all_boxes():
-    cams = [(60, 700, 520, 340), (1520, 40, 360, 260)]
+    """Vão livre entre as caixas menor que a fatia: não há desvio possível."""
+    cams = [(0, 0, 900, 500), (1020, 0, 900, 500)]  # sobram 120px entre elas
 
     assert gameplay_crop_x(1920, 920, cams) == (1920 - 920) // 2
 
@@ -508,3 +512,33 @@ def test_phases_are_clamped_to_the_clip_window():
     )
 
     assert [(p.start, p.end) for p in phases] == [(0.0, 6.0), (6.0, 10.0)]
+
+
+# ─── Varredura por ladrilhos (facecam pequena) ────────────────────────────────
+
+def test_tiles_cover_the_whole_frame_with_overlap():
+    """
+    Um rosto na divisa entre ladrilhos não pode escapar dos dois — por isso a
+    varredura é sobreposta, e não um mosaico justo.
+    """
+    tiles = _tiles()
+    span = _TILE_SPAN
+
+    assert min(x for x, _ in tiles) == 0.0 and min(y for _, y in tiles) == 0.0
+    assert max(x for x, _ in tiles) + span == pytest.approx(1.0)
+    assert max(y for _, y in tiles) + span == pytest.approx(1.0)
+    assert span > 0.5  # ladrilhos vizinhos se sobrepõem
+
+
+def test_same_face_seen_by_frame_and_tile_counts_once():
+    """O rosto achado no frame inteiro e no ladrilho é uma detecção só."""
+    found = [
+        _Obs(cx=0.15, cy=0.20, w=0.05, h=0.07, score=0.60),
+        _Obs(cx=0.151, cy=0.201, w=0.05, h=0.07, score=0.88),  # o mesmo, do ladrilho
+        _Obs(cx=0.80, cy=0.60, w=0.05, h=0.07, score=0.70),    # outro rosto
+    ]
+
+    unique = _dedupe(found)
+
+    assert len(unique) == 2
+    assert max(o.score for o in unique if o.cx < 0.5) == 0.88  # fica a melhor

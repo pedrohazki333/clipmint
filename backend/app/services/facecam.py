@@ -55,7 +55,18 @@ logger = logging.getLogger(__name__)
 
 # Amostragem
 _MAX_SAMPLES = 24          # frames analisados no trecho
-_DETECT_WIDTH = 960        # largura de trabalho (detecção não precisa de 4K)
+_DETECT_WIDTH = 1920       # teto da largura de trabalho (4K inteiro não compensa)
+
+# Ladrilhos de detecção. O rosto dentro de uma facecam pequena ocupa ~3% da
+# largura do frame, e nessa escala o MediaPipe não acha NADA — medido nesta
+# base: zero detecções no frame inteiro mesmo em resolução nativa e confiança
+# 0.15, contra 5/5 frames no mesmo trecho quando a busca é feita no quadrante.
+# Por isso a varredura é por quadrantes sobrepostos, cada um ampliado para
+# _TILE_WIDTH: é a diferença entre enxergar a cam e cair no palpite de canto.
+# A sobreposição existe para um rosto na divisa não ficar partido em dois.
+_TILE_SPAN = 0.6           # lado do ladrilho, em fração do frame
+_TILE_WIDTH = 960          # largura de trabalho de cada ladrilho
+_DEDUPE_RADIUS = 0.02      # detecções do frame inteiro e do ladrilho, mesma cara
 
 # Aglomeração
 _STABLE_RADIUS = 0.12      # distância máx. do centro mediano para contar como a cam
@@ -272,7 +283,9 @@ def detect_facecam_phases(
         subprocess.run(
             ["ffmpeg", "-y", "-ss", str(start_time), "-i", video_path,
              "-t", str(duration),
-             "-vf", f"fps=1/{interval:.3f},scale={_DETECT_WIDTH}:-2",
+             # min(iw) para não AMPLIAR fonte menor que o teto: inventar pixel
+             # não devolve rosto nenhum e só deixa o encaixe de borda mais lento.
+             "-vf", f"fps=1/{interval:.3f},scale='min({_DETECT_WIDTH},iw)':-2",
              "-q:v", "3", pattern],
             capture_output=True, timeout=600,
         )
@@ -331,16 +344,31 @@ def detect_facecam(
     return max(phases, key=lambda p: p.end - p.start).rect
 
 
+def _tiles() -> list[tuple[float, float]]:
+    """Cantos dos ladrilhos (x0, y0) em frações do frame, com sobreposição."""
+    step = 1.0 - _TILE_SPAN
+    return [(x, y) for y in (0.0, step) for x in (0.0, step)]
+
+
 def _detect_faces_per_frame(frames: list[str], cv2, mp) -> list[list[_Obs]]:
     """
-    TODOS os rostos de cada frame amostrado.
+    TODOS os rostos de cada frame amostrado, no frame inteiro e por ladrilho.
 
-    Guardar só o rosto de maior confiança por frame (o que esta função fazia
-    antes) é o que entregava a cam ao popup de inscrito: enquanto o alerta está
-    na tela, o rosto dele ganha o frame e o do streamer é jogado fora. Com todos
-    os rostos na mão, quem decide é a persistência — ver _cam_track.
+    Duas correções em relação a guardar só o rosto de maior confiança do frame
+    inteiro, que era o que esta função fazia:
+
+    - todos os rostos, porque ficar com o melhor de cada frame entregava a cam
+      ao popup de inscrito — enquanto o alerta está na tela o rosto dele ganha
+      o frame e o do streamer é jogado fora. Quem decide agora é a persistência
+      (ver _cam_track);
+    - por ladrilho, porque uma facecam pequena tem um rosto pequeno demais para
+      o detector achar no frame inteiro, em qualquer resolução ou confiança.
+
+    Coordenadas voltam sempre em frações do FRAME, não do ladrilho.
     """
     per_frame: list[list[_Obs]] = []
+    regions = [(0.0, 0.0, 1.0)] + [(x, y, _TILE_SPAN) for x, y in _tiles()]
+
     with mp.solutions.face_detection.FaceDetection(
         model_selection=1, min_detection_confidence=0.5
     ) as detector:
@@ -349,19 +377,48 @@ def _detect_faces_per_frame(frames: list[str], cv2, mp) -> list[list[_Obs]]:
             if img is None:
                 per_frame.append([])
                 continue
-            res = detector.process(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+            height, width = img.shape[:2]
             found: list[_Obs] = []
-            for det in res.detections or []:
-                b = det.location_data.relative_bounding_box
-                found.append(_Obs(
-                    cx=b.xmin + b.width / 2,
-                    cy=b.ymin + b.height / 2,
-                    w=max(b.width, 1e-3),
-                    h=max(b.height, 1e-3),
-                    score=float(det.score[0]),
-                ))
-            per_frame.append(found)
+
+            for x0, y0, span in regions:
+                px0, py0 = int(x0 * width), int(y0 * height)
+                px1, py1 = int((x0 + span) * width), int((y0 + span) * height)
+                patch = img[py0:py1, px0:px1]
+                if patch.size == 0:
+                    continue
+                target = _TILE_WIDTH if span < 1.0 else min(_TILE_WIDTH, patch.shape[1])
+                if patch.shape[1] != target:
+                    scaled_h = max(2, int(patch.shape[0] * target / patch.shape[1]))
+                    patch = cv2.resize(patch, (target, scaled_h))
+
+                res = detector.process(cv2.cvtColor(patch, cv2.COLOR_BGR2RGB))
+                for det in res.detections or []:
+                    b = det.location_data.relative_bounding_box
+                    found.append(_Obs(
+                        cx=x0 + (b.xmin + b.width / 2) * span,
+                        cy=y0 + (b.ymin + b.height / 2) * span,
+                        w=max(b.width * span, 1e-3),
+                        h=max(b.height * span, 1e-3),
+                        score=float(det.score[0]),
+                    ))
+
+            per_frame.append(_dedupe(found))
     return per_frame
+
+
+def _dedupe(found: list[_Obs]) -> list[_Obs]:
+    """
+    O mesmo rosto visto pelo frame inteiro e por um (ou dois) ladrilhos vira uma
+    detecção só — fica a de maior confiança.
+    """
+    unique: list[_Obs] = []
+    for obs in sorted(found, key=lambda o: o.score, reverse=True):
+        if all(
+            math.dist((obs.cx, obs.cy), (kept.cx, kept.cy)) > _DEDUPE_RADIUS
+            for kept in unique
+        ):
+            unique.append(obs)
+    return unique
 
 
 def _cluster_observations(per_frame: list[list[_Obs]]) -> list[_Cluster]:
