@@ -10,7 +10,7 @@ Modos:
 """
 
 import logging
-from typing import List
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +46,28 @@ def _ass_time(seconds: float) -> str:
     return f"{h}:{m:02d}:{int(s):02d}.{cs:02d}"
 
 
-def _ass_header(width: int = 1080, height: int = 1920) -> str:
-    """Gera o cabeçalho do arquivo .ASS."""
+def _ass_header(
+    width: int = 1080,
+    height: int = 1920,
+    margin_v: Optional[int] = None,
+) -> str:
+    """
+    Gera o cabeçalho do arquivo .ASS.
+
+    Tamanhos de fonte, contorno e margens são definidos para o canvas de
+    referência (1080x1920) e escalados junto com a largura — assim a legenda
+    ocupa a mesma proporção da tela em qualquer resolução de saída.
+
+    Args:
+        margin_v: distância do texto até a borda INFERIOR do canvas, já em
+            pixels do canvas final. None usa a margem padrão de cada modo.
+    """
+    k = width / 1080
+    px = lambda v: max(1, int(round(v * k)))  # noqa: E731
+
+    mv_word = px(MARGIN_V_WORD) if margin_v is None else margin_v
+    mv_trad = px(MARGIN_V_TRADITIONAL) if margin_v is None else margin_v
+
     return f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {width}
@@ -56,8 +76,8 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: WordHighlight,{FONT_NAME},{FONT_SIZE_WORD},{COLOR_WHITE},&H000000FF,{COLOR_BLACK_OUTLINE},{COLOR_SHADOW},-1,0,0,0,100,100,0,0,1,5,2,2,40,40,{MARGIN_V_WORD},1
-Style: Traditional,{FONT_NAME},{FONT_SIZE_TRADITIONAL},{COLOR_WHITE},&H000000FF,{COLOR_BLACK_OUTLINE},{COLOR_SHADOW},-1,0,0,0,100,100,0,0,1,4,1,2,40,40,{MARGIN_V_TRADITIONAL},1
+Style: WordHighlight,{FONT_NAME},{px(FONT_SIZE_WORD)},{COLOR_WHITE},&H000000FF,{COLOR_BLACK_OUTLINE},{COLOR_SHADOW},-1,0,0,0,100,100,0,0,1,{px(5)},{px(2)},2,{px(40)},{px(40)},{mv_word},1
+Style: Traditional,{FONT_NAME},{px(FONT_SIZE_TRADITIONAL)},{COLOR_WHITE},&H000000FF,{COLOR_BLACK_OUTLINE},{COLOR_SHADOW},-1,0,0,0,100,100,0,0,1,{px(4)},{px(1)},2,{px(40)},{px(40)},{mv_trad},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -158,6 +178,9 @@ def generate_ass_subtitles(
     end_time: float,
     subtitle_mode: str,
     output_path: str,
+    canvas_w: int = 1080,
+    canvas_h: int = 1920,
+    margin_v: Optional[int] = None,
 ) -> None:
     """
     Gera arquivo .ASS de legendas para um segmento de vídeo.
@@ -168,6 +191,9 @@ def generate_ass_subtitles(
         end_time: Fim do clip (segundos).
         subtitle_mode: 'word_highlight', 'traditional', ou 'none'.
         output_path: Caminho de saída do arquivo .ASS.
+        canvas_w/canvas_h: resolução do clipe final (o estilo escala junto).
+        margin_v: distância até a borda inferior, em pixels do canvas final.
+            None = margem padrão do modo (layout capa+vídeo).
     """
     if subtitle_mode == "none":
         return
@@ -182,7 +208,7 @@ def generate_ass_subtitles(
         logger.warning(f"No words found between {start_time:.1f}s and {end_time:.1f}s")
         return
 
-    header = _ass_header()
+    header = _ass_header(canvas_w, canvas_h, margin_v)
 
     if subtitle_mode == "word_highlight":
         events = _generate_word_highlight_events(segment_words, start_offset=start_time)

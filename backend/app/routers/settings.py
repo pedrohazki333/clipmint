@@ -9,7 +9,15 @@ from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, field_validator
 
 from app.config import settings
-from app.services.layout import load_banner_colors
+from app.services.layout import (
+    BAR_DEFAULT_BG_HEX,
+    BAR_DEFAULT_FONT,
+    BAR_DEFAULT_TEXT_HEX,
+    BAR_FONTS,
+    available_bar_fonts,
+    load_banner_colors,
+    load_bar_style,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -125,3 +133,78 @@ async def reset_banner_colors() -> None:
     if path.exists():
         path.unlink()
         logger.info("Banner colors reset to default")
+
+
+# ─── Estilo da faixa divisória (modo streamer) ────────────────────────────────
+
+
+def _bar_style_file():
+    return settings.branding_dir / "bar_style.json"
+
+
+class BarStyle(BaseModel):
+    bg_color: str
+    text_color: str
+    font: str
+
+    @field_validator("bg_color", "text_color")
+    @classmethod
+    def _valid_hex(cls, v: str) -> str:
+        v = v.strip()
+        if not _HEX_RE.match(v):
+            raise ValueError("Cor inválida: use hexadecimal no formato #RRGGBB (ex: #101014)")
+        return _normalize_hex(v)
+
+    @field_validator("font")
+    @classmethod
+    def _known_font(cls, v: str) -> str:
+        v = v.strip()
+        if v not in BAR_FONTS:
+            raise ValueError(f"Fonte desconhecida: escolha uma de {', '.join(BAR_FONTS)}")
+        return v
+
+
+def _bar_style_payload(bg: str, text: str, font: str, customized: bool) -> dict:
+    return {
+        "bg_color": bg,
+        "text_color": text,
+        "font": font,
+        "customized": customized,
+        # A lista vai junto porque depende das fontes instaladas na máquina —
+        # o frontend não tem como saber quais existem.
+        "available_fonts": available_bar_fonts(),
+    }
+
+
+@router.get("/settings/bar-style")
+async def get_bar_style() -> dict:
+    """Cor de fundo, cor do texto e fonte da faixa com o nome do streamer."""
+    bg, text, font, customized = load_bar_style()
+    return _bar_style_payload(bg, text, font, customized)
+
+
+@router.put("/settings/bar-style")
+async def set_bar_style(style: BarStyle) -> dict:
+    """Define fundo, cor do texto e família da fonte da faixa divisória."""
+    settings.branding_dir.mkdir(parents=True, exist_ok=True)
+    _bar_style_file().write_text(
+        json.dumps({
+            "bg_color": style.bg_color,
+            "text_color": style.text_color,
+            "font": style.font,
+        }),
+        encoding="utf-8",
+    )
+    logger.info(
+        f"Bar style saved: bg={style.bg_color} text={style.text_color} font={style.font}"
+    )
+    return _bar_style_payload(style.bg_color, style.text_color, style.font, True)
+
+
+@router.delete("/settings/bar-style", status_code=204)
+async def reset_bar_style() -> None:
+    """Volta ao estilo padrão da faixa (fundo escuro, texto cinza claro)."""
+    path = _bar_style_file()
+    if path.exists():
+        path.unlink()
+        logger.info("Bar style reset to default")

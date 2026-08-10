@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import type { JobDetail } from "@/lib/types";
-import { getJob } from "@/lib/api";
+import { getApiErrorMessage, getJob, retryJob } from "@/lib/api";
 import JobStatus from "@/components/JobStatus";
 import ClipCard from "@/components/ClipCard";
 
@@ -15,7 +15,22 @@ export default function JobPage() {
   const { id } = useParams<{ id: string }>();
   const [job, setJob] = useState<JobDetail | null>(null);
   const [error, setError] = useState("");
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState("");
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  function stopPolling() {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  }
+
+  function startPolling() {
+    if (!intervalRef.current) {
+      intervalRef.current = setInterval(fetchJob, POLLING_INTERVAL);
+    }
+  }
 
   async function fetchJob() {
     try {
@@ -24,21 +39,30 @@ export default function JobPage() {
       setError("");
 
       // Para o polling quando chega em status terminal
-      if (TERMINAL_STATUSES.has(data.status) && intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
+      if (TERMINAL_STATUSES.has(data.status)) stopPolling();
     } catch {
       setError("Não foi possível carregar o job.");
     }
   }
 
+  async function handleRetry() {
+    setRetrying(true);
+    setRetryError("");
+    try {
+      await retryJob(id);
+      await fetchJob();
+      startPolling(); // o job voltou a rodar: volta a acompanhar
+    } catch (err) {
+      setRetryError(getApiErrorMessage(err, "Não foi possível retomar o job."));
+    } finally {
+      setRetrying(false);
+    }
+  }
+
   useEffect(() => {
     fetchJob();
-    intervalRef.current = setInterval(fetchJob, POLLING_INTERVAL);
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
+    startPolling();
+    return stopPolling;
   }, [id]);
 
   if (error) {
@@ -56,7 +80,13 @@ export default function JobPage() {
   }
 
   const readyClips = job.clips.filter((c) => c.status === "ready");
+  const failedClips = job.clips.filter((c) => c.status === "error");
   const allClips = job.clips;
+
+  // Retomar aproveita o que já ficou pronto — vale tanto para o job que falhou
+  // quanto para o que terminou com alguns clips com erro.
+  const canRetry =
+    job.status === "error" || (job.status === "done" && failedClips.length > 0);
 
   return (
     <div className="flex flex-col gap-8">
@@ -105,6 +135,28 @@ export default function JobPage() {
             {readyClips.length} clip{readyClips.length !== 1 ? "s" : ""} pronto{readyClips.length !== 1 ? "s" : ""}
             {allClips.length > readyClips.length && ` (${allClips.length - readyClips.length} com falha)`}
           </p>
+        )}
+
+        {canRetry && (
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleRetry}
+                disabled={retrying}
+                className="rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold text-white transition-colors"
+              >
+                {retrying ? "Retomando..." : "Retomar de onde parou"}
+              </button>
+              <span className="text-xs text-gray-500">
+                Reaproveita download, transcrição e análise
+                {readyClips.length > 0 &&
+                  ` · ${readyClips.length} clip${readyClips.length !== 1 ? "s" : ""} já pronto${readyClips.length !== 1 ? "s" : ""}`}
+                {failedClips.length > 0 &&
+                  ` · re-renderiza ${failedClips.length} clip${failedClips.length !== 1 ? "s" : ""}`}
+              </span>
+            </div>
+            {retryError && <p className="text-xs text-red-400">{retryError}</p>}
+          </div>
         )}
       </div>
 

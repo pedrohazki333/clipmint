@@ -1,17 +1,19 @@
 "use client";
 
 import { useState } from "react";
-import type { SubtitleMode } from "@/lib/types";
+import type { LayoutMode, SubtitleMode } from "@/lib/types";
 import SubtitleModeSelector from "./SubtitleModeSelector";
+import LayoutModeSelector from "./LayoutModeSelector";
 
 interface Props {
-  onSubmit: (url: string, subtitleMode: SubtitleMode) => Promise<void>;
+  onSubmit: (url: string, subtitleMode: SubtitleMode, layoutMode: LayoutMode) => Promise<void>;
   isLoading: boolean;
 }
 
 export default function UrlInput({ onSubmit, isLoading }: Props) {
   const [url, setUrl] = useState("");
   const [subtitleMode, setSubtitleMode] = useState<SubtitleMode>("word_highlight");
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>("cover");
   const [error, setError] = useState("");
 
   function isValidYouTubeUrl(u: string): boolean {
@@ -31,7 +33,7 @@ export default function UrlInput({ onSubmit, isLoading }: Props) {
       return;
     }
 
-    await onSubmit(url.trim(), subtitleMode);
+    await onSubmit(url.trim(), subtitleMode, layoutMode);
     setUrl("");
   }
 
@@ -52,6 +54,8 @@ export default function UrlInput({ onSubmit, isLoading }: Props) {
         />
         {error && <p className="text-sm text-red-400">{error}</p>}
       </div>
+
+      <LayoutModeSelector value={layoutMode} onChange={setLayoutMode} />
 
       <SubtitleModeSelector value={subtitleMode} onChange={setSubtitleMode} />
 

@@ -44,6 +44,15 @@ export async function deleteJob(jobId: string): Promise<void> {
   await api.delete(`/jobs/${jobId}`);
 }
 
+/**
+ * Retoma um job interrompido/falho reaproveitando download, transcrição,
+ * análise e clips já renderizados — só o que falta é refeito.
+ */
+export async function retryJob(jobId: string): Promise<Job> {
+  const { data } = await api.post<Job>(`/jobs/${jobId}/retry`);
+  return data;
+}
+
 export async function getClip(clipId: string): Promise<Clip> {
   const { data } = await api.get<Clip>(`/clips/${clipId}`);
   return data;
@@ -102,6 +111,38 @@ export async function saveBannerColors(
 
 export async function resetBannerColors(): Promise<void> {
   await api.delete("/settings/banner-colors");
+}
+
+/** Faixa divisória do modo streamer (onde o nome do streamer se repete). */
+export interface BarStyle {
+  bg_color: string;
+  text_color: string;
+  font: string;
+  customized: boolean;
+  /** Famílias instaladas na máquina do backend — a lista vem de lá. */
+  available_fonts: { key: string; label: string }[];
+}
+
+export async function getBarStyle(): Promise<BarStyle> {
+  const { data } = await api.get<BarStyle>("/settings/bar-style");
+  return data;
+}
+
+export async function saveBarStyle(
+  bg_color: string,
+  text_color: string,
+  font: string
+): Promise<BarStyle> {
+  const { data } = await api.put<BarStyle>("/settings/bar-style", {
+    bg_color,
+    text_color,
+    font,
+  });
+  return data;
+}
+
+export async function resetBarStyle(): Promise<void> {
+  await api.delete("/settings/bar-style");
 }
 
 export async function validateClip(

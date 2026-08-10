@@ -32,6 +32,285 @@ logger = logging.getLogger(__name__)
 CANVAS_W = 1080
 COVER_W, COVER_H = 1080, 768
 
+# ─── Geometria do modo streamer ───────────────────────────────────────────────
+
+_BAR_BG = (16, 16, 20, 255)
+_BAR_LOGO_FRAC = 0.62      # altura da logo em relação à altura da faixa
+
+# Nome do streamer repetido ao longo da faixa. Discreto de propósito: a faixa é
+# só a emenda entre os painéis, quem tem que puxar o olho é a cara e o jogo.
+_BAR_TEXT_FRAC = 0.40      # tamanho da fonte em relação à altura da faixa
+_BAR_TEXT_TRACKING = 0.18  # espaço entre letras, em frações do tamanho da fonte
+_BAR_TEXT_GAP = 2.4        # espaço entre repetições, em múltiplos do tamanho da fonte
+_BAR_TEXT_DOT = "•"
+_BAR_DOT_MIX = 0.45        # ponto separador: fração da cor do texto (resto é fundo)
+_BAR_HAIRLINE_MIX = 0.18   # fio de luz nas emendas, pela mesma mistura
+
+BAR_DEFAULT_BG_HEX = "#101014"
+# Este cinza é exatamente o que o branco a 60% de opacidade rendia sobre o fundo
+# escuro. Virou o padrão para a cor escolhida valer o que aparece: sem alfa
+# escondido, quem escolhe #FFFFFF recebe branco.
+BAR_DEFAULT_TEXT_HEX = "#9D9D9F"
+BAR_DEFAULT_FONT = "condensed"
+
+# Famílias oferecidas para o nome na faixa: chave → (rótulo, arquivos em ordem
+# de preferência). Só as que existem na máquina são oferecidas pela API.
+BAR_FONTS: dict[str, tuple[str, list[str]]] = {
+    "condensed": ("DejaVu Condensed", [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf",
+        "C:/Windows/Fonts/arialnb.ttf",
+    ]),
+    "sans": ("DejaVu Sans", [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "C:/Windows/Fonts/arialbd.ttf",
+    ]),
+    "inter": ("Inter", [
+        "/usr/share/fonts/opentype/inter/Inter-Bold.otf",
+        "/usr/share/fonts/truetype/inter/Inter-Bold.ttf",
+    ]),
+    "inter_black": ("Inter Black", [
+        "/usr/share/fonts/opentype/inter/Inter-Black.otf",
+        "/usr/share/fonts/truetype/inter/Inter-Black.ttf",
+    ]),
+    "montserrat": ("Montserrat", [
+        "/usr/share/fonts/opentype/montserrat/Montserrat-Bold.otf",
+        "/usr/share/fonts/truetype/montserrat/Montserrat-Bold.ttf",
+    ]),
+    "montserrat_black": ("Montserrat Black", [
+        "/usr/share/fonts/opentype/montserrat/Montserrat-Black.otf",
+        "/usr/share/fonts/truetype/montserrat/Montserrat-Black.ttf",
+    ]),
+    "serif": ("DejaVu Serif", [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
+        "C:/Windows/Fonts/timesbd.ttf",
+    ]),
+    "mono": ("DejaVu Mono", [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
+        "C:/Windows/Fonts/consolab.ttf",
+    ]),
+}
+
+
+class StreamerGeometry:
+    """
+    Painéis do layout streamer, em pixels do canvas final.
+
+      ┌──────────────┐  0
+      │   FACECAM    │
+      ├──────────────┤  facecam_h
+      │  faixa/logo  │
+      ├──────────────┤  game_y
+      │   GAMEPLAY   │
+      └──────────────┘  canvas_h
+
+    Alturas saem de frações do canvas (config), arredondadas para pares — o
+    x264 em yuv420p exige dimensões pares em cada painel.
+    """
+
+    def __init__(self, width: int, facecam_frac: float, bar_frac: float):
+        self.canvas_w = width - width % 2
+        self.canvas_h = int(self.canvas_w * 16 / 9) // 2 * 2
+        self.facecam_h = int(self.canvas_h * facecam_frac) // 2 * 2
+        self.bar_h = int(self.canvas_h * bar_frac) // 2 * 2
+        self.game_h = self.canvas_h - self.facecam_h - self.bar_h
+        if self.game_h % 2:  # sobra ímpar volta para a faixa
+            self.bar_h += 1
+            self.game_h -= 1
+
+    @property
+    def game_y(self) -> int:
+        return self.facecam_h + self.bar_h
+
+    @property
+    def facecam_aspect(self) -> float:
+        return self.canvas_w / self.facecam_h
+
+    @property
+    def game_aspect(self) -> float:
+        return self.canvas_w / self.game_h
+
+
+def streamer_geometry() -> StreamerGeometry:
+    from app.config import settings
+
+    return StreamerGeometry(
+        settings.streamer_output_width,
+        settings.streamer_facecam_frac,
+        settings.streamer_bar_frac,
+    )
+
+
+def _first_existing(paths: list[str]) -> Optional[str]:
+    for path in paths:
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def available_bar_fonts() -> list[dict]:
+    """Famílias de fonte instaladas nesta máquina, para a API oferecer."""
+    return [
+        {"key": key, "label": label}
+        for key, (label, paths) in BAR_FONTS.items()
+        if _first_existing(paths)
+    ]
+
+
+def load_bar_style() -> tuple[str, str, str, bool]:
+    """
+    Estilo configurado da faixa: (bg_hex, text_hex, font_key, customized).
+    Lê storage/branding/bar_style.json; sem arquivo (ou inválido), padrões.
+    """
+    from app.config import settings
+
+    path = settings.branding_dir / "bar_style.json"
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return (
+                data.get("bg_color") or BAR_DEFAULT_BG_HEX,
+                data.get("text_color") or BAR_DEFAULT_TEXT_HEX,
+                data.get("font") or BAR_DEFAULT_FONT,
+                True,
+            )
+        except (OSError, json.JSONDecodeError):
+            logger.warning(f"Could not read {path}, using default bar style")
+    return BAR_DEFAULT_BG_HEX, BAR_DEFAULT_TEXT_HEX, BAR_DEFAULT_FONT, False
+
+
+def _load_bar_font(font_key: str, size: int) -> ImageFont.FreeTypeFont:
+    """Fonte da faixa; família desconhecida ou ausente cai na lista genérica."""
+    label_paths = BAR_FONTS.get(font_key) or BAR_FONTS[BAR_DEFAULT_FONT]
+    path = _first_existing(label_paths[1])
+    if path:
+        return ImageFont.truetype(path, size)
+    logger.warning(f"Bar font {font_key!r} não encontrada — usando a fonte padrão")
+    return _load_font(size)
+
+
+def _mix(fg: tuple[int, int, int, int], bg: tuple[int, int, int, int], amount: float):
+    """Mistura fg sobre bg (amount=1 mantém fg). Mantém tons proporcionais à
+    cor escolhida, então detalhes discretos funcionam em faixa clara ou escura."""
+    return tuple(int(b + (f - b) * amount) for f, b in zip(fg[:3], bg[:3])) + (255,)
+
+
+def _tracked_width(text: str, font: ImageFont.FreeTypeFont, tracking: float) -> float:
+    """Largura do texto com espaçamento extra entre as letras."""
+    if not text:
+        return 0.0
+    return sum(font.getlength(c) for c in text) + tracking * (len(text) - 1)
+
+
+def _draw_tracked(draw, x: float, y: float, text: str, font, fill, tracking: float) -> None:
+    """Desenha letra a letra para conseguir o espaçamento (o PIL não tem tracking)."""
+    for char in text:
+        draw.text((x, y), char, font=font, fill=fill)
+        x += font.getlength(char) + tracking
+
+
+def _draw_repeating_name(
+    bar: Image.Image, draw, name: str, height: int,
+    font_key: str, text_rgba: tuple, dot_rgba: tuple,
+) -> None:
+    """
+    Escreve o nome repetido ao longo de toda a faixa, com um ponto entre as
+    repetições e o conjunto centralizado — as pontas saem cortadas de propósito,
+    é o que faz a faixa parecer contínua em vez de uma legenda solta no meio.
+    """
+    size = max(8, int(height * _BAR_TEXT_FRAC))
+    font = _load_bar_font(font_key, size)
+    tracking = size * _BAR_TEXT_TRACKING
+
+    name = _EMOJI_RE.sub("", name).strip().upper()
+    if not name:
+        return
+
+    unit_w = _tracked_width(name, font, tracking)
+    gap = size * _BAR_TEXT_GAP
+    period = unit_w + gap
+    repeats = int(bar.width // period) + 2
+    total = repeats * period - gap
+    x = (bar.width - total) / 2
+
+    ascent, descent = font.getmetrics()
+    y = (height - (ascent + descent)) / 2
+
+    dot_w = font.getlength(_BAR_TEXT_DOT)
+    for i in range(repeats):
+        start = x + i * period
+        _draw_tracked(draw, start, y, name, font, text_rgba, tracking)
+        if i < repeats - 1:
+            draw.text(
+                (start + unit_w + (gap - dot_w) / 2, y),
+                _BAR_TEXT_DOT, font=font, fill=dot_rgba,
+            )
+
+
+def generate_divider_bar(
+    width: int,
+    height: int,
+    output_path: str,
+    watermark_path: Optional[str] = None,
+    text: Optional[str] = None,
+    bg_color: Optional[str] = None,
+    text_color: Optional[str] = None,
+    font: Optional[str] = None,
+) -> str:
+    """
+    Faixa que separa a facecam do gameplay: barra com fios de luz nas duas
+    emendas.
+
+    Com `text` (nome do streamer), ele aparece repetido ao longo da faixa. Sem
+    ele, a faixa leva a logo do usuário centralizada — o nome tem prioridade
+    porque os dois juntos brigam pelo mesmo espaço.
+
+    Cor de fundo, cor do texto e família da fonte vêm da configuração salva
+    (storage/branding/bar_style.json) quando não são informadas. O ponto
+    separador e os fios de luz são derivados das cores escolhidas, então a
+    faixa continua legível tanto clara quanto escura.
+    """
+    if bg_color is None or text_color is None or font is None:
+        stored_bg, stored_text, stored_font, _ = load_bar_style()
+        bg_color = bg_color or stored_bg
+        text_color = text_color or stored_text
+        font = font or stored_font
+
+    bg_rgba = parse_hex_color(bg_color, _BAR_BG)
+    text_rgba = parse_hex_color(text_color, (255, 255, 255, 255))
+    dot_rgba = _mix(text_rgba, bg_rgba, _BAR_DOT_MIX)
+    hairline = _mix(text_rgba, bg_rgba, _BAR_HAIRLINE_MIX)
+
+    bar = Image.new("RGBA", (width, height), bg_rgba)
+    draw = ImageDraw.Draw(bar)
+    draw.line([(0, 0), (width, 0)], fill=hairline)
+    draw.line([(0, height - 1), (width, height - 1)], fill=hairline)
+
+    if text and text.strip():
+        _draw_repeating_name(bar, draw, text, height, font, text_rgba, dot_rgba)
+        bar.save(output_path)
+        logger.info(
+            f"Divider bar generated: {output_path} ({width}x{height}, "
+            f"name: {text!r}, font: {font}, bg: {bg_color}, text: {text_color})"
+        )
+        return output_path
+
+    if watermark_path and os.path.exists(watermark_path):
+        logo = Image.open(watermark_path).convert("RGBA")
+        target_h = max(1, int(height * _BAR_LOGO_FRAC))
+        target_w = max(1, int(logo.width * target_h / logo.height))
+        if target_w > width:  # logo muito larga: limita pela largura da faixa
+            target_w = width
+            target_h = max(1, int(logo.height * target_w / logo.width))
+        resized = logo.resize((target_w, target_h), Image.LANCZOS)
+        bar.alpha_composite(resized, ((width - target_w) // 2, (height - target_h) // 2))
+
+    bar.save(output_path)
+    logger.info(
+        f"Divider bar generated: {output_path} ({width}x{height}, "
+        f"logo: {'yes' if watermark_path else 'no'})"
+    )
+    return output_path
+
 # ─── Banner ───────────────────────────────────────────────────────────────────
 
 _FONT_CANDIDATES = [

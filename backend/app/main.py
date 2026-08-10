@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.database import init_db
 from app.routers import jobs, clips, references, settings as settings_router
+from app.workers.pipeline import reconcile_interrupted_jobs
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,6 +24,17 @@ async def lifespan(app: FastAPI):
     settings.ensure_dirs()
     await init_db()
     logger.info("Database initialized. Storage dirs ready.")
+
+    # O pipeline roda dentro deste processo: jobs que ainda constam como "em
+    # execução" são órfãos de um processo morto (reload, queda, Ctrl+C). Marca
+    # como erro para o frontend parar de esperar — dá para retomar depois.
+    interrupted = await reconcile_interrupted_jobs()
+    if interrupted:
+        logger.warning(
+            f"{len(interrupted)} job(s) interrompido(s) marcado(s) como erro. "
+            f"Retome com POST /api/jobs/<id>/retry."
+        )
+
     yield
     logger.info("ClipMint shutting down.")
 

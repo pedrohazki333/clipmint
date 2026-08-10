@@ -1,5 +1,17 @@
 export type SubtitleMode = "word_highlight" | "traditional" | "none";
 
+export type LayoutMode = "cover" | "streamer";
+
+/** Caixa da facecam em frações (0–1) da fonte. */
+export interface FacecamRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  confidence?: number;
+  method?: string;
+}
+
 export type JobStatus =
   | "queued"
   | "downloading"
@@ -19,6 +31,8 @@ export interface Job {
   duration_seconds: number | null;
   thumbnail_url: string | null;
   subtitle_mode: SubtitleMode;
+  layout_mode: LayoutMode;
+  facecam_rect: FacecamRect | null;
   status: JobStatus;
   error_message: string | null;
   created_at: string;
@@ -53,6 +67,9 @@ export interface JobDetail extends Job {
 export interface CreateJobPayload {
   youtube_url: string;
   subtitle_mode: SubtitleMode;
+  layout_mode?: LayoutMode;
+  /** Só no modo streamer; omitido = detecção automática da webcam. */
+  facecam_rect?: FacecamRect;
 }
 
 // ─── Referências (aprender com clipe viral de outro criador) ──────────────────

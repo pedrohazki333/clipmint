@@ -26,6 +26,10 @@ class Job(Base):
     video_path = Column(String, nullable=True)
     audio_path = Column(String, nullable=True)
     subtitle_mode = Column(String, default="word_highlight")  # word_highlight | traditional | none
+    layout_mode = Column(String, default="cover")   # cover (capa+banner) | streamer (facecam+gameplay)
+    # Caixa da facecam em frações da fonte, JSON {x,y,w,h,confidence,method}.
+    # Detectada no 1º clip e reusada nos demais; editável pelo usuário.
+    facecam_rect = Column(Text, nullable=True)
     status = Column(String, default="queued")  # queued|downloading|transcribing|analyzing|clipping|done|error
     error_message = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)

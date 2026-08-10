@@ -7,57 +7,10 @@ import {
   resetBannerColors,
   saveBannerColors,
 } from "@/lib/api";
+import ColorField, { HEX_RE, toFullHex } from "@/components/ColorField";
 
 const DEFAULT_BG = "#ED2828";
 const DEFAULT_TEXT = "#FFFFFF";
-const HEX_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
-
-/** Expande #RGB para #RRGGBB (input type=color só aceita 6 dígitos). */
-function toFullHex(value: string, fallback: string): string {
-  if (!HEX_RE.test(value)) return fallback;
-  const v = value.slice(1);
-  const full = v.length === 3 ? v.split("").map((c) => c + c).join("") : v;
-  return `#${full.toUpperCase()}`;
-}
-
-function ColorField({
-  label,
-  value,
-  onChange,
-  disabled,
-  fallback,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  disabled: boolean;
-  fallback: string;
-}) {
-  const valid = HEX_RE.test(value);
-  return (
-    <div className="flex items-center gap-2">
-      <span className="text-xs text-gray-500 w-16">{label}</span>
-      <input
-        type="color"
-        value={toFullHex(value, fallback)}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value.toUpperCase())}
-        className="h-8 w-10 rounded cursor-pointer bg-transparent border border-gray-700 disabled:opacity-50"
-      />
-      <input
-        type="text"
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="#RRGGBB"
-        maxLength={7}
-        className={`w-24 rounded-lg bg-gray-800 border px-2 py-1.5 text-sm font-mono text-gray-200 outline-none transition-colors ${
-          valid ? "border-gray-700 focus:border-gray-500" : "border-red-700"
-        }`}
-      />
-    </div>
-  );
-}
 
 export default function BannerColorSettings() {
   const [bgColor, setBgColor] = useState(DEFAULT_BG);

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import type { Job, Reference, SubtitleMode } from "@/lib/types";
+import type { Job, LayoutMode, Reference, SubtitleMode } from "@/lib/types";
 import { createJob, listJobs, listReferences, getApiErrorMessage } from "@/lib/api";
 import UrlInput from "@/components/UrlInput";
 import JobCard from "@/components/JobCard";
@@ -11,6 +11,7 @@ import ReferenceCard from "@/components/ReferenceCard";
 import LearnedPatterns from "@/components/LearnedPatterns";
 import WatermarkSettings from "@/components/WatermarkSettings";
 import BannerColorSettings from "@/components/BannerColorSettings";
+import BarStyleSettings from "@/components/BarStyleSettings";
 
 const ACTIVE_POLLING_INTERVAL = 5000; // ms — só roda enquanto houver job em andamento
 const TERMINAL_STATUSES = new Set(["done", "error"]);
@@ -60,11 +61,19 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [hasActiveWork, fetchJobs, fetchReferences]);
 
-  async function handleSubmit(url: string, subtitleMode: SubtitleMode) {
+  async function handleSubmit(
+    url: string,
+    subtitleMode: SubtitleMode,
+    layoutMode: LayoutMode,
+  ) {
     setIsSubmitting(true);
     setSubmitError("");
     try {
-      const job = await createJob({ youtube_url: url, subtitle_mode: subtitleMode });
+      const job = await createJob({
+        youtube_url: url,
+        subtitle_mode: subtitleMode,
+        layout_mode: layoutMode,
+      });
       router.push(`/jobs/${job.id}`);
     } catch (err: unknown) {
       setSubmitError(getApiErrorMessage(err, "Erro ao criar job. Tente novamente."));
@@ -111,6 +120,9 @@ export default function Home() {
 
       {/* Cores do banner */}
       <BannerColorSettings />
+
+      {/* Faixa do modo streamer */}
+      <BarStyleSettings />
 
       {/* Jobs list */}
       <div>

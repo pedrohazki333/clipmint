@@ -1,7 +1,8 @@
+import json
 import re
 from datetime import datetime
 from typing import Optional, List, Literal
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 _YOUTUBE_URL_RE = re.compile(
     r"^https?://(www\.|m\.)?(youtube\.com/(watch\?|shorts/|live/)|youtu\.be/)"
@@ -10,9 +11,27 @@ _YOUTUBE_URL_RE = re.compile(
 
 # ─── Job ───────────────────────────────────────────────────────────────────────
 
+class FacecamRectPayload(BaseModel):
+    """Caixa da facecam em frações (0–1) da fonte."""
+
+    x: float = Field(ge=0, lt=1)
+    y: float = Field(ge=0, lt=1)
+    w: float = Field(gt=0, le=1)
+    h: float = Field(gt=0, le=1)
+
+    @model_validator(mode="after")
+    def validate_inside_frame(self) -> "FacecamRectPayload":
+        if self.x + self.w > 1.0 or self.y + self.h > 1.0:
+            raise ValueError("A caixa da facecam ultrapassa os limites do vídeo")
+        return self
+
+
 class JobCreate(BaseModel):
     youtube_url: str
     subtitle_mode: Literal["word_highlight", "traditional", "none"] = "word_highlight"
+    layout_mode: Literal["cover", "streamer"] = "cover"
+    # Só no modo streamer: posição da facecam. Omitido = detecção automática.
+    facecam_rect: Optional[FacecamRectPayload] = None
 
     @field_validator("youtube_url")
     @classmethod
@@ -31,12 +50,31 @@ class JobResponse(BaseModel):
     duration_seconds: Optional[float]
     thumbnail_url: Optional[str]
     subtitle_mode: str
+    layout_mode: str = "cover"
+    facecam_rect: Optional[dict] = None
     status: str
     error_message: Optional[str]
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+    @field_validator("layout_mode", mode="before")
+    @classmethod
+    def default_layout_mode(cls, v: Optional[str]) -> str:
+        # Jobs criados antes da coluna existir vêm sem valor
+        return v or "cover"
+
+    @field_validator("facecam_rect", mode="before")
+    @classmethod
+    def parse_facecam_rect(cls, v):
+        """A coluna guarda JSON serializado; a API entrega o objeto."""
+        if not isinstance(v, str):
+            return v
+        try:
+            return json.loads(v)
+        except json.JSONDecodeError:
+            return None
 
 
 # ─── Clip ──────────────────────────────────────────────────────────────────────

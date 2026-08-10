@@ -48,6 +48,15 @@ def _fallback_result() -> dict:
     }
 
 
+def static_tracking() -> dict:
+    """
+    Resultado de crop estático (centralizado), usado quando o face tracking
+    está desligado em settings.face_tracking_enabled. Sem keyframes, o clipper
+    monta um `crop` fixo — o MediaPipe não chega a rodar.
+    """
+    return {**_fallback_result(), "method": "disabled"}
+
+
 def _fill_gaps(raw: list[Optional[float]]) -> list[float]:
     """Preenche frames sem detecção: carrega a última posição válida
     (e preenche o início com a primeira válida)."""
