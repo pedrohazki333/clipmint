@@ -6,14 +6,27 @@ gameplay, quase sempre encostado em um canto. Este módulo descobre onde esse
 retângulo está, em coordenadas relativas (0–1) da fonte, para o clipper cortar
 os dois painéis do mesmo vídeo.
 
-Estratégia em duas etapas:
+O layout, porém, só é fixo por trechos: o streamer troca de cena, dá zoom na
+cam, joga ela para o outro canto no meio da live. Por isso a saída é uma LINHA
+DO TEMPO (`CamPhase`) — uma fase por caixa, com o intervalo em que ela vale — e
+o clipper troca o recorte na hora certa. Cam parada devolve uma fase só.
 
-  1. Aglomerado de rostos — amostra frames ao longo do trecho e roda MediaPipe.
-     O rosto do streamer fica sempre na MESMA região (a cam não se move), então
-     a mediana das detecções é estável; detecções longe da mediana (rostos do
-     jogo, thumbnails, plateia) são descartadas como outliers.
+Estratégia em três etapas:
 
-  2. Encaixe nas bordas — a caixa derivada do rosto é só um palpite grosseiro
+  1. Aglomerado de rostos — amostra frames ao longo do trecho e roda MediaPipe,
+     guardando TODOS os rostos de cada frame. Cada aglomerado é um rosto
+     recorrente numa região da tela. Quem vence não é o rosto mais confiante nem
+     o maior, e sim o mais PERSISTENTE: a cam do streamer está em quase todo
+     frame, enquanto um popup de inscrito dura alguns segundos — era exatamente
+     assim que o alerta de sub roubava a cam do detector.
+
+  2. Fases — a cam não aparece em dois lugares ao mesmo tempo, então dois
+     aglomerados que dividem os mesmos frames são rostos concorrentes (o menor
+     cai fora); dois em janelas de tempo distintas são a mesma cam depois de se
+     mexer. A trilha resultante é quebrada onde a posição ou o tamanho do rosto
+     muda e se mantém mudada.
+
+  3. Encaixe nas bordas — a caixa derivada do rosto é só um palpite grosseiro
      (sai do tamanho do rosto), e sobra de gameplay no painel é justamente o que
      estraga o clipe. As bordas reais da cam são LINHAS RETAS que atravessam a
      caixa inteira, então a busca varre o frame mediano a partir do rosto para
@@ -25,7 +38,7 @@ Estratégia em duas etapas:
      Em empate, vence a borda mais PRÓXIMA do rosto: cortar um filete da cam é
      invisível, deixar vazar gameplay é o defeito visível.
 
-Sem rosto estável no trecho, retorna None — o clipper cai para um recorte
+Sem rosto estável no trecho, a lista volta vazia — o clipper cai para um recorte
 padrão no canto e o usuário pode corrigir manualmente pelo job.
 """
 
@@ -47,6 +60,19 @@ _DETECT_WIDTH = 960        # largura de trabalho (detecção não precisa de 4K)
 # Aglomeração
 _STABLE_RADIUS = 0.12      # distância máx. do centro mediano para contar como a cam
 _MIN_CONFIDENCE = 0.35     # fração mínima de frames com rosto estável
+
+# Rostos concorrentes (popup de inscrito, plateia, personagem do jogo)
+_CLUSTER_MIN_COVERAGE = 0.15  # presença mínima para um 2º aglomerado ser considerado
+_CLUSTER_OVERLAP = 0.25    # acima disso os dois dividem os mesmos frames: são rostos
+                           # diferentes convivendo na tela, não a cam que se moveu
+_CLUSTER_SIZE_RATIO = 2.5  # ...e o rosto tem que ter tamanho comparável ao principal
+
+# Mudanças de layout ao longo do clip (cam muda de canto, cena com zoom)
+_PHASE_MOVE = 0.06         # deslocamento do centro do rosto que denuncia outra caixa
+_PHASE_ZOOM = 1.45         # razão de área do rosto que denuncia zoom (e o inverso)
+_PHASE_CONFIRM = 2         # amostras seguidas para a mudança valer (anti-ruído)
+_MIN_PHASE_SAMPLES = 3     # fase menor que isso é absorvida pela vizinha
+_MAX_PHASES = 6            # teto de recortes por clip no filtergraph
 
 # Enquadramento derivado do rosto
 _BOX_FROM_FACE = 2.6       # altura da caixa ≈ 2.6x a altura do rosto (cabeça + ombros)
@@ -89,6 +115,43 @@ _CAM_INSET_MIN = 3         # ...com piso em pixels da RESOLUÇÃO DE DETECÇÃO:
 _EDGE_SNAP = 0.05          # só no fallback sem encaixe: quase colada na borda, encosta
 
 
+@dataclass(eq=False)
+class _Obs:
+    """Um rosto detectado num frame amostrado, em frações do frame."""
+
+    cx: float
+    cy: float
+    w: float
+    h: float
+    score: float
+
+
+class _Cluster:
+    """Rosto recorrente numa região da tela, ao longo dos frames amostrados."""
+
+    def __init__(self) -> None:
+        self.by_frame: dict[int, list[_Obs]] = {}
+        self._sum_x = 0.0
+        self._sum_y = 0.0
+        self._n = 0
+
+    def add(self, frame_idx: int, obs: _Obs) -> None:
+        self.by_frame.setdefault(frame_idx, []).append(obs)
+        self._sum_x += obs.cx
+        self._sum_y += obs.cy
+        self._n += 1
+
+    @property
+    def frames(self) -> set[int]:
+        return set(self.by_frame)
+
+    def center(self) -> tuple[float, float]:
+        return self._sum_x / self._n, self._sum_y / self._n
+
+    def median_area(self) -> float:
+        return _median([o.w * o.h for seen in self.by_frame.values() for o in seen])
+
+
 @dataclass
 class FacecamRect:
     """Caixa da facecam em frações (0–1) da fonte — independente de resolução."""
@@ -117,6 +180,28 @@ class FacecamRect:
 
     def as_dict(self) -> dict:
         return asdict(self)
+
+
+@dataclass
+class CamPhase:
+    """
+    Trecho do clip em que a facecam fica na mesma caixa.
+
+    Tempos em segundos relativos ao início do clip — é assim que o filtergraph
+    liga cada recorte (o `-ss` antes do `-i` zera o relógio do FFmpeg).
+    """
+
+    start: float
+    end: float
+    rect: FacecamRect
+
+    def as_dict(self) -> dict:
+        return {"start": self.start, "end": self.end, "rect": self.rect.as_dict()}
+
+
+def single_phase(rect: FacecamRect, duration: float) -> list[CamPhase]:
+    """Linha do tempo de uma fase só — cam parada, ou caixa dada pelo usuário."""
+    return [CamPhase(start=0.0, end=duration, rect=rect)]
 
 
 def default_rect(box_aspect: float = _DEFAULT_BOX_ASPECT) -> FacecamRect:
@@ -153,21 +238,27 @@ def rect_from_dict(data: Optional[dict]) -> Optional[FacecamRect]:
     return rect
 
 
-def detect_facecam(
+def detect_facecam_phases(
     video_path: str,
     start_time: float,
     end_time: float,
     box_aspect: float = _DEFAULT_BOX_ASPECT,
-) -> Optional[FacecamRect]:
+) -> list[CamPhase]:
     """
-    Localiza a caixa da facecam no trecho. Bloqueante — rodar via to_thread.
+    Linha do tempo da facecam no trecho. Bloqueante — rodar via to_thread.
+
+    O layout da live não é sagrado: o streamer troca de cena, dá zoom na cam,
+    joga ela para o outro canto. Por isso o retorno é uma LISTA de fases, cada
+    uma com a caixa que vale no seu intervalo (em segundos relativos ao início
+    do trecho). Uma cam parada devolve uma fase só.
 
     Args:
         box_aspect: proporção largura/altura desejada da caixa (a do painel do
             clipe final), usada para completar a caixa a partir do rosto.
 
     Returns:
-        FacecamRect em frações da fonte, ou None se não houver rosto estável.
+        Fases em ordem cronológica cobrindo o trecho inteiro; lista vazia se
+        não houver cam estável (o chamador decide o fallback).
     """
     import cv2
     import mediapipe as mp
@@ -188,72 +279,302 @@ def detect_facecam(
         frames = sorted(glob.glob(os.path.join(tmpdir, "f_*.jpg")))
         if not frames:
             logger.warning(f"Facecam: no frames extracted from {video_path}")
-            return None
+            return []
 
-        detections: list[tuple[float, float, float, float]] = []
-        with mp.solutions.face_detection.FaceDetection(
-            model_selection=1, min_detection_confidence=0.5
-        ) as detector:
-            for path in frames:
-                img = cv2.imread(path)
-                if img is None:
-                    continue
-                res = detector.process(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-                if not res.detections:
-                    continue
-                best = max(res.detections, key=lambda d: d.score[0])
-                b = best.location_data.relative_bounding_box
-                detections.append((
-                    b.xmin + b.width / 2, b.ymin + b.height / 2,
-                    max(b.width, 1e-3), max(b.height, 1e-3),
-                ))
+        per_frame = _detect_faces_per_frame(frames, cv2, mp)
+        track, confidence = _cam_track(per_frame, len(frames))
+        if track is None:
+            return []
 
-        if not detections:
-            logger.info("Facecam: no face detected in sampled frames")
-            return None
-
-        # A cam é estática: o aglomerado em torno da mediana é o rosto do streamer
-        med_cx = _median([d[0] for d in detections])
-        med_cy = _median([d[1] for d in detections])
-        stable = [
-            d for d in detections
-            if math.dist((d[0], d[1]), (med_cx, med_cy)) <= _STABLE_RADIUS
-        ]
-        confidence = len(stable) / len(frames)
-        if confidence < _MIN_CONFIDENCE:
-            logger.info(
-                f"Facecam: face cluster too unstable "
-                f"({len(stable)}/{len(frames)} frames = {confidence:.0%})"
+        spans = _phase_spans(track)
+        phases: list[CamPhase] = []
+        for i0, i1 in spans:
+            rect = _fit_phase(
+                frames[i0:i1 + 1], track[i0:i1 + 1], box_aspect, confidence, cv2, np
             )
-            return None
+            phases.append(
+                CamPhase(start=i0 * interval, end=(i1 + 1) * interval, rect=rect)
+            )
 
-        face_cx = _median([d[0] for d in stable])
-        face_cy = _median([d[1] for d in stable])
-        face_w = _median([d[2] for d in stable])
-        face_h = _median([d[3] for d in stable])
+    # As bordas da linha do tempo são das amostras, não do vídeo: estica para
+    # cobrir o trecho inteiro (senão sobra um buraco antes da 1ª/depois da última).
+    phases[0].start = 0.0
+    phases[-1].end = duration
 
-        # Mapas de borda estática: o que fica igual em todo frame é a moldura da
-        # cam, não o conteúdo dela nem o do jogo.
-        maps = _edge_maps(frames, cv2, np)
-        fitted = None
-        if maps is not None:
-            fitted = _fit_cam_rect(*maps, face_cx, face_cy, face_w, face_h, np)
+    logger.info(
+        f"Facecam: {len(phases)} fase(s) em {duration:.1f}s (confiança {confidence:.0%})"
+    )
+    for phase in phases:
+        r = phase.rect
+        logger.info(
+            f"  [{phase.start:5.1f}s–{phase.end:5.1f}s] {r.method}: "
+            f"x={r.x:.3f} y={r.y:.3f} w={r.w:.3f} h={r.h:.3f}"
+        )
+    return phases
 
-        if fitted is not None:
-            rect, method = fitted, "borders"
+
+def detect_facecam(
+    video_path: str,
+    start_time: float,
+    end_time: float,
+    box_aspect: float = _DEFAULT_BOX_ASPECT,
+) -> Optional[FacecamRect]:
+    """
+    Caixa única da facecam no trecho — a da fase mais longa.
+
+    Usada onde só cabe um retângulo (o que a UI mostra e o usuário edita); o
+    render usa detect_facecam_phases e acompanha as mudanças.
+    """
+    phases = detect_facecam_phases(video_path, start_time, end_time, box_aspect)
+    if not phases:
+        return None
+    return max(phases, key=lambda p: p.end - p.start).rect
+
+
+def _detect_faces_per_frame(frames: list[str], cv2, mp) -> list[list[_Obs]]:
+    """
+    TODOS os rostos de cada frame amostrado.
+
+    Guardar só o rosto de maior confiança por frame (o que esta função fazia
+    antes) é o que entregava a cam ao popup de inscrito: enquanto o alerta está
+    na tela, o rosto dele ganha o frame e o do streamer é jogado fora. Com todos
+    os rostos na mão, quem decide é a persistência — ver _cam_track.
+    """
+    per_frame: list[list[_Obs]] = []
+    with mp.solutions.face_detection.FaceDetection(
+        model_selection=1, min_detection_confidence=0.5
+    ) as detector:
+        for path in frames:
+            img = cv2.imread(path)
+            if img is None:
+                per_frame.append([])
+                continue
+            res = detector.process(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+            found: list[_Obs] = []
+            for det in res.detections or []:
+                b = det.location_data.relative_bounding_box
+                found.append(_Obs(
+                    cx=b.xmin + b.width / 2,
+                    cy=b.ymin + b.height / 2,
+                    w=max(b.width, 1e-3),
+                    h=max(b.height, 1e-3),
+                    score=float(det.score[0]),
+                ))
+            per_frame.append(found)
+    return per_frame
+
+
+def _cluster_observations(per_frame: list[list[_Obs]]) -> list[_Cluster]:
+    """
+    Agrupa os rostos por posição na tela. Cada aglomerado é um rosto recorrente:
+    o do streamer na cam, o do popup de inscrito, um personagem do jogo.
+    """
+    clusters: list[_Cluster] = []
+    ordered = sorted(
+        ((i, obs) for i, frame in enumerate(per_frame) for obs in frame),
+        key=lambda item: item[1].score,
+        reverse=True,
+    )
+    for frame_idx, obs in ordered:
+        for cluster in clusters:
+            if math.dist((obs.cx, obs.cy), cluster.center()) <= _STABLE_RADIUS:
+                cluster.add(frame_idx, obs)
+                break
         else:
-            # Sem bordas confiáveis: caixa aproximada a partir do rosto. Aqui o
-            # encosto nas bordas do frame ainda ajuda (a cam quase sempre está
-            # num canto); com encaixe real ele só estragaria a precisão.
-            rect = _snap_to_frame_edges(_box_from_face(face_cx, face_cy, face_h, box_aspect))
-            method = "faces"
+            new = _Cluster()
+            new.add(frame_idx, obs)
+            clusters.append(new)
+    return clusters
+
+
+def _cam_track(
+    per_frame: list[list[_Obs]], n_frames: int
+) -> tuple[Optional[list[Optional[_Obs]]], float]:
+    """
+    Escolhe, em cada frame, qual rosto é a facecam — e devolve a trilha.
+
+    O critério é PERSISTÊNCIA, não confiança nem tamanho: a cam do streamer está
+    em quase todo frame do trecho, um popup de inscrito dura alguns segundos.
+
+    Uma cam que MUDA de lugar vira dois aglomerados, e os dois são a cam. O que
+    separa esse caso de um segundo rosto qualquer é a CO-OCORRÊNCIA: a cam não
+    aparece em dois lugares ao mesmo tempo, então aglomerados que dividem os
+    mesmos frames são rostos concorrentes (popup, plateia, jogo) e o menor é
+    descartado; aglomerados em janelas de tempo distintas são a mesma cam depois
+    de se mexer, e entram na trilha.
+
+    Returns:
+        (trilha por frame — None onde não houve rosto da cam, confiança).
+        (None, 0.0) se nenhum aglomerado tem presença suficiente.
+    """
+    clusters = _cluster_observations(per_frame)
+    if not clusters:
+        logger.info("Facecam: no face detected in sampled frames")
+        return None, 0.0
+
+    clusters.sort(key=lambda c: (len(c.frames), c.median_area()), reverse=True)
+    primary = clusters[0]
+    accepted = [primary]
+
+    for cluster in clusters[1:]:
+        if len(cluster.frames) < _CLUSTER_MIN_COVERAGE * n_frames:
+            continue
+        # Divide frames com uma fase já aceita → é outro rosto, não a cam
+        if any(_frame_overlap(cluster, other) > _CLUSTER_OVERLAP for other in accepted):
+            continue
+        # Rosto de tamanho muito diferente não é o mesmo streamer mais perto
+        ratio = cluster.median_area() / max(primary.median_area(), 1e-9)
+        if not 1 / _CLUSTER_SIZE_RATIO <= ratio <= _CLUSTER_SIZE_RATIO:
+            continue
+        accepted.append(cluster)
+
+    covered = set()
+    for cluster in accepted:
+        covered |= cluster.frames
+    confidence = len(covered) / max(n_frames, 1)
+    if confidence < _MIN_CONFIDENCE:
+        logger.info(
+            f"Facecam: face cluster too unstable "
+            f"({len(covered)}/{n_frames} frames = {confidence:.0%})"
+        )
+        return None, 0.0
+
+    track: list[Optional[_Obs]] = [None] * n_frames
+    for cluster in accepted:
+        for frame_idx, seen in cluster.by_frame.items():
+            best = max(seen, key=lambda o: o.score)
+            current = track[frame_idx]
+            if current is None or best.score > current.score:
+                track[frame_idx] = best
+
+    if len(accepted) > 1:
+        logger.info(
+            f"Facecam: {len(accepted)} posições distintas da cam ao longo do trecho "
+            f"(a cam se moveu); {len(clusters) - len(accepted)} rosto(s) concorrente(s) "
+            f"descartado(s)"
+        )
+    return track, confidence
+
+
+def _frame_overlap(a: "_Cluster", b: "_Cluster") -> float:
+    """Fração dos frames do menor aglomerado que o outro também ocupa."""
+    smaller = min(len(a.frames), len(b.frames))
+    if smaller == 0:
+        return 0.0
+    return len(a.frames & b.frames) / smaller
+
+
+def _phase_spans(track: list[Optional[_Obs]]) -> list[tuple[int, int]]:
+    """
+    Quebra a trilha em fases: trechos em que a cam fica parada na mesma caixa.
+
+    A mudança precisa se CONFIRMAR em _PHASE_CONFIRM amostras seguidas — um
+    frame solto com o rosto deslocado é o streamer se mexendo na cadeira, não a
+    cam mudando de lugar. Frames sem rosto não quebram a fase (a cam continua
+    lá, o detector é que piscou).
+
+    Returns:
+        [(primeiro índice, último índice)] cobrindo todos os frames.
+    """
+    spans: list[tuple[int, int]] = []
+    start = 0
+    anchor: Optional[_Obs] = None
+    pending: list[int] = []
+
+    for i, obs in enumerate(track):
+        if obs is None:
+            continue
+        if anchor is None:
+            anchor = obs
+            continue
+        if _same_placement(obs, anchor):
+            pending.clear()
+            continue
+        pending.append(i)
+        if len(pending) >= _PHASE_CONFIRM:
+            cut = pending[0]
+            spans.append((start, cut - 1))
+            start, anchor, pending = cut, obs, []
+
+    spans.append((start, len(track) - 1))
+    return _merge_short_spans(spans)
+
+
+def _same_placement(obs: _Obs, anchor: _Obs) -> bool:
+    """Mesma posição e mesmo tamanho de rosto = a cam não mexeu."""
+    if math.dist((obs.cx, obs.cy), (anchor.cx, anchor.cy)) > _PHASE_MOVE:
+        return False
+    ratio = (obs.w * obs.h) / max(anchor.w * anchor.h, 1e-9)
+    return 1 / _PHASE_ZOOM <= ratio <= _PHASE_ZOOM
+
+
+def _merge_short_spans(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """
+    Junta fases curtas demais ao vizinho e limita o total.
+
+    Fase curta não tem frames suficientes para o encaixe nas bordas funcionar, e
+    cada fase extra é mais um recorte no filtergraph — o teto protege o render
+    de um trecho com detecção instável virando dezenas de painéis.
+    """
+    def length(span: tuple[int, int]) -> int:
+        return span[1] - span[0] + 1
+
+    def absorb(index: int) -> None:
+        left = spans[index - 1] if index > 0 else None
+        right = spans[index + 1] if index + 1 < len(spans) else None
+        into = index - 1 if right is None or (left and length(left) >= length(right)) else index + 1
+        lo, hi = min(spans[index][0], spans[into][0]), max(spans[index][1], spans[into][1])
+        spans[min(index, into)] = (lo, hi)
+        spans.pop(max(index, into))
+
+    changed = True
+    while changed and len(spans) > 1:
+        changed = False
+        for i, span in enumerate(spans):
+            if length(span) < _MIN_PHASE_SAMPLES:
+                absorb(i)
+                changed = True
+                break
+
+    while len(spans) > _MAX_PHASES:
+        absorb(min(range(len(spans)), key=lambda i: length(spans[i])))
+
+    return spans
+
+
+def _fit_phase(
+    frames: list[str],
+    track: list[Optional[_Obs]],
+    box_aspect: float,
+    confidence: float,
+    cv2,
+    np,
+) -> FacecamRect:
+    """Caixa da cam numa fase: encaixe nas bordas usando só os frames dela."""
+    seen = [obs for obs in track if obs is not None]
+    face_cx = _median([o.cx for o in seen])
+    face_cy = _median([o.cy for o in seen])
+    face_w = _median([o.w for o in seen])
+    face_h = _median([o.h for o in seen])
+
+    # Mapas de borda estática: o que fica igual em todo frame DA FASE é a moldura
+    # da cam, não o conteúdo dela nem o do jogo.
+    fitted = None
+    maps = _edge_maps(frames, cv2, np)
+    if maps is not None:
+        fitted = _fit_cam_rect(*maps, face_cx, face_cy, face_w, face_h, np)
+
+    if fitted is not None:
+        rect, method = fitted, "borders"
+    else:
+        # Sem bordas confiáveis: caixa aproximada a partir do rosto. Aqui o
+        # encosto nas bordas do frame ainda ajuda (a cam quase sempre está
+        # num canto); com encaixe real ele só estragaria a precisão.
+        rect = _snap_to_frame_edges(_box_from_face(face_cx, face_cy, face_h, box_aspect))
+        method = "faces"
 
     rect.confidence = confidence
     rect.method = method
-    logger.info(
-        f"Facecam detected ({method}, {confidence:.0%}): "
-        f"x={rect.x:.3f} y={rect.y:.3f} w={rect.w:.3f} h={rect.h:.3f}"
-    )
     return rect
 
 
@@ -566,34 +887,48 @@ def dodge_margin(src_w: int) -> int:
     return int(math.ceil(inset_in_source * 1.5)) + 4
 
 
-def gameplay_crop_x(src_w: int, crop_w: int, cam_px: Optional[tuple]) -> int:
+def gameplay_crop_x(src_w: int, crop_w: int, cam_px) -> int:
     """
     x da fatia de gameplay: centralizada, mas desviando da facecam quando ela
     invade o centro (dá para deslizar até a fatia sair de cima da cam sem
     ultrapassar os limites do frame).
 
+    `cam_px` é uma caixa (x, y, w, h) ou a lista das caixas de todas as fases —
+    a fatia é a mesma o clip inteiro, então precisa escapar de TODAS elas. Vale
+    testar cada caixa em vez da união: com a cam pulando de um canto para o
+    outro, a união cobre a tela toda e não sobraria desvio nenhum, quando na
+    verdade o centro está livre nos dois momentos.
+
     O desvio é da caixa da cam MAIS a folga de dodge_margin().
     """
-    centered = (src_w - crop_w) // 2
+    limit = src_w - crop_w
+    centered = _clamp((src_w - crop_w) // 2, 0, limit)
     if not cam_px:
-        return _clamp(centered, 0, src_w - crop_w)
+        return centered
+
+    boxes = [cam_px] if isinstance(cam_px, tuple) else list(cam_px)
+    if not boxes:
+        return centered
 
     margin = dodge_margin(src_w)
-    box_x, _, box_w, _ = cam_px
-    cam_x = max(0, box_x - margin)
-    cam_x1 = min(src_w, box_x + box_w + margin)
-    if cam_x1 <= centered or cam_x >= centered + crop_w:
-        return _clamp(centered, 0, src_w - crop_w)  # sem sobreposição
+    spans = [
+        (max(0, box[0] - margin), min(src_w, box[0] + box[2] + margin))
+        for box in boxes
+    ]
 
-    # Tenta os dois lados; fica com o menor deslocamento que couber no frame
-    options = []
-    if cam_x1 + crop_w <= src_w:
-        options.append(cam_x1)                       # à direita da cam
-    if cam_x - crop_w >= 0:
-        options.append(cam_x - crop_w)               # à esquerda da cam
-    if not options:
-        return _clamp(centered, 0, src_w - crop_w)   # não cabe: mantém o centro
-    return _clamp(min(options, key=lambda x: abs(x - centered)), 0, src_w - crop_w)
+    def clears_all(x: int) -> bool:
+        return all(x1 <= x or x0 >= x + crop_w for x0, x1 in spans)
+
+    if clears_all(centered):
+        return centered
+
+    # Encostar de um lado ou do outro de cada caixa; fica o menor deslocamento
+    # que couber no frame e escapar de todas as caixas ao mesmo tempo.
+    options = [x for x0, x1 in spans for x in (x1, x0 - crop_w) if 0 <= x <= limit]
+    viable = [x for x in options if clears_all(x)]
+    if not viable:
+        return centered  # não cabe em lugar nenhum: mantém o centro
+    return min(viable, key=lambda x: abs(x - centered))
 
 
 def _median(values: list[float]) -> float:

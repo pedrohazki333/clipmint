@@ -26,7 +26,12 @@ from pathlib import Path
 
 from app.config import settings
 from app.services.face_tracker import track_faces, static_tracking, SNAP_THRESHOLD
-from app.services.facecam import FacecamRect, gameplay_crop_x
+from app.services.facecam import (
+    CamPhase,
+    FacecamRect,
+    gameplay_crop_x,
+    single_phase,
+)
 from app.services.layout import (
     COVER_H,
     generate_banner,
@@ -267,7 +272,7 @@ async def cut_and_stack(
     end_time: float,
     words: list[dict],
     subtitle_mode: str,
-    facecam: FacecamRect,
+    facecam: FacecamRect | list[CamPhase],
     streamer_name: str = "",
 ) -> tuple[str, int]:
     """
@@ -283,8 +288,14 @@ async def cut_and_stack(
 
     Resolução vem de settings.streamer_output_width (padrão 1080x1920).
 
+    O streamer muda de cena no meio da live — a cam pula de canto, dá zoom.
+    `facecam` aceita a linha do tempo dessas mudanças (uma fase por caixa) e o
+    painel de cima troca de recorte na hora certa; uma caixa só significa cam
+    parada o clip inteiro.
+
     Args:
-        facecam: caixa da cam em frações da fonte (detectada ou manual).
+        facecam: caixa da cam em frações da fonte (detectada ou manual), ou a
+            lista de fases devolvida por facecam.detect_facecam_phases.
         streamer_name: nome repetido na faixa divisória (vazio = logo do usuário).
 
     Returns:
@@ -304,20 +315,28 @@ async def cut_and_stack(
 
     src_width, src_height = await get_video_dimensions(video_path)
 
-    cam_x, cam_y, cam_w, cam_h = facecam.to_pixels(src_width, src_height)
+    phases = _cam_phases(facecam, duration)
+    cam_boxes = [p.rect.to_pixels(src_width, src_height) for p in phases]
 
-    # Gameplay: fatia na proporção do painel de baixo, fechada pelo zoom
+    # Gameplay: fatia na proporção do painel de baixo, fechada pelo zoom.
+    # A fatia é a mesma o clip inteiro, então tem que escapar das caixas de
+    # TODAS as fases — desviar só da caixa atual deixaria a cam aparecer no
+    # painel de baixo depois que ela mudasse de lugar.
     zoom = max(1.0, settings.streamer_game_zoom)
     game_w, game_h = _gameplay_crop_size(src_width, src_height, geo.game_aspect, zoom)
-    game_x = gameplay_crop_x(src_width, game_w, (cam_x, cam_y, cam_w, cam_h))
+    game_x = gameplay_crop_x(src_width, game_w, cam_boxes)
     game_y = (src_height - game_h) // 2 // 2 * 2
 
     logger.info(
         f"[{job_id}] Source {src_width}x{src_height} | "
-        f"facecam crop {cam_w}x{cam_h}+{cam_x}+{cam_y} "
-        f"({facecam.method}, {facecam.confidence:.0%}) | "
-        f"gameplay crop {game_w}x{game_h}+{game_x}+{game_y} (zoom {zoom:.2f}x)"
+        f"gameplay crop {game_w}x{game_h}+{game_x}+{game_y} (zoom {zoom:.2f}x) | "
+        f"{len(phases)} fase(s) de facecam"
     )
+    for phase, (bx, by, bw, bh) in zip(phases, cam_boxes):
+        logger.info(
+            f"[{job_id}]   facecam [{phase.start:.1f}s–{phase.end:.1f}s] "
+            f"{bw}x{bh}+{bx}+{by} ({phase.rect.method}, {phase.rect.confidence:.0%})"
+        )
 
     # Faixa divisória com o nome do streamer repetido
     bar_path = str(clip_dir / f"{clip_id}_bar.png")
@@ -327,21 +346,43 @@ async def cut_and_stack(
     )
 
     # ── Filter_complex ────────────────────────────────────────────────────────
-    # A fonte é consumida duas vezes (cam + gameplay), então precisa de split.
+    # A fonte alimenta o gameplay e um recorte por fase da cam, daí o split.
+    #
+    # Cada fase é um crop ESTÁTICO próprio, e a troca no tempo é feita pelo
+    # `enable` do overlay. Mudar o crop no meio do stream (sendcmd com w/h
+    # variáveis) seria o caminho óbvio, mas trava o FFmpeg: o filtro seguinte
+    # teria que se reconfigurar a cada mudança de tamanho.
+    cam_labels = [f"cam{i}" for i in range(len(phases))]
     parts = [
-        "[0:v]split=2[fcsrc][gpsrc]",
+        f"[0:v]split={len(phases) + 1}[gpsrc]"
+        + "".join(f"[fc{i}]" for i in range(len(phases)))
+    ]
+    for i, (cam_x, cam_y, cam_w, cam_h) in enumerate(cam_boxes):
         # A caixa detectada raramente bate com a proporção do painel: amplia
         # até cobrir e recorta o excedente pelo centro (sem barras pretas).
-        f"[fcsrc]crop={cam_w}:{cam_h}:{cam_x}:{cam_y},"
-        f"scale={geo.canvas_w}:{geo.facecam_h}:"
-        f"force_original_aspect_ratio=increase:flags=lanczos,"
-        f"crop={geo.canvas_w}:{geo.facecam_h}[cam]",
+        parts.append(
+            f"[fc{i}]crop={cam_w}:{cam_h}:{cam_x}:{cam_y},"
+            f"scale={geo.canvas_w}:{geo.facecam_h}:"
+            f"force_original_aspect_ratio=increase:flags=lanczos,"
+            f"crop={geo.canvas_w}:{geo.facecam_h}[{cam_labels[i]}]"
+        )
+    parts.append(
         f"[gpsrc]crop={game_w}:{game_h}:{game_x}:{game_y},"
         f"scale={geo.canvas_w}:{geo.game_h}:flags=lanczos,"
-        f"pad={geo.canvas_w}:{geo.canvas_h}:0:{geo.game_y}:black[base]",
-        "[base][cam]overlay=0:0[withcam]",
-        f"[withcam][1:v]overlay=0:{geo.facecam_h}[withbar]",
-    ]
+        f"pad={geo.canvas_w}:{geo.canvas_h}:0:{geo.game_y}:black[base]"
+    )
+
+    # A 1ª fase é a camada de baixo (sempre desenhada) e cada fase seguinte é
+    # sobreposta a partir do seu início. Assim vale sempre a última fase que já
+    # começou — sem intervalo descoberto entre uma fase e a próxima.
+    last_label = "base"
+    for i, phase in enumerate(phases):
+        out = f"withcam{i}"
+        enable = "" if i == 0 else f":enable='gte(t,{phase.start:.3f})'"
+        parts.append(f"[{last_label}][{cam_labels[i]}]overlay=0:0{enable}[{out}]")
+        last_label = out
+
+    parts.append(f"[{last_label}][1:v]overlay=0:{geo.facecam_h}[withbar]")
     last_label = "withbar"
 
     if subtitle_mode != "none":
@@ -388,6 +429,30 @@ async def cut_and_stack(
     await _log_clip_quality(job_id, clip_id, final_path, file_size)
 
     return final_path, file_size
+
+
+def _cam_phases(
+    facecam: FacecamRect | list[CamPhase], duration: float
+) -> list[CamPhase]:
+    """
+    Normaliza o argumento para uma linha do tempo válida.
+
+    Aceita a caixa única (manual ou de um detector antigo) e a lista de fases.
+    As fases são ordenadas e presas ao intervalo do clip: uma fase que comece
+    depois do fim nunca apareceria, e o `enable` do overlay compara com o
+    relógio do filtergraph, que começa em zero.
+    """
+    if isinstance(facecam, FacecamRect):
+        return single_phase(facecam, duration)
+
+    phases = sorted(
+        (p for p in facecam if p.start < duration), key=lambda p: p.start
+    )
+    if not phases:
+        raise ValueError("Linha do tempo da facecam vazia")
+    phases[0] = CamPhase(0.0, min(phases[0].end, duration), phases[0].rect)
+    phases[-1] = CamPhase(phases[-1].start, duration, phases[-1].rect)
+    return phases
 
 
 def _gameplay_crop_size(

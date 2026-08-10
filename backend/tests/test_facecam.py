@@ -9,7 +9,11 @@ import numpy as np
 import pytest
 
 from app.services.facecam import (
+    CamPhase,
     FacecamRect,
+    _Obs,
+    _cam_track,
+    _phase_spans,
     _box_from_face,
     _fit_cam_rect,
     default_rect,
@@ -17,7 +21,7 @@ from app.services.facecam import (
     gameplay_crop_x,
     rect_from_dict,
 )
-from app.services.clipper import _gameplay_crop_size
+from app.services.clipper import _cam_phases, _gameplay_crop_size
 from app.services.layout import StreamerGeometry
 
 
@@ -369,3 +373,138 @@ def test_gameplay_crop_limits_by_width_on_narrow_source():
 
     assert w == 800
     assert w / h == pytest.approx(geo.game_aspect, rel=0.005)
+
+
+# ─── Quem é a facecam (persistência vs. rostos concorrentes) ──────────────────
+
+def _obs(cx, cy, size=0.1, score=0.9):
+    return _Obs(cx=cx, cy=cy, w=size, h=size * 1.4, score=score)
+
+
+def test_sub_popup_does_not_steal_the_cam():
+    """
+    O alerta de inscrito entra por alguns segundos com um rosto maior e mais
+    confiante que o do streamer. Quem vence é a presença, não a confiança.
+    """
+    per_frame = []
+    for i in range(24):
+        frame = [_obs(0.85, 0.15)]
+        if 8 <= i <= 13:
+            frame.append(_obs(0.35, 0.55, size=0.18, score=0.99))
+        per_frame.append(frame)
+
+    track, confidence = _cam_track(per_frame, 24)
+
+    assert {round(o.cx, 2) for o in track if o} == {0.85}
+    assert confidence == pytest.approx(1.0)
+
+
+def test_cam_that_changes_corner_keeps_both_positions():
+    """Duas posições em janelas de tempo distintas são a mesma cam se movendo."""
+    per_frame = [[_obs(0.85, 0.15)] for _ in range(12)]
+    per_frame += [[_obs(0.12, 0.15)] for _ in range(12)]
+
+    track, _ = _cam_track(per_frame, 24)
+
+    assert {round(o.cx, 2) for o in track if o} == {0.85, 0.12}
+
+
+def test_no_persistent_face_gives_up():
+    """Só o popup e mais nada: sem cam, o chamador cai no palpite de canto."""
+    per_frame = [[] for _ in range(24)]
+    for i in range(8, 13):
+        per_frame[i] = [_obs(0.35, 0.55, size=0.18, score=0.99)]
+
+    track, confidence = _cam_track(per_frame, 24)
+
+    assert track is None and confidence == 0.0
+
+
+# ─── Fases (a cam muda de lugar ou dá zoom no meio do clip) ───────────────────
+
+def test_still_cam_is_a_single_phase():
+    assert _phase_spans([_obs(0.8, 0.2) for _ in range(10)]) == [(0, 9)]
+
+
+def test_cam_moving_splits_the_timeline():
+    track = [_obs(0.8, 0.2) for _ in range(6)] + [_obs(0.15, 0.2) for _ in range(6)]
+
+    assert _phase_spans(track) == [(0, 5), (6, 11)]
+
+
+def test_cam_zooming_splits_the_timeline():
+    """Mesma posição, rosto muito maior: a cena mudou de enquadramento."""
+    track = [_obs(0.8, 0.2, size=0.10) for _ in range(6)]
+    track += [_obs(0.8, 0.2, size=0.16) for _ in range(6)]
+
+    assert _phase_spans(track) == [(0, 5), (6, 11)]
+
+
+def test_one_off_frame_does_not_split_the_timeline():
+    """Streamer se mexendo na cadeira (ou detecção ruim) não é troca de cena."""
+    track = [_obs(0.8, 0.2)] * 5 + [_obs(0.2, 0.6)] + [_obs(0.8, 0.2)] * 5
+
+    assert _phase_spans(track) == [(0, 10)]
+
+
+def test_frames_without_face_stay_in_the_current_phase():
+    track = [_obs(0.8, 0.2)] * 4 + [None, None] + [_obs(0.8, 0.2)] * 4
+
+    assert _phase_spans(track) == [(0, 9)]
+
+
+def test_phase_count_is_capped():
+    """Detecção instável não pode virar dezenas de recortes no filtergraph."""
+    track = []
+    for i in range(20):
+        track += [_obs(0.1 + 0.04 * i, 0.2)] * 3
+
+    spans = _phase_spans(track)
+
+    assert len(spans) <= 6
+    assert spans[0][0] == 0 and spans[-1][1] == len(track) - 1
+    assert all(a[1] + 1 == b[0] for a, b in zip(spans, spans[1:]))  # sem buracos
+
+
+# ─── Fatia de gameplay com a cam em vários lugares ────────────────────────────
+
+def test_gameplay_slice_dodges_every_phase_box():
+    """Cam nos dois cantos: a fatia tem que escapar das duas, não da união."""
+    cams = [(60, 700, 520, 340), (1520, 40, 360, 260)]
+
+    x = gameplay_crop_x(1920, 700, cams)
+
+    for bx, _, bw, _ in cams:
+        assert x >= bx + bw or x + 700 <= bx
+
+
+def test_gameplay_slice_centers_when_no_position_clears_all_boxes():
+    cams = [(60, 700, 520, 340), (1520, 40, 360, 260)]
+
+    assert gameplay_crop_x(1920, 920, cams) == (1920 - 920) // 2
+
+
+# ─── Linha do tempo entregue ao filtergraph ───────────────────────────────────
+
+def test_single_rect_becomes_one_phase_covering_the_clip():
+    """Caixa manual (ou cam parada) vale o clip inteiro."""
+    rect = FacecamRect(x=0.8, y=0.0, w=0.2, h=0.3)
+
+    phases = _cam_phases(rect, duration=30.0)
+
+    assert len(phases) == 1
+    assert (phases[0].start, phases[0].end) == (0.0, 30.0)
+
+
+def test_phases_are_clamped_to_the_clip_window():
+    """
+    A 1ª fase começa em 0 e a última vai até o fim: o `enable` do overlay
+    compara com o relógio do filtergraph, que começa zerado pelo -ss.
+    """
+    rect = FacecamRect(x=0.8, y=0.0, w=0.2, h=0.3)
+    phases = _cam_phases(
+        [CamPhase(6.0, 12.0, rect), CamPhase(0.5, 6.0, rect), CamPhase(99.0, 120.0, rect)],
+        duration=10.0,
+    )
+
+    assert [(p.start, p.end) for p in phases] == [(0.0, 6.0), (6.0, 10.0)]

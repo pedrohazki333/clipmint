@@ -31,7 +31,7 @@ async def create_job(
         youtube_url=payload.youtube_url,
         subtitle_mode=payload.subtitle_mode,
         layout_mode=payload.layout_mode,
-        # Sem caixa informada, o pipeline detecta a facecam no primeiro clip
+        # Sem caixa informada, o pipeline detecta a facecam clip a clip
         facecam_rect=(
             payload.facecam_rect.model_dump_json() if payload.facecam_rect else None
         ),

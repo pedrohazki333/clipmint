@@ -37,10 +37,11 @@ from app.services.transcriber import transcribe_audio
 from app.services.analyzer import analyze_virality
 from app.services.clipper import cut_and_crop, cut_and_stack
 from app.services.facecam import (
-    FacecamRect,
+    CamPhase,
     default_rect,
-    detect_facecam,
+    detect_facecam_phases,
     rect_from_dict,
+    single_phase,
 )
 from app.services.layout import streamer_geometry
 from app.workers import joblock
@@ -285,46 +286,71 @@ async def _create_clip_records(
     return tasks
 
 
+def _manual_rect(facecam_json: str | None):
+    """
+    Caixa que o USUÁRIO informou no job (None se não houver ou for ilegível).
+
+    A caixa que o detector gravou no job também mora nesta coluna, mas serve só
+    para a UI mostrar o que foi usado: aceitá-la aqui congelaria a detecção do
+    primeiro clip para o job inteiro num resume — exatamente o que a detecção
+    por clip existe para evitar. O método distingue as duas (o payload do
+    usuário não traz método, e rect_from_dict assume 'manual').
+    """
+    if not facecam_json:
+        return None
+    try:
+        rect = rect_from_dict(json.loads(facecam_json))
+    except json.JSONDecodeError:
+        return None
+    return rect if rect and rect.method == "manual" else None
+
+
 async def _resolve_facecam(
     job_id: str,
     video_path: str,
     facecam_json: str | None,
     start_time: float,
     end_time: float,
-) -> FacecamRect:
+    store: bool,
+) -> list[CamPhase]:
     """
-    Define a caixa da facecam do job, nesta ordem:
-      1. a informada pelo usuário (salva no job);
-      2. detecção automática no trecho do primeiro clip;
+    Linha do tempo da facecam PARA ESTE CLIP, nesta ordem:
+      1. a caixa informada pelo usuário (vale para o job inteiro);
+      2. detecção automática no trecho do próprio clip;
       3. canto inferior direito (palpite) — o render nunca falha por isso.
 
-    O resultado fica salvo no job, então a UI mostra o que foi usado e o
-    usuário pode corrigir sem o pipeline ter que detectar de novo.
+    A detecção é por clip, e não uma vez por job, porque o layout da live muda
+    ao longo do vídeo: a cam que estava à direita no minuto 3 pode estar à
+    esquerda no minuto 40. Dentro do clip, as mudanças viram fases (o painel
+    troca de recorte na hora certa).
+
+    Com store=True o resultado vai para o job — é o que a UI mostra e o usuário
+    edita. Só o primeiro clip grava, senão cada clip sobrescreveria o anterior.
     """
-    if facecam_json:
-        try:
-            manual = rect_from_dict(json.loads(facecam_json))
-        except json.JSONDecodeError:
-            manual = None
-        if manual:
-            logger.info(f"[{job_id}] Facecam: using rect from job ({manual.method})")
-            return manual
+    duration = end_time - start_time
+
+    manual = _manual_rect(facecam_json)
+    if manual:
+        logger.info(f"[{job_id}] Facecam: using rect from job ({manual.method})")
+        return single_phase(manual, duration)
 
     geo = streamer_geometry()
-    detected = await asyncio.to_thread(
-        detect_facecam, video_path, start_time, end_time, geo.facecam_aspect
+    phases = await asyncio.to_thread(
+        detect_facecam_phases, video_path, start_time, end_time, geo.facecam_aspect
     )
-    if detected is None:
-        detected = default_rect(geo.facecam_aspect)
+    if not phases:
+        phases = single_phase(default_rect(geo.facecam_aspect), duration)
         logger.warning(
             f"[{job_id}] Facecam not found — falling back to bottom-right corner. "
             f"Ajuste a caixa no job para corrigir o enquadramento."
         )
 
-    await _update_job_status(
-        job_id, "clipping", facecam_rect=json.dumps(detected.as_dict())
-    )
-    return detected
+    if store:
+        dominant = max(phases, key=lambda p: p.end - p.start).rect
+        await _update_job_status(
+            job_id, "clipping", facecam_rect=json.dumps(dominant.as_dict())
+        )
+    return phases
 
 
 async def run_pipeline(job_id: str, resume: bool = False) -> None:
@@ -469,23 +495,21 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
             )
             await db.commit()
 
-        # No modo streamer a facecam é um retângulo fixo da live: detecta uma
-        # vez (no trecho do primeiro clip) e reusa em todos os clips do job.
-        facecam = None
-        if layout_mode == "streamer":
-            facecam = await _resolve_facecam(
-                job_id=job_id,
-                video_path=metadata.video_path,
-                facecam_json=facecam_json,
-                start_time=pending[0].start,
-                end_time=pending[0].end,
-            )
-
         # Processa cada clip pendente
         failures: list[str] = []
-        for task in pending:
+        for index, task in enumerate(pending):
             try:
                 if layout_mode == "streamer":
+                    # O layout da live muda ao longo do vídeo: cada clip tem a
+                    # sua própria linha do tempo de facecam.
+                    facecam = await _resolve_facecam(
+                        job_id=job_id,
+                        video_path=metadata.video_path,
+                        facecam_json=facecam_json,
+                        start_time=task.start,
+                        end_time=task.end,
+                        store=index == 0,
+                    )
                     file_path, file_size = await cut_and_stack(
                         job_id=job_id,
                         clip_id=task.clip_id,
