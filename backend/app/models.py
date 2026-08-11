@@ -27,6 +27,9 @@ class Job(Base):
     audio_path = Column(String, nullable=True)
     subtitle_mode = Column(String, default="word_highlight")  # word_highlight | traditional | none
     layout_mode = Column(String, default="cover")   # cover (capa+banner) | streamer (facecam+gameplay)
+    # Muda a rubrica da análise (critérios de podcast x gameplay) e define em
+    # qual conta o clip é postado no cronograma. Default vem do layout_mode.
+    source_type = Column(String, default="podcast")  # podcast | gameplay
     # Caixa da facecam em frações da fonte, JSON {x,y,w,h,confidence,method}.
     # Detectada no 1º clip e reusada nos demais; editável pelo usuário.
     facecam_rect = Column(Text, nullable=True)
@@ -113,7 +116,21 @@ class Clip(Base):
     start_time = Column(Float, nullable=False)
     end_time = Column(Float, nullable=False)
     duration = Column(Float, nullable=False)
-    virality_score = Column(Float, nullable=False)
+    virality_score = Column(Float, nullable=False)  # 0-10, é o final_score/10
+    # Eixos da rubrica (0-10 cada). Guardados individualmente porque o
+    # cronograma escolhe o clip de cada horário por um eixo específico —
+    # 07:00 pega o maior hook_score, 22:30 o maior loopability_score.
+    hook_score = Column(Float, nullable=True)
+    retention_score = Column(Float, nullable=True)
+    shareability_score = Column(Float, nullable=True)
+    loopability_score = Column(Float, nullable=True)
+    comment_bait_score = Column(Float, nullable=True)
+    verdict = Column(String, nullable=True)         # post | revisar_corte
+    weak_points_json = Column(String, nullable=True)  # JSON array de trechos fracos
+    trim_reason = Column(String, nullable=True)     # por que o corte é esse
+    # Trechos costurados num clipe só, JSON [[ini,fim],...] (só Siege).
+    # Nulo = clipe contínuo comum entre start_time e end_time.
+    segments_json = Column(Text, nullable=True)
     hook = Column(String, nullable=True)
     reason = Column(String, nullable=True)
     tags_json = Column(String, nullable=True)       # JSON array de tags

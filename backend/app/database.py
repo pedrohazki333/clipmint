@@ -27,9 +27,28 @@ class Base(DeclarativeBase):
 # Colunas adicionadas depois que a tabela já existia. create_all() só cria
 # tabelas novas — não altera as antigas — e o projeto não usa Alembic, então o
 # startup completa as que faltam. (tabela, coluna, definição SQL)
+# SQL rodado uma única vez, logo após a coluna ser criada. Serve para colunas
+# cujo DEFAULT não descreve as linhas antigas — sem isso todo job de gameplay
+# já existente viraria 'podcast' e o cronograma postaria na conta errada.
+_BACKFILL = {
+    ("jobs", "source_type"): (
+        "UPDATE jobs SET source_type = 'gameplay' WHERE layout_mode = 'streamer'"
+    ),
+}
+
 _ADDED_COLUMNS = [
     ("jobs", "layout_mode", "VARCHAR DEFAULT 'cover'"),
     ("jobs", "facecam_rect", "TEXT"),
+    ("jobs", "source_type", "VARCHAR DEFAULT 'podcast'"),
+    ("clips", "hook_score", "FLOAT"),
+    ("clips", "retention_score", "FLOAT"),
+    ("clips", "shareability_score", "FLOAT"),
+    ("clips", "loopability_score", "FLOAT"),
+    ("clips", "comment_bait_score", "FLOAT"),
+    ("clips", "verdict", "VARCHAR"),
+    ("clips", "weak_points_json", "TEXT"),
+    ("clips", "trim_reason", "TEXT"),
+    ("clips", "segments_json", "TEXT"),
 ]
 
 
@@ -59,6 +78,13 @@ def _add_missing_columns(conn) -> None:
             continue
         conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
         logger.info(f"Migration: {table}.{column} added")
+
+        backfill = _BACKFILL.get((table, column))
+        if backfill:
+            result = conn.execute(text(backfill))
+            logger.info(
+                f"Migration: {table}.{column} backfilled ({result.rowcount} linha(s))"
+            )
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

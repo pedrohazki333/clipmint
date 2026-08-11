@@ -1,20 +1,54 @@
 "use client";
 
 import { useState } from "react";
-import type { LayoutMode, SubtitleMode } from "@/lib/types";
+import type { LayoutMode, SourceType, SubtitleMode } from "@/lib/types";
 import SubtitleModeSelector from "./SubtitleModeSelector";
 import LayoutModeSelector from "./LayoutModeSelector";
+import SourceTypeSelector from "./SourceTypeSelector";
 
 interface Props {
-  onSubmit: (url: string, subtitleMode: SubtitleMode, layoutMode: LayoutMode) => Promise<void>;
+  onSubmit: (
+    url: string,
+    subtitleMode: SubtitleMode,
+    layoutMode: LayoutMode,
+    sourceType: SourceType,
+  ) => Promise<void>;
   isLoading: boolean;
+  /** Fixa o nicho (páginas de conta): o seletor some e o valor não muda. */
+  lockedSource?: SourceType;
+  /** Layout inicial sugerido pela página. */
+  defaultLayout?: LayoutMode;
 }
 
-export default function UrlInput({ onSubmit, isLoading }: Props) {
+/** O layout escolhido é o melhor palpite do tipo de conteúdo. */
+function inferSourceType(layout: LayoutMode): SourceType {
+  return layout === "streamer" ? "gameplay" : "podcast";
+}
+
+export default function UrlInput({
+  onSubmit,
+  isLoading,
+  lockedSource,
+  defaultLayout = "cover",
+}: Props) {
   const [url, setUrl] = useState("");
   const [subtitleMode, setSubtitleMode] = useState<SubtitleMode>("word_highlight");
-  const [layoutMode, setLayoutMode] = useState<LayoutMode>("cover");
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>(defaultLayout);
+  const [sourceType, setSourceType] = useState<SourceType>(lockedSource ?? "podcast");
+  // Enquanto o usuário não escolher à mão, o tipo acompanha o layout.
+  const [sourceTouched, setSourceTouched] = useState(false);
   const [error, setError] = useState("");
+
+  function handleLayoutChange(mode: LayoutMode) {
+    setLayoutMode(mode);
+    // Com o nicho travado pela página, o layout não pode arrastá-lo junto.
+    if (!lockedSource && !sourceTouched) setSourceType(inferSourceType(mode));
+  }
+
+  function handleSourceChange(type: SourceType) {
+    setSourceType(type);
+    setSourceTouched(true);
+  }
 
   function isValidYouTubeUrl(u: string): boolean {
     return /(?:youtube\.com\/watch\?v=|youtu\.be\/)/.test(u);
@@ -33,7 +67,7 @@ export default function UrlInput({ onSubmit, isLoading }: Props) {
       return;
     }
 
-    await onSubmit(url.trim(), subtitleMode, layoutMode);
+    await onSubmit(url.trim(), subtitleMode, layoutMode, sourceType);
     setUrl("");
   }
 
@@ -55,7 +89,15 @@ export default function UrlInput({ onSubmit, isLoading }: Props) {
         {error && <p className="text-sm text-red-400">{error}</p>}
       </div>
 
-      <LayoutModeSelector value={layoutMode} onChange={setLayoutMode} />
+      <LayoutModeSelector value={layoutMode} onChange={handleLayoutChange} />
+
+      {!lockedSource && (
+        <SourceTypeSelector
+          value={sourceType}
+          onChange={handleSourceChange}
+          isInferred={!sourceTouched}
+        />
+      )}
 
       <SubtitleModeSelector value={subtitleMode} onChange={setSubtitleMode} />
 

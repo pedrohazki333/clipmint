@@ -1,4 +1,5 @@
 "use client";
+import type { SourceType } from "@/lib/types";
 
 import { useEffect, useState } from "react";
 import {
@@ -38,7 +39,12 @@ function mix(fg: string, bg: string, amount: number): string {
   return `#${ch(fr, br)}${ch(fgn, bgn)}${ch(fb, bb)}`;
 }
 
-export default function BarStyleSettings() {
+interface Props {
+  /** Conta cujos presets estão sendo editados. */
+  source: SourceType;
+}
+
+export default function BarStyleSettings({ source }: Props) {
   const [bgColor, setBgColor] = useState(DEFAULT_BG);
   const [textColor, setTextColor] = useState(DEFAULT_TEXT);
   const [font, setFont] = useState(DEFAULT_FONT);
@@ -50,7 +56,7 @@ export default function BarStyleSettings() {
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    getBarStyle()
+    getBarStyle(source)
       .then((s) => {
         setBgColor(s.bg_color);
         setTextColor(s.text_color);
@@ -61,7 +67,7 @@ export default function BarStyleSettings() {
       .catch(() => {
         /* backend fora do ar — mantém padrões */
       });
-  }, []);
+  }, [source]);
 
   function touch<T>(setter: (v: T) => void) {
     return (v: T) => {
@@ -77,7 +83,7 @@ export default function BarStyleSettings() {
     setBusy(true);
     setError("");
     try {
-      const s = await saveBarStyle(bgColor, textColor, font);
+      const s = await saveBarStyle(source, bgColor, textColor, font);
       setBgColor(s.bg_color);
       setTextColor(s.text_color);
       setFont(s.font);
@@ -95,7 +101,7 @@ export default function BarStyleSettings() {
     setBusy(true);
     setError("");
     try {
-      await resetBarStyle();
+      await resetBarStyle(source);
       setBgColor(DEFAULT_BG);
       setTextColor(DEFAULT_TEXT);
       setFont(DEFAULT_FONT);

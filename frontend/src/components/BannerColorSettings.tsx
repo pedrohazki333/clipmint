@@ -1,4 +1,5 @@
 "use client";
+import type { SourceType } from "@/lib/types";
 
 import { useEffect, useState } from "react";
 import {
@@ -12,7 +13,12 @@ import ColorField, { HEX_RE, toFullHex } from "@/components/ColorField";
 const DEFAULT_BG = "#ED2828";
 const DEFAULT_TEXT = "#FFFFFF";
 
-export default function BannerColorSettings() {
+interface Props {
+  /** Conta cujos presets estão sendo editados. */
+  source: SourceType;
+}
+
+export default function BannerColorSettings({ source }: Props) {
   const [bgColor, setBgColor] = useState(DEFAULT_BG);
   const [textColor, setTextColor] = useState(DEFAULT_TEXT);
   const [customized, setCustomized] = useState(false);
@@ -22,7 +28,7 @@ export default function BannerColorSettings() {
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    getBannerColors()
+    getBannerColors(source)
       .then((c) => {
         setBgColor(c.bg_color);
         setTextColor(c.text_color);
@@ -31,7 +37,7 @@ export default function BannerColorSettings() {
       .catch(() => {
         /* backend fora do ar — mantém padrões */
       });
-  }, []);
+  }, [source]);
 
   function update(setter: (v: string) => void) {
     return (v: string) => {
@@ -47,7 +53,7 @@ export default function BannerColorSettings() {
     setBusy(true);
     setError("");
     try {
-      const c = await saveBannerColors(bgColor, textColor);
+      const c = await saveBannerColors(source, bgColor, textColor);
       setBgColor(c.bg_color);
       setTextColor(c.text_color);
       setCustomized(true);
@@ -64,7 +70,7 @@ export default function BannerColorSettings() {
     setBusy(true);
     setError("");
     try {
-      await resetBannerColors();
+      await resetBannerColors(source);
       setBgColor(DEFAULT_BG);
       setTextColor(DEFAULT_TEXT);
       setCustomized(false);

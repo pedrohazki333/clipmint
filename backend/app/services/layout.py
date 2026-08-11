@@ -27,6 +27,12 @@ from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont
 
+from app.services.branding import (
+    BANNER_COLORS_FILE,
+    BAR_STYLE_FILE,
+    preset_path,
+)
+
 logger = logging.getLogger(__name__)
 
 CANVAS_W = 1080
@@ -156,14 +162,14 @@ def available_bar_fonts() -> list[dict]:
     ]
 
 
-def load_bar_style() -> tuple[str, str, str, bool]:
+def load_bar_style(source_type: Optional[str] = None) -> tuple[str, str, str, bool]:
     """
     Estilo configurado da faixa: (bg_hex, text_hex, font_key, customized).
-    Lê storage/branding/bar_style.json; sem arquivo (ou inválido), padrões.
-    """
-    from app.config import settings
 
-    path = settings.branding_dir / "bar_style.json"
+    Lê storage/branding/<nicho>/bar_style.json; sem arquivo (ou inválido),
+    padrões. Cada conta guarda o seu estilo.
+    """
+    path = preset_path(source_type, BAR_STYLE_FILE)
     if path.exists():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -255,6 +261,7 @@ def generate_divider_bar(
     bg_color: Optional[str] = None,
     text_color: Optional[str] = None,
     font: Optional[str] = None,
+    source_type: Optional[str] = None,
 ) -> str:
     """
     Faixa que separa a facecam do gameplay: barra com fios de luz nas duas
@@ -270,7 +277,7 @@ def generate_divider_bar(
     faixa continua legível tanto clara quanto escura.
     """
     if bg_color is None or text_color is None or font is None:
-        stored_bg, stored_text, stored_font, _ = load_bar_style()
+        stored_bg, stored_text, stored_font, _ = load_bar_style(source_type)
         bg_color = bg_color or stored_bg
         text_color = text_color or stored_text
         font = font or stored_font
@@ -361,14 +368,14 @@ def _darken(color: tuple[int, int, int, int], factor: float = 0.6) -> tuple[int,
     return (int(r * factor), int(g * factor), int(b * factor), a)
 
 
-def load_banner_colors() -> tuple[str, str, bool]:
+def load_banner_colors(source_type: Optional[str] = None) -> tuple[str, str, bool]:
     """
     Cores configuradas do banner: (bg_hex, text_hex, customized).
-    Lê storage/branding/banner_colors.json; sem arquivo (ou inválido), padrões.
-    """
-    from app.config import settings
 
-    path = settings.branding_dir / "banner_colors.json"
+    Lê storage/branding/<nicho>/banner_colors.json; sem arquivo (ou inválido),
+    padrões. Cada conta guarda as suas cores.
+    """
+    path = preset_path(source_type, BANNER_COLORS_FILE)
     if path.exists():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -420,18 +427,19 @@ def generate_banner(
     output_path: str,
     bg_color: Optional[str] = None,
     text_color: Optional[str] = None,
+    source_type: Optional[str] = None,
 ) -> tuple[int, int]:
     """
     Gera o PNG da pílula com o título.
 
-    Cores em hex (#RGB/#RRGGBB); None usa a configuração salva
-    (storage/branding/banner_colors.json) ou os padrões (vermelho/branco).
+    Cores em hex (#RGB/#RRGGBB); None usa a configuração salva do nicho
+    (storage/branding/<nicho>/banner_colors.json) ou os padrões.
 
     Returns:
         (width, height) da imagem gerada — usado para posicionar o overlay.
     """
     if bg_color is None or text_color is None:
-        stored_bg, stored_text, _ = load_banner_colors()
+        stored_bg, stored_text, _ = load_banner_colors(source_type)
         bg_color = bg_color or stored_bg
         text_color = text_color or stored_text
 

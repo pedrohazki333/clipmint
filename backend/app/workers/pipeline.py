@@ -24,15 +24,17 @@ para onde estava e não volta sozinho. Duas peças cobrem isso:
 import asyncio
 import json
 import logging
-from dataclasses import asdict, dataclass
+import shutil
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 
+from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models import Job, Transcript, Clip
-from app.services.downloader import VideoMetadata, download_video
+from app.services.downloader import VideoMetadata, download_video, ensure_media
 from app.services.transcriber import transcribe_audio
 from app.services.analyzer import analyze_virality
 from app.services.clipper import cut_and_crop, cut_and_stack
@@ -41,9 +43,14 @@ from app.services.facecam import (
     default_rect,
     detect_facecam_phases,
     rect_from_dict,
+    reject_size_outliers,
     single_phase,
 )
+from app.prompts.viral_analysis import default_source_type
 from app.services.layout import streamer_geometry
+from app.services import r6_hud
+from app.services import segments as segments_service
+from app.services.segments import compact_segments, remap_words
 from app.workers import joblock
 
 logger = logging.getLogger(__name__)
@@ -51,6 +58,11 @@ logger = logging.getLogger(__name__)
 # Status em que alguém está ativamente trabalhando no job. Se o processo morre,
 # ninguém está — e o job fica preso nesse status para sempre.
 RUNNING_STATUSES = ("queued", "downloading", "transcribing", "analyzing", "clipping")
+
+# Acima disto o trecho é o streamer assistindo, não jogando. Medido no job
+# do Nesk: o clipe ruim deu 82% e os dois bons deram 0% — o limiar fica no
+# meio do vazio entre os dois grupos.
+MAX_DEAD_FRACTION = 0.4
 
 INTERRUPTED_MESSAGE = (
     "Processamento interrompido: o servidor reiniciou durante o job. "
@@ -68,6 +80,8 @@ class _ClipTask:
     end: float
     banner_text: str
     rendered: bool = False
+    # Trechos costurados num clipe só (vazio = corte contínuo)
+    segments: list = field(default_factory=list)
 
 
 async def _update_job_status(job_id: str, status: str, **kwargs) -> None:
@@ -80,6 +94,10 @@ async def _update_job_status(job_id: str, status: str, **kwargs) -> None:
             return
         job.status = status
         job.updated_at = datetime.now(timezone.utc)
+        if status != "error" and "error_message" not in kwargs:
+            # Sair de um erro limpa a mensagem: um resume bem-sucedido não pode
+            # deixar o job 'done' exibindo o erro da tentativa anterior.
+            job.error_message = None
         for key, value in kwargs.items():
             setattr(job, key, value)
         await db.commit()
@@ -154,21 +172,77 @@ def _skip_locked(job_id: str) -> bool:
     return True
 
 
+def _parse_segments_json(raw: str | None) -> list[tuple[float, float]]:
+    """Trechos costurados salvos no clip; lista vazia = corte contínuo."""
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    return [
+        (float(item[0]), float(item[1]))
+        for item in data
+        if isinstance(item, (list, tuple)) and len(item) == 2
+    ]
+
+
+async def _drop_dead_candidates(job_id: str, video_path: str, clips: list) -> list:
+    """
+    Descarta candidatos em que o streamer passa a maior parte do tempo morto.
+
+    A medição roda só nas janelas candidatas, não no vídeo inteiro: o custo
+    acompanha os minutos que viram clipe, não a duração da live.
+    """
+    if not clips or not r6_hud.template_available():
+        return clips
+
+    kept = []
+    for clip in clips:
+        windows = await r6_hud.find_dead_windows(
+            video_path, duration=clip.end - clip.start, start_time=clip.start
+        )
+        dead = r6_hud.dead_overlap(windows, clip.start, clip.end)
+        if dead > MAX_DEAD_FRACTION:
+            logger.warning(
+                f"[{job_id}] Candidato [{clip.start:.0f}s–{clip.end:.0f}s] "
+                f"descartado: streamer morto em {dead:.0%} do trecho"
+            )
+            continue
+        kept.append(clip)
+
+    if len(kept) < len(clips):
+        logger.info(f"[{job_id}] {len(clips) - len(kept)} candidato(s) descartado(s) pelo HUD")
+    return kept
+
+
 def _banner_text(hook: str | None, suggested_title: str | None) -> str:
     """Texto da pílula vermelha do layout 'cover'."""
     return hook or suggested_title or ""
 
 
-def _media_from_job(saved: dict) -> VideoMetadata | None:
+async def _media_from_job(job_id: str, saved: dict) -> VideoMetadata | None:
     """
     Reconstrói os metadados do download a partir do job, se o vídeo e o áudio
     ainda estiverem em disco. None = precisa baixar de novo.
+
+    Estar em disco não basta: um download ou uma mesclagem interrompida deixa
+    arquivo que abre normalmente mas com o áudio fora do vídeo. Reaproveitar
+    isso num resume produz clips do trecho errado, com legenda fora de
+    sincronia — o arquivo é conferido antes de ser aceito.
     """
     video_path = saved["video_path"]
     audio_path = saved["audio_path"]
     if not (video_path and audio_path):
         return None
     if not (Path(video_path).is_file() and Path(audio_path).is_file()):
+        return None
+    if not await ensure_media(
+        job_id, video_path, audio_path, saved["duration_seconds"] or 0.0
+    ):
+        logger.warning(
+            f"[{job_id}] Mídia em disco não é confiável — o vídeo será baixado de novo"
+        )
         return None
     return VideoMetadata(
         title=saved["video_title"] or "Unknown Title",
@@ -178,6 +252,31 @@ def _media_from_job(saved: dict) -> VideoMetadata | None:
         video_path=video_path,
         audio_path=audio_path,
     )
+
+
+async def _discard_derived_work(job_id: str) -> None:
+    """
+    Joga fora tudo que foi derivado do vídeo antigo: transcrição, análise e
+    clips renderizados.
+
+    Chamado quando o vídeo vai ser baixado de novo. Os timestamps da
+    transcrição valem para o áudio que a gerou; contra um arquivo novo eles
+    apontam para outro momento do vídeo. Apagar é o que força o resume a
+    refazer transcrição e análise em cima da mídia nova.
+    """
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Transcript).where(Transcript.job_id == job_id)
+        )
+        for transcript in result.scalars().all():
+            if transcript.words_json_path:
+                Path(transcript.words_json_path).unlink(missing_ok=True)
+        await db.execute(delete(Transcript).where(Transcript.job_id == job_id))
+        await db.execute(delete(Clip).where(Clip.job_id == job_id))
+        await db.commit()
+
+    shutil.rmtree(settings.clips_dir / job_id, ignore_errors=True)
+    logger.info(f"[{job_id}] Transcrição, análise e clips antigos descartados")
 
 
 async def _words_from_disk(job_id: str) -> list[dict] | None:
@@ -228,6 +327,7 @@ async def _tasks_from_db(job_id: str) -> list[_ClipTask]:
             start=clip.start_time,
             end=clip.end_time,
             banner_text=_banner_text(clip.hook, clip.suggested_title),
+            segments=_parse_segments_json(clip.segments_json),
             rendered=(
                 clip.status == "ready"
                 and bool(clip.file_path)
@@ -261,6 +361,15 @@ async def _create_clip_records(
                 end_time=vc.end,
                 duration=vc.end - vc.start,
                 virality_score=vc.score,
+                hook_score=vc.hook_score,
+                retention_score=vc.retention_score,
+                shareability_score=vc.shareability_score,
+                loopability_score=vc.loopability_score,
+                comment_bait_score=vc.comment_bait_score,
+                verdict=vc.verdict,
+                weak_points_json=json.dumps(vc.weak_points),
+                trim_reason=vc.trim_reason,
+                segments_json=json.dumps(vc.segments) if vc.segments else None,
                 hook=vc.hook,
                 reason=vc.reason,
                 tags_json=json.dumps(vc.tags),
@@ -277,6 +386,7 @@ async def _create_clip_records(
                     clip_id=clip.id,
                     start=vc.start,
                     end=vc.end,
+                    segments=list(vc.segments),
                     banner_text=_banner_text(vc.hook, vc.suggested_title),
                 )
             )
@@ -284,6 +394,25 @@ async def _create_clip_records(
         await db.commit()
 
     return tasks
+
+
+def _detected_rect(facecam_json: str | None):
+    """
+    Caixa que o DETECTOR gravou no job (None se não houver ou for do usuário).
+
+    Serve de referência de tamanho para os clipes seguintes — ver
+    facecam.reject_size_outliers. A do usuário não passa por aqui porque ela já
+    vence antes, em _manual_rect.
+    """
+    if not facecam_json:
+        return None
+    try:
+        rect = rect_from_dict(json.loads(facecam_json))
+    except json.JSONDecodeError:
+        return None
+    if rect is None or rect.method == "manual":
+        return None
+    return rect
 
 
 def _manual_rect(facecam_json: str | None):
@@ -345,6 +474,17 @@ async def _resolve_facecam(
             f"Ajuste a caixa no job para corrigir o enquadramento."
         )
 
+    else:
+        # A caixa que o detector gravou no 1º clip vira referência de TAMANHO
+        # para os seguintes. Ela não congela a detecção (a cam pode mudar de
+        # canto à vontade); só barra o encaixe que errou tanto de escala que
+        # traria gameplay para dentro do painel do rosto.
+        phases, trocadas = reject_size_outliers(phases, _detected_rect(facecam_json))
+        if trocadas:
+            logger.warning(
+                f"[{job_id}] {trocadas} fase(s) fora de escala — caixa do job aplicada"
+            )
+
     if store:
         dominant = max(phases, key=lambda p: p.end - p.start).rect
         await _update_job_status(
@@ -372,9 +512,15 @@ async def run_pipeline(job_id: str, resume: bool = False) -> None:
     os clips que já ficaram prontos.
     """
     # O lock avisa ao startup do servidor que este job tem dono vivo — sem ele,
-    # um reload durante o trabalho marcaria o job como interrompido.
-    with joblock.held(job_id):
-        await _execute_pipeline(job_id, resume)
+    # um reload durante o trabalho marcaria o job como interrompido. E é
+    # exclusivo: dois pipelines no mesmo job corrompem os arquivos um do outro.
+    try:
+        with joblock.held(job_id):
+            await _execute_pipeline(job_id, resume)
+    except joblock.JobAlreadyRunning as exc:
+        # Quem já está trabalhando segue em frente; este processo sai sem tocar
+        # em nada — nem no status do job, que pertence ao outro.
+        logger.warning(f"[{job_id}] {exc} — este processo não vai duplicar o trabalho")
 
 
 async def _execute_pipeline(job_id: str, resume: bool) -> None:
@@ -391,6 +537,7 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
             youtube_url = job.youtube_url
             subtitle_mode = job.subtitle_mode
             layout_mode = job.layout_mode or "cover"
+            source_type = job.source_type or default_source_type(layout_mode)
             facecam_json = job.facecam_rect
             saved_media = {
                 "video_title": job.video_title,
@@ -402,10 +549,15 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
             }
 
         # ── 2. Download ───────────────────────────────────────────────────────
-        metadata = _media_from_job(saved_media) if resume else None
+        metadata = await _media_from_job(job_id, saved_media) if resume else None
         if metadata:
             logger.info(f"[{job_id}] Resume: vídeo e áudio em disco — download pulado")
         else:
+            if resume:
+                # Baixar de novo troca o arquivo sob os pés da transcrição e da
+                # análise, que descrevem a linha do tempo do áudio anterior.
+                # Reaproveitá-las deslocaria todos os cortes.
+                await _discard_derived_work(job_id)
             await _update_job_status(job_id, "downloading")
             metadata = await download_video(job_id, youtube_url)
 
@@ -459,6 +611,7 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                 title=metadata.title,
                 channel=metadata.channel,
                 duration_seconds=metadata.duration,
+                source_type=source_type,
             )
 
             logger.info(
@@ -469,6 +622,21 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                 await _update_job_status(job_id, "done")
                 logger.info(f"[{job_id}] No viral clips found. Pipeline complete.")
                 return
+
+            # Em Siege a fala não conta a jogada, e a análise por texto já
+            # escolheu 52s do streamer MORTO comentando uma troca que nem
+            # aparece. O HUD do jogo diz quem está vivo — é barato conferir os
+            # candidatos antes de gastar render neles.
+            if source_type == "siege":
+                analysis.clips = await _drop_dead_candidates(
+                    job_id, metadata.video_path, analysis.clips
+                )
+                if not analysis.clips:
+                    await _update_job_status(job_id, "done")
+                    logger.info(
+                        f"[{job_id}] Todos os candidatos eram com o streamer morto."
+                    )
+                    return
 
             tasks = await _create_clip_records(
                 job_id, analysis.clips, words, subtitle_mode
@@ -498,39 +666,62 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
         # Processa cada clip pendente
         failures: list[str] = []
         for index, task in enumerate(pending):
+            compacted: str | None = None
             try:
+                # Clip costurado (Siege): os trechos viram um arquivo só, e o
+                # render trabalha nele como se fosse um vídeo comum. É o que
+                # mantém facecam, faixa, banner e legendas sem mexer no
+                # filtergraph — ele nunca sabe que houve emenda.
+                source_path = metadata.video_path
+                clip_start, clip_end = task.start, task.end
+                clip_words = words
+                if task.segments:
+                    compacted = str(
+                        settings.clips_dir / job_id / f"{task.clip_id}_costurado.mp4"
+                    )
+                    Path(compacted).parent.mkdir(parents=True, exist_ok=True)
+                    total = await compact_segments(
+                        job_id, task.clip_id, metadata.video_path,
+                        task.segments, compacted,
+                    )
+                    source_path = compacted
+                    clip_start, clip_end = 0.0, total
+                    clip_words = remap_words(words, task.segments)
+
                 if layout_mode == "streamer":
                     # O layout da live muda ao longo do vídeo: cada clip tem a
                     # sua própria linha do tempo de facecam.
                     facecam = await _resolve_facecam(
                         job_id=job_id,
-                        video_path=metadata.video_path,
+                        video_path=source_path,
                         facecam_json=facecam_json,
-                        start_time=task.start,
-                        end_time=task.end,
+                        start_time=clip_start,
+                        end_time=clip_end,
                         store=index == 0,
                     )
                     file_path, file_size = await cut_and_stack(
                         job_id=job_id,
                         clip_id=task.clip_id,
-                        video_path=metadata.video_path,
-                        start_time=task.start,
-                        end_time=task.end,
-                        words=words,
+                        video_path=source_path,
+                        start_time=clip_start,
+                        end_time=clip_end,
+                        words=clip_words,
                         subtitle_mode=subtitle_mode,
                         facecam=facecam,
                         streamer_name=metadata.channel,
+                        source_type=source_type,
                     )
                 else:
                     file_path, file_size = await cut_and_crop(
                         job_id=job_id,
                         clip_id=task.clip_id,
-                        video_path=metadata.video_path,
-                        start_time=task.start,
-                        end_time=task.end,
-                        words=words,
+                        video_path=source_path,
+                        start_time=clip_start,
+                        end_time=clip_end,
+                        words=clip_words,
                         subtitle_mode=subtitle_mode,
                         banner_text=task.banner_text,
+                        source_type=source_type,
                     )
 
                 await _update_clip(
@@ -548,6 +739,11 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                 )
                 failures.append(str(e))
                 await _update_clip(task.clip_id, "error")
+
+            finally:
+                # O intermediário da costura é um 4K de ~1 min: deixar para trás
+                # enche o disco em poucos jobs. Sai mesmo se o render falhou.
+                segments_service.cleanup(compacted)
 
         # ── 6. Finaliza ───────────────────────────────────────────────────────
         # Nenhum clip renderizado = o job falhou, mesmo tendo chegado até aqui.

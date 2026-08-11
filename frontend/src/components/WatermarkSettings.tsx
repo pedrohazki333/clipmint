@@ -1,4 +1,5 @@
 "use client";
+import type { SourceType } from "@/lib/types";
 
 import { useEffect, useRef, useState } from "react";
 import {
@@ -9,7 +10,12 @@ import {
   uploadWatermark,
 } from "@/lib/api";
 
-export default function WatermarkSettings() {
+interface Props {
+  /** Conta cujos presets estão sendo editados. */
+  source: SourceType;
+}
+
+export default function WatermarkSettings({ source }: Props) {
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [cacheBust, setCacheBust] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -17,15 +23,15 @@ export default function WatermarkSettings() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    hasWatermark().then(setConfigured);
-  }, []);
+    hasWatermark(source).then(setConfigured);
+  }, [source]);
 
   async function handleFile(file: File | undefined) {
     if (!file) return;
     setBusy(true);
     setError("");
     try {
-      await uploadWatermark(file);
+      await uploadWatermark(source, file);
       setConfigured(true);
       setCacheBust(Date.now());
     } catch (err) {
@@ -40,7 +46,7 @@ export default function WatermarkSettings() {
     setBusy(true);
     setError("");
     try {
-      await deleteWatermark();
+      await deleteWatermark(source);
       setConfigured(false);
     } catch (err) {
       setError(getApiErrorMessage(err, "Não foi possível remover."));
@@ -63,7 +69,7 @@ export default function WatermarkSettings() {
           {configured && (
             // eslint-disable-next-line @next/next/no-img-element
             <img
-              src={`${getWatermarkUrl()}?v=${cacheBust}`}
+              src={`${getWatermarkUrl(source)}?v=${cacheBust}`}
               alt="Marca d'água atual"
               className="h-12 w-12 object-contain rounded-lg bg-gray-800 border border-gray-700 p-1"
             />

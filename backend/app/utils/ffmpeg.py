@@ -28,6 +28,20 @@ async def probe_video(video_path: str) -> dict:
     return json.loads(stdout.decode())
 
 
+async def get_duration(media_path: str) -> float:
+    """
+    Duração real do arquivo em segundos, segundo o container.
+
+    Levanta ValueError se o arquivo não declara duração — arquivo truncado no
+    meio da escrita costuma ficar assim.
+    """
+    info = await probe_video(media_path)
+    duration = info.get("format", {}).get("duration")
+    if duration is None:
+        raise ValueError(f"Arquivo sem duração declarada: {media_path}")
+    return float(duration)
+
+
 async def get_video_dimensions(video_path: str) -> tuple[int, int]:
     """Retorna (width, height) do vídeo."""
     info = await probe_video(video_path)

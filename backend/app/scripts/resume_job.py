@@ -15,6 +15,7 @@ import asyncio
 import logging
 import sys
 
+from app.workers import joblock
 from app.workers.pipeline import run_pipeline
 
 
@@ -23,12 +24,26 @@ def main() -> None:
         print(__doc__.strip(), file=sys.stderr)
         raise SystemExit(2)
 
+    job_id = sys.argv[1]
+
+    # Dois processos no mesmo job escrevem nos mesmos arquivos e corrompem o
+    # vídeo mesclado. O lock do pipeline também recusa, mas aqui a mensagem
+    # chega em quem digitou o comando.
+    owner = joblock.owner_pid(job_id)
+    if owner is not None:
+        print(
+            f"O job {job_id} já está sendo processado pelo PID {owner}.\n"
+            "Espere terminar ou encerre aquele processo antes de retomar.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    asyncio.run(run_pipeline(sys.argv[1], resume=True))
+    asyncio.run(run_pipeline(job_id, resume=True))
 
 
 if __name__ == "__main__":

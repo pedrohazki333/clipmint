@@ -26,10 +26,12 @@ from app.services.layout import (
 )
 
 
-def _write_style(tmp_path, monkeypatch, content: str) -> None:
+def _write_style(tmp_path, monkeypatch, content: str, source: str = "podcast") -> None:
     monkeypatch.setattr(settings, "storage_dir", str(tmp_path))
-    settings.branding_dir.mkdir(parents=True, exist_ok=True)
-    (settings.branding_dir / "bar_style.json").write_text(content, encoding="utf-8")
+    # Os presets são por nicho: storage/branding/<nicho>/bar_style.json
+    from app.services.branding import BAR_STYLE_FILE, preset_path
+
+    preset_path(source, BAR_STYLE_FILE).write_text(content, encoding="utf-8")
 
 
 # ─── Configuração salva ───────────────────────────────────────────────────────
@@ -137,3 +139,62 @@ def test_bar_style_payload_normalizes_short_hex():
 def test_bar_style_payload_rejects_invalid_input(payload):
     with pytest.raises(ValidationError):
         BarStyle(**payload)
+
+
+# ─── Isolamento entre nichos ──────────────────────────────────────────────────
+
+def test_bar_style_is_per_niche(tmp_path, monkeypatch):
+    """
+    Podcast e gameplay guardam estilos independentes.
+
+    Era o ponto do preset por conta: configurar um nicho não pode mudar a
+    identidade do outro, senão o clipe sai com a marca da conta errada.
+    """
+    _write_style(tmp_path, monkeypatch, json.dumps({
+        "bg_color": "#111111", "text_color": "#EEEEEE", "font": "inter",
+    }), source="podcast")
+    _write_style(tmp_path, monkeypatch, json.dumps({
+        "bg_color": "#992200", "text_color": "#FFCC00", "font": "condensed",
+    }), source="gameplay")
+
+    assert load_bar_style("podcast") == ("#111111", "#EEEEEE", "inter", True)
+    assert load_bar_style("gameplay") == ("#992200", "#FFCC00", "condensed", True)
+
+
+def test_bar_style_unknown_niche_falls_back(tmp_path, monkeypatch):
+    """Nicho desconhecido lê o do podcast em vez de quebrar o render."""
+    _write_style(tmp_path, monkeypatch, json.dumps({
+        "bg_color": "#123456", "text_color": "#ABCDEF", "font": "inter",
+    }), source="podcast")
+
+    assert load_bar_style("nicho-que-nao-existe") == load_bar_style("podcast")
+    assert load_bar_style(None) == load_bar_style("podcast")
+
+
+def test_legacy_branding_is_copied_to_both_niches(tmp_path, monkeypatch):
+    """A marca global antiga não pode sumir: ela vira o preset dos dois nichos."""
+    from app.services.branding import (
+        BAR_STYLE_FILE,
+        migrate_legacy_branding,
+        preset_path,
+    )
+
+    monkeypatch.setattr(settings, "storage_dir", str(tmp_path))
+    settings.branding_dir.mkdir(parents=True, exist_ok=True)
+    (settings.branding_dir / BAR_STYLE_FILE).write_text(
+        json.dumps({"bg_color": "#ABCABC", "text_color": "#FFFFFF", "font": "inter"}),
+        encoding="utf-8",
+    )
+
+    migrate_legacy_branding()
+
+    assert load_bar_style("podcast") == ("#ABCABC", "#FFFFFF", "inter", True)
+    assert load_bar_style("gameplay") == ("#ABCABC", "#FFFFFF", "inter", True)
+
+    # Rodar de novo não sobrescreve o que o usuário já diferenciou
+    preset_path("gameplay", BAR_STYLE_FILE).write_text(
+        json.dumps({"bg_color": "#000000", "text_color": "#FFFFFF", "font": "inter"}),
+        encoding="utf-8",
+    )
+    migrate_legacy_branding()
+    assert load_bar_style("gameplay")[0] == "#000000"

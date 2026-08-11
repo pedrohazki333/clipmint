@@ -1,7 +1,7 @@
 import json
 import logging
 import shutil
-from typing import List
+from typing import List, Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.database import get_db
 from app.models import Clip, Job, Transcript
+from app.prompts.viral_analysis import default_source_type
 from app.schemas import JobCreate, JobResponse, JobDetailResponse
 from app.workers import joblock
 from app.workers.pipeline import RUNNING_STATUSES, run_pipeline
@@ -31,6 +32,9 @@ async def create_job(
         youtube_url=payload.youtube_url,
         subtitle_mode=payload.subtitle_mode,
         layout_mode=payload.layout_mode,
+        # Omitido pelo cliente: infere pelo layout, que é o palpite certo na
+        # maioria dos casos (streamer→gameplay, cover→podcast).
+        source_type=payload.source_type or default_source_type(payload.layout_mode),
         # Sem caixa informada, o pipeline detecta a facecam clip a clip
         facecam_rect=(
             payload.facecam_rect.model_dump_json() if payload.facecam_rect else None
@@ -49,12 +53,19 @@ async def create_job(
 
 @router.get("/jobs", response_model=List[JobResponse])
 async def list_jobs(
+    source: Optional[Literal["podcast", "gameplay", "siege"]] = None,
     db: AsyncSession = Depends(get_db),
 ) -> List[Job]:
-    """Retorna todos os jobs em ordem decrescente de criação."""
-    result = await db.execute(
-        select(Job).order_by(Job.created_at.desc())
-    )
+    """
+    Jobs em ordem decrescente de criação.
+
+    Com `source`, devolve só os da conta pedida — é o que separa a página de
+    podcast da de gameplay.
+    """
+    query = select(Job).order_by(Job.created_at.desc())
+    if source:
+        query = query.where(Job.source_type == source)
+    result = await db.execute(query)
     return result.scalars().all()
 
 

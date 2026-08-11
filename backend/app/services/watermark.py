@@ -18,6 +18,7 @@ import tempfile
 from typing import Optional
 
 from app.config import settings
+from app.services.branding import WATERMARK_FILE, preset_path
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +45,9 @@ _OVERLAY_STABLE_FRAC = 0.35   # fração mínima de pixels estáveis nos cortes
 _OVERLAY_STABLE_DIFF = 12     # |diff| máximo para um pixel contar como estável
 
 
-def user_watermark_path() -> Optional[str]:
-    """Caminho da logo do usuário, ou None se não configurada."""
-    path = settings.branding_dir / "watermark.png"
+def user_watermark_path(source_type: Optional[str] = None) -> Optional[str]:
+    """Caminho da logo do nicho, ou None se não configurada."""
+    path = preset_path(source_type, WATERMARK_FILE)
     return str(path) if path.exists() else None
 
 

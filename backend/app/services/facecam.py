@@ -84,6 +84,15 @@ _PHASE_ZOOM = 1.45         # razão de área do rosto que denuncia zoom (e o inv
 _PHASE_CONFIRM = 2         # amostras seguidas para a mudança valer (anti-ruído)
 _MIN_PHASE_SAMPLES = 3     # fase menor que isso é absorvida pela vizinha
 _MAX_PHASES = 6            # teto de recortes por clip no filtergraph
+# Fases vizinhas dentro destas margens enquadram a mesma cam e viram uma só —
+# trocar o recorte à toa no meio do clipe aparece como pulinho de zoom.
+_SAME_BOX_CENTER = 0.02    # deslocamento do centro, em fração do frame
+_SAME_BOX_SIZE = 0.12      # diferença de lado, em fração do maior
+# Quanto o tamanho da cam de um clipe pode divergir do tamanho já estabelecido
+# no job antes de ser tratado como erro de encaixe. Medido: dentro de um mesmo
+# vídeo as caixas boas variam até ~1.3x entre clipes; os erros observados
+# apareceram a 1.8x e 2.3x.
+_JOB_SIZE_TOLERANCE = 1.5
 
 # Enquadramento derivado do rosto
 _BOX_FROM_FACE = 2.6       # altura da caixa ≈ 2.6x a altura do rosto (cabeça + ombros)
@@ -117,6 +126,17 @@ _ASPECT_TOL = 0.30         # tolerância em log (~±35%). Largo de propósito: a
                            # a mandar mais que a qualidade das bordas.
 _ASPECT_FLOOR = 0.15       # peso mínimo — proporção esquisita não zera a caixa
 _SCORE_TIE = 0.05          # placares dentro de 5% empatam; desempata a menor caixa
+
+# Teto de tamanho da cam. O prior de proporção sozinho é cego para o pior erro:
+# uma caixa encostada nas bordas do frame tem a proporção DO FRAME (16:9) e sai
+# com peso máximo, então "o frame inteiro" competia de igual para igual com a
+# cam de verdade — e ganhava quando as bordas do gameplay eram mais fortes que
+# a moldura da cam. Medido nas lives deste projeto: as cams reais ficam entre
+# 0.05 e 0.15 de área, e os erros observados entre 0.41 e 0.82. O teto separa
+# os dois grupos com folga dos dois lados.
+_MAX_CAM_W = 0.55          # fração máxima da largura do frame
+_MAX_CAM_H = 0.60          # ...e da altura
+_MAX_CAM_AREA = 0.30       # ...e da área, que é o que pega a caixa quase-cheia
 _EDGE_REACH = 4.0          # sem linha e a até 4 alturas de rosto da borda = a cam encosta nela
 _CAM_INSET = 0.01          # recuo para dentro da caixa, em fração do lado
 _CAM_INSET_MIN = 3         # ...com piso em pixels da RESOLUÇÃO DE DETECÇÃO: cada
@@ -309,6 +329,8 @@ def detect_facecam_phases(
                 CamPhase(start=i0 * interval, end=(i1 + 1) * interval, rect=rect)
             )
 
+    phases = _merge_equivalent_phases(phases)
+
     # As bordas da linha do tempo são das amostras, não do vídeo: estica para
     # cobrir o trecho inteiro (senão sobra um buraco antes da 1ª/depois da última).
     phases[0].start = 0.0
@@ -324,6 +346,82 @@ def detect_facecam_phases(
             f"x={r.x:.3f} y={r.y:.3f} w={r.w:.3f} h={r.h:.3f}"
         )
     return phases
+
+
+def reject_size_outliers(
+    phases: list[CamPhase], reference: Optional[FacecamRect]
+) -> tuple[list[CamPhase], int]:
+    """
+    Troca pela caixa de referência as fases cujo TAMANHO destoa dela.
+
+    O layout de uma live é estável dentro do mesmo vídeo: a cam muda de canto,
+    some, volta — mas não dobra de tamanho de um clipe para o outro. Quando a
+    detecção de um clipe discorda muito do tamanho já estabelecido no job, quem
+    errou foi o encaixe daquele clipe, e aceitar isso põe gameplay dentro do
+    painel do rosto.
+
+    Só o tamanho é comparado, nunca a posição: cam que troca de canto é
+    mudança real e precisa continuar passando.
+
+    Returns:
+        (fases, quantas foram substituídas).
+    """
+    if reference is None or not phases:
+        return phases, 0
+
+    trocadas = 0
+    for phase in phases:
+        rect = phase.rect
+        w_ratio = rect.w / reference.w if reference.w else 1.0
+        h_ratio = rect.h / reference.h if reference.h else 1.0
+        off = max(w_ratio, 1 / w_ratio, h_ratio, 1 / h_ratio)
+        if off > _JOB_SIZE_TOLERANCE:
+            logger.warning(
+                f"Facecam: caixa {rect.w:.3f}x{rect.h:.3f} destoa {off:.1f}x do "
+                f"tamanho do job ({reference.w:.3f}x{reference.h:.3f}) — "
+                f"usando a caixa do job"
+            )
+            phase.rect = FacecamRect(
+                x=reference.x, y=reference.y, w=reference.w, h=reference.h,
+                confidence=reference.confidence, method="job_rect",
+            )
+            trocadas += 1
+    return phases, trocadas
+
+
+def _merge_equivalent_phases(phases: list[CamPhase]) -> list[CamPhase]:
+    """
+    Junta fases vizinhas que descrevem a MESMA caixa.
+
+    A divisão em fases existe para a cam que se move. Quando o encaixe das duas
+    fases cai quase no mesmo lugar, a cam não mudou — foi o rosto que oscilou —
+    e manter a divisão troca o recorte no meio do clipe, o que aparece como um
+    pulinho de zoom. Fica a caixa da fase mais longa, que teve mais frames para
+    encaixar.
+    """
+    if not phases:
+        return phases
+
+    merged = [phases[0]]
+    for phase in phases[1:]:
+        last = merged[-1]
+        if _same_box(last.rect, phase.rect):
+            if (phase.end - phase.start) > (last.end - last.start):
+                last.rect = phase.rect  # a fase mais longa manda na caixa
+            last.end = phase.end
+            continue
+        merged.append(phase)
+    return merged
+
+
+def _same_box(a: FacecamRect, b: FacecamRect) -> bool:
+    """Duas caixas que enquadram a mesma cam, dentro da incerteza do encaixe."""
+    center_shift = max(
+        abs((a.x + a.w / 2) - (b.x + b.w / 2)),
+        abs((a.y + a.h / 2) - (b.y + b.h / 2)),
+    )
+    size_shift = max(abs(a.w - b.w) / max(a.w, b.w), abs(a.h - b.h) / max(a.h, b.h))
+    return center_shift <= _SAME_BOX_CENTER and size_shift <= _SAME_BOX_SIZE
 
 
 def detect_facecam(
@@ -723,7 +821,7 @@ def _line_profile(band, axis: int, np):
     return None if band.size == 0 else band.mean(axis=axis)
 
 
-def _best_box(lefts, rights, tops, bottoms) -> Optional[tuple]:
+def _best_box(lefts, rights, tops, bottoms, frame_w: int, frame_h: int) -> Optional[tuple]:
     """
     Melhor combinação de bordas entre as candidatas de cada lado.
 
@@ -738,20 +836,30 @@ def _best_box(lefts, rights, tops, bottoms) -> Optional[tuple]:
     alargar traz gameplay para dentro do painel, que é o defeito visível. Sem
     esse desempate a escolha entre duas caixas quase idênticas vira sorteio.
 
+    Caixas grandes demais para ser uma cam são descartadas ANTES da pontuação,
+    não depois: assim a melhor caixa plausível ainda é eleita, em vez de o
+    encaixe inteiro falhar e cair no palpite pelo rosto.
+
     Returns:
         (x0, y0, x1, y1, score) em pixels, x1/y1 exclusivos. None se nenhuma
         combinação fecha uma caixa.
     """
+    max_w = _MAX_CAM_W * frame_w
+    max_h = _MAX_CAM_H * frame_h
+    max_area = _MAX_CAM_AREA * frame_w * frame_h
+
     boxes = []
     for left, q_left in lefts:
         for right, q_right in rights:
             width = right - left
-            if width < 16:
+            if width < 16 or width > max_w:
                 continue
             for top, q_top in tops:
                 for bottom, q_bottom in bottoms:
                     height = bottom - top
-                    if height < 16:
+                    if height < 16 or height > max_h:
+                        continue
+                    if width * height > max_area:
                         continue
                     sides = (q_left, q_right, q_top, q_bottom)
                     # Média mais um peso para a PIOR borda: uma caixa com três
@@ -892,7 +1000,7 @@ def _fit_cam_rect(
         if (h - fy) <= reach:
             bottoms.append((h - 1, _EDGE_QUALITY))
 
-        found = _best_box(lefts, rights, tops, bottoms)
+        found = _best_box(lefts, rights, tops, bottoms, w, h)
         if found is None:
             break
 

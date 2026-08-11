@@ -9,6 +9,9 @@ import numpy as np
 import pytest
 
 from app.services.facecam import (
+    _best_box,
+    _merge_equivalent_phases,
+    reject_size_outliers,
     CamPhase,
     FacecamRect,
     _Obs,
@@ -542,3 +545,159 @@ def test_same_face_seen_by_frame_and_tile_counts_once():
 
     assert len(unique) == 2
     assert max(o.score for o in unique if o.cx < 0.5) == 0.88  # fica a melhor
+
+
+# ─── Teto de tamanho da cam ───────────────────────────────────────────────────
+
+def test_fit_cam_rect_rejects_a_frame_sized_box():
+    """
+    A moldura do cenário não pode virar "facecam".
+
+    Caso real (job Photomaly, agosto/2026): o encaixe devolveu caixas de até
+    94% da largura por 87% da altura, e o painel do clipe mostrou o gameplay
+    inteiro no lugar do rosto. O prior de proporção não protege sozinho — uma
+    caixa colada nas bordas do frame tem a proporção DO FRAME e tira nota
+    máxima —, então o tamanho precisa ser restrição dura.
+    """
+    # Cam pequena no canto + um retângulo gigante de alto contraste (a "sala")
+    frame = _fake_frame((10, 10, 90, 60))
+    frame[6:250, 6:460] = np.clip(
+        frame[6:250, 6:460].astype("float32") - 45, 0, 255
+    ).astype("uint8")
+    frame[10:70, 10:100] = 200  # a cam continua sendo o bloco claro
+    gx, gy = _maps(frame)
+
+    rect = _fit_cam_rect(gx, gy, 55 / 480, 40 / 270, 20 / 480, 26 / 270, np)
+
+    assert rect is not None
+    assert rect.w * rect.h <= 0.30, f"caixa de {rect.w * rect.h:.2f} de área não é uma cam"
+    assert rect.w <= 0.55 and rect.h <= 0.60
+
+
+def test_best_box_discards_oversized_candidates():
+    """O teto entra antes da pontuação: sobra a melhor caixa plausível."""
+    # Bordas do frame (caixa enorme) com qualidade máxima, cam real com
+    # qualidade menor — sem teto, a enorme ganharia.
+    lefts = [(-1, 1.0), (100, 0.5)]
+    rights = [(479, 1.0), (200, 0.5)]
+    tops = [(-1, 1.0), (60, 0.5)]
+    bottoms = [(269, 1.0), (130, 0.5)]
+
+    box = _best_box(lefts, rights, tops, bottoms, 480, 270)
+
+    assert box is not None
+    x0, y0, x1, y1 = box[0], box[1], box[2], box[3]
+    assert (x1 - x0) <= 0.55 * 480
+    assert (y1 - y0) <= 0.60 * 270
+
+
+def test_best_box_returns_none_when_everything_is_oversized():
+    """Sem candidata plausível, o encaixe desiste e o chamador cai no rosto."""
+    box = _best_box([(-1, 1.0)], [(479, 1.0)], [(-1, 1.0)], [(269, 1.0)], 480, 270)
+
+    assert box is None
+
+
+# ─── Fases equivalentes ───────────────────────────────────────────────────────
+
+def _phase(start, end, x, y, w, h):
+    return CamPhase(start=start, end=end, rect=FacecamRect(x=x, y=y, w=w, h=h))
+
+
+def test_merges_phases_that_describe_the_same_cam():
+    """
+    Cam parada não pode trocar de recorte no meio do clipe.
+
+    Duas fases quase idênticas vêm do rosto oscilando, não da cam se movendo —
+    e cada troca aparece como um pulinho de zoom no vídeo final.
+    """
+    phases = [
+        _phase(0.0, 4.0, 0.790, 0.013, 0.189, 0.244),
+        _phase(4.0, 31.6, 0.791, 0.013, 0.203, 0.244),
+    ]
+
+    merged = _merge_equivalent_phases(phases)
+
+    assert len(merged) == 1
+    assert merged[0].start == 0.0 and merged[0].end == 31.6
+    # Fica a caixa da fase mais longa, que teve mais frames para encaixar
+    assert merged[0].rect.w == 0.203
+
+
+def test_keeps_phases_when_the_cam_actually_moves():
+    """Cam que muda de canto continua sendo duas fases."""
+    phases = [
+        _phase(0.0, 10.0, 0.79, 0.01, 0.20, 0.24),
+        _phase(10.0, 20.0, 0.02, 0.70, 0.20, 0.24),
+    ]
+
+    assert len(_merge_equivalent_phases(phases)) == 2
+
+
+def test_keeps_phases_when_the_cam_changes_size():
+    """Zoom na cam é mudança real de enquadramento — não pode ser absorvido."""
+    phases = [
+        _phase(0.0, 10.0, 0.75, 0.01, 0.20, 0.24),
+        _phase(10.0, 20.0, 0.70, 0.01, 0.30, 0.36),
+    ]
+
+    assert len(_merge_equivalent_phases(phases)) == 2
+
+
+def test_merge_is_a_noop_for_a_single_phase():
+    phases = [_phase(0.0, 30.0, 0.79, 0.01, 0.20, 0.24)]
+
+    assert _merge_equivalent_phases(phases) == phases
+
+
+# ─── Coerência de tamanho dentro do job ───────────────────────────────────────
+
+def _ref(w=0.193, h=0.253):
+    return FacecamRect(x=0.804, y=0.006, w=w, h=h, confidence=1.0, method="borders")
+
+
+def test_rejects_a_phase_that_disagrees_in_scale():
+    """
+    Caso real (job MrFall, agosto/2026): 4 clipes acharam a cam em 0.193x0.253
+    e um achou 0.450x0.455 — passou no teto de área, mas trouxe o cenário e o
+    HUD para dentro do painel do rosto.
+    """
+    phases = [_phase(0.0, 41.7, 0.544, 0.004, 0.450, 0.455)]
+
+    fixed, trocadas = reject_size_outliers(phases, _ref())
+
+    assert trocadas == 1
+    assert fixed[0].rect.w == pytest.approx(0.193)
+    assert fixed[0].rect.method == "job_rect"
+
+
+def test_keeps_a_phase_that_only_moved():
+    """Cam que troca de canto mantendo o tamanho é mudança real de layout."""
+    phases = [_phase(0.0, 30.0, 0.02, 0.70, 0.193, 0.253)]
+
+    fixed, trocadas = reject_size_outliers(phases, _ref())
+
+    assert trocadas == 0
+    assert fixed[0].rect.x == 0.02
+
+
+def test_tolerates_normal_variation_between_clips():
+    """Variação de encaixe entre clipes do mesmo vídeo não pode ser 'corrigida'."""
+    phases = [
+        _phase(0.0, 10.0, 0.80, 0.01, 0.176, 0.259),   # 0.91x
+        _phase(10.0, 20.0, 0.80, 0.01, 0.237, 0.285),  # 1.23x
+    ]
+
+    _, trocadas = reject_size_outliers(phases, _ref(0.193, 0.253))
+
+    assert trocadas == 0
+
+
+def test_no_reference_means_nothing_is_touched():
+    """Primeiro clipe do job não tem referência — nada a comparar."""
+    phases = [_phase(0.0, 30.0, 0.5, 0.5, 0.45, 0.45)]
+
+    fixed, trocadas = reject_size_outliers(phases, None)
+
+    assert trocadas == 0
+    assert fixed[0].rect.w == 0.45

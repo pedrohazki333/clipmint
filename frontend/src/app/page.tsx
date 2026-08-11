@@ -1,43 +1,61 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import type { Job, LayoutMode, Reference, SubtitleMode } from "@/lib/types";
-import { createJob, listJobs, listReferences, getApiErrorMessage } from "@/lib/api";
-import UrlInput from "@/components/UrlInput";
-import JobCard from "@/components/JobCard";
+import Link from "next/link";
+import type { Job, Reference, SourceType } from "@/lib/types";
+import { listJobs, listReferences } from "@/lib/api";
 import ReferenceForm from "@/components/ReferenceForm";
 import ReferenceCard from "@/components/ReferenceCard";
 import LearnedPatterns from "@/components/LearnedPatterns";
-import WatermarkSettings from "@/components/WatermarkSettings";
-import BannerColorSettings from "@/components/BannerColorSettings";
-import BarStyleSettings from "@/components/BarStyleSettings";
 
 const ACTIVE_POLLING_INTERVAL = 5000; // ms — só roda enquanto houver job em andamento
 const TERMINAL_STATUSES = new Set(["done", "error"]);
 
+const NICHES: {
+  source: SourceType;
+  href: string;
+  title: string;
+  blurb: string;
+  accent: string;
+}[] = [
+  {
+    source: "podcast",
+    href: "/podcast",
+    title: "Podcast",
+    blurb: "Gancho verbal, arco de resolução, frase-momento",
+    accent: "hover:border-emerald-500",
+  },
+  {
+    source: "gameplay",
+    href: "/gameplay",
+    title: "Gameplay",
+    blurb: "Pico visual, reviravolta, legibilidade sem som",
+    accent: "hover:border-sky-500",
+  },
+  {
+    source: "siege",
+    href: "/siege",
+    title: "Siege X",
+    blurb: "Sequência de abates, clutch, reflexo e treta na call",
+    accent: "hover:border-orange-500",
+  },
+];
+
 export default function Home() {
-  const router = useRouter();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [references, setReferences] = useState<Reference[]>([]);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [fetchError, setFetchError] = useState("");
-  const [submitError, setSubmitError] = useState("");
 
   const fetchJobs = useCallback(async () => {
     try {
-      const data = await listJobs();
-      setJobs(data);
-      setFetchError("");
+      setJobs(await listJobs());
     } catch {
-      setFetchError("Não foi possível carregar os jobs. Verifique se o backend está rodando.");
+      // silencioso — o hub é só um resumo; o erro real aparece na página da conta
     }
   }, []);
 
   const fetchReferences = useCallback(async () => {
     try {
-      const data = await listReferences();
-      setReferences(data);
+      setReferences(await listReferences());
     } catch {
       // silencioso — a lista de referências é secundária
     }
@@ -48,10 +66,9 @@ export default function Home() {
     fetchReferences();
   }, [fetchJobs, fetchReferences]);
 
-  // Atualiza as listas automaticamente enquanto houver trabalho em andamento
-  const hasActiveJobs = jobs.some((job) => !TERMINAL_STATUSES.has(job.status));
-  const hasActiveReferences = references.some((r) => !TERMINAL_STATUSES.has(r.status));
-  const hasActiveWork = hasActiveJobs || hasActiveReferences;
+  const hasActiveWork =
+    jobs.some((j) => !TERMINAL_STATUSES.has(j.status)) ||
+    references.some((r) => !TERMINAL_STATUSES.has(r.status));
   useEffect(() => {
     if (!hasActiveWork) return;
     const interval = setInterval(() => {
@@ -61,44 +78,50 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [hasActiveWork, fetchJobs, fetchReferences]);
 
-  async function handleSubmit(
-    url: string,
-    subtitleMode: SubtitleMode,
-    layoutMode: LayoutMode,
-  ) {
-    setIsSubmitting(true);
-    setSubmitError("");
-    try {
-      const job = await createJob({
-        youtube_url: url,
-        subtitle_mode: subtitleMode,
-        layout_mode: layoutMode,
-      });
-      router.push(`/jobs/${job.id}`);
-    } catch (err: unknown) {
-      setSubmitError(getApiErrorMessage(err, "Erro ao criar job. Tente novamente."));
-    } finally {
-      setIsSubmitting(false);
-    }
+  function summary(source: SourceType) {
+    const mine = jobs.filter((j) => j.source_type === source);
+    return {
+      total: mine.length,
+      running: mine.filter((j) => !TERMINAL_STATUSES.has(j.status)).length,
+    };
   }
 
   return (
     <div className="flex flex-col gap-8">
-      {/* Input card */}
-      <div className="rounded-2xl bg-gray-900 border border-gray-800 p-6">
-        <h1 className="text-xl font-bold text-gray-100 mb-1">Gerar Clips Virais</h1>
-        <p className="text-sm text-gray-500 mb-6">
-          Cole a URL de um vídeo do YouTube para extrair os melhores trechos automaticamente.
+      <div>
+        <h1 className="text-xl font-bold text-gray-100 mb-1">Suas contas</h1>
+        <p className="text-sm text-gray-500">
+          Cada conta tem os próprios presets de marca e a própria fila de postagem.
         </p>
-        <UrlInput onSubmit={handleSubmit} isLoading={isSubmitting} />
-        {submitError && (
-          <p className="mt-3 text-sm text-red-400 bg-red-900/20 rounded px-3 py-2">
-            {submitError}
-          </p>
-        )}
       </div>
 
-      {/* Aprender com clipe viral de outro criador */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {NICHES.map((niche) => {
+          const { total, running } = summary(niche.source);
+          return (
+            <Link
+              key={niche.source}
+              href={niche.href}
+              className={`rounded-2xl bg-gray-900 border border-gray-800 p-6 transition-colors ${niche.accent}`}
+            >
+              <h2 className="text-lg font-semibold text-gray-100">{niche.title}</h2>
+              <p className="mt-1 text-sm text-gray-500">{niche.blurb}</p>
+              <div className="mt-4 flex items-center gap-3 text-sm">
+                <span className="text-gray-300">
+                  {total} {total === 1 ? "vídeo" : "vídeos"}
+                </span>
+                {running > 0 && (
+                  <span className="rounded-full bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 text-xs text-amber-400">
+                    {running} processando
+                  </span>
+                )}
+              </div>
+            </Link>
+          );
+        })}
+      </div>
+
+      {/* Aprender com clipe viral de outro criador — vale para as três contas */}
       <ReferenceForm />
 
       {references.length > 0 && (
@@ -112,46 +135,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* Padrões aprendidos */}
       <LearnedPatterns />
-
-      {/* Marca d'água */}
-      <WatermarkSettings />
-
-      {/* Cores do banner */}
-      <BannerColorSettings />
-
-      {/* Faixa do modo streamer */}
-      <BarStyleSettings />
-
-      {/* Jobs list */}
-      <div>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-300">Jobs recentes</h2>
-          <button
-            onClick={fetchJobs}
-            className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
-          >
-            Atualizar
-          </button>
-        </div>
-
-        {fetchError && (
-          <div className="rounded-lg bg-red-900/20 border border-red-900 px-4 py-3 text-sm text-red-400 mb-4">
-            {fetchError}
-          </div>
-        )}
-
-        {jobs.length === 0 && !fetchError && (
-          <p className="text-center text-gray-600 py-12">Nenhum job ainda. Cole uma URL acima!</p>
-        )}
-
-        <div className="flex flex-col gap-3">
-          {jobs.map((job) => (
-            <JobCard key={job.id} job={job} onDeleted={fetchJobs} />
-          ))}
-        </div>
-      </div>
     </div>
   );
 }

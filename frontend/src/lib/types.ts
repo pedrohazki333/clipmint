@@ -2,6 +2,18 @@ export type SubtitleMode = "word_highlight" | "traditional" | "none";
 
 export type LayoutMode = "cover" | "streamer";
 
+/** Muda a rubrica da análise e define a conta no cronograma de postagem. */
+export type SourceType = "podcast" | "gameplay" | "siege";
+
+/** Eixos da rubrica de viralidade, 0–10 cada. */
+export const SCORE_AXES = [
+  { key: "hook_score", label: "Gancho", hint: "Força nos 3 primeiros segundos" },
+  { key: "retention_score", label: "Retenção", hint: "Segura a atenção até o fim" },
+  { key: "shareability_score", label: "Compart.", hint: "Eu mandaria isso pra alguém" },
+  { key: "comment_bait_score", label: "Comentários", hint: "Gera debate ou reação" },
+  { key: "loopability_score", label: "Loop", hint: "O fim reconecta com o início" },
+] as const;
+
 /** Caixa da facecam em frações (0–1) da fonte. */
 export interface FacecamRect {
   x: number;
@@ -32,6 +44,7 @@ export interface Job {
   thumbnail_url: string | null;
   subtitle_mode: SubtitleMode;
   layout_mode: LayoutMode;
+  source_type: SourceType;
   facecam_rect: FacecamRect | null;
   status: JobStatus;
   error_message: string | null;
@@ -46,6 +59,17 @@ export interface Clip {
   end_time: number;
   duration: number;
   virality_score: number;
+  /** Nulos em clipes analisados antes da rubrica de cinco eixos. */
+  hook_score: number | null;
+  retention_score: number | null;
+  shareability_score: number | null;
+  loopability_score: number | null;
+  comment_bait_score: number | null;
+  verdict: string | null;
+  weak_points_json: string | null;
+  trim_reason: string | null;
+  /** JSON [[ini,fim],...] quando o clipe foi costurado de vários trechos. */
+  segments_json: string | null;
   hook: string | null;
   reason: string | null;
   tags_json: string | null;
@@ -68,6 +92,8 @@ export interface CreateJobPayload {
   youtube_url: string;
   subtitle_mode: SubtitleMode;
   layout_mode?: LayoutMode;
+  /** Omitido = inferido do layout (streamer→gameplay, cover→podcast). */
+  source_type?: SourceType;
   /** Só no modo streamer; omitido = detecção automática da webcam. */
   facecam_rect?: FacecamRect;
 }

@@ -7,7 +7,8 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.database import init_db
-from app.routers import jobs, clips, references, settings as settings_router
+from app.routers import jobs, clips, references, schedule, settings as settings_router
+from app.services.branding import migrate_legacy_branding
 from app.workers.pipeline import reconcile_interrupted_jobs
 
 logging.basicConfig(
@@ -24,6 +25,9 @@ async def lifespan(app: FastAPI):
     settings.ensure_dirs()
     await init_db()
     logger.info("Database initialized. Storage dirs ready.")
+
+    # Marca global antiga → presets de cada nicho (idempotente).
+    migrate_legacy_branding()
 
     # O pipeline roda dentro deste processo: jobs que ainda constam como "em
     # execução" são órfãos de um processo morto (reload, queda, Ctrl+C). Marca
@@ -56,6 +60,7 @@ app.add_middleware(
 app.include_router(jobs.router, prefix="/api")
 app.include_router(clips.router, prefix="/api")
 app.include_router(references.router, prefix="/api")
+app.include_router(schedule.router, prefix="/api")
 app.include_router(settings_router.router, prefix="/api")
 
 

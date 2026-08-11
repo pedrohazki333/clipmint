@@ -15,6 +15,9 @@ from app.prompts.viral_analysis import (
     build_analysis_prompt,
 )
 from app.services.analyzer import (
+    AXIS_WEIGHTS,
+    _axis_scores,
+    _clip_score,
     _find_split_point,
     _split_clip,
     _parse_claude_response,
@@ -136,7 +139,7 @@ def test_parse_claude_response_invalid_json():
 # ─── Testes do prompt builder ──────────────────────────────────────────────────
 
 def test_build_analysis_prompt_contains_metadata():
-    system, user = build_analysis_prompt(
+    user = build_analysis_prompt(
         words=SAMPLE_WORDS,
         title="My Video",
         channel="Test Channel",
@@ -147,16 +150,209 @@ def test_build_analysis_prompt_contains_metadata():
     )
     assert "My Video" in user
     assert "Test Channel" in user
-    assert "7.0" in user
-    assert "15" in system
-    assert "90" in system
+    # O threshold vai para o prompt na escala do final_score (0-100)
+    assert "70" in user
 
 
 def test_build_analysis_prompt_not_empty():
-    system, user = build_analysis_prompt(
+    user = build_analysis_prompt(
         words=SAMPLE_WORDS,
         title="T", channel="C", duration_seconds=60,
         threshold=7.0, min_duration=15, max_duration=90,
     )
-    assert len(system) > 100
     assert len(user) > 100
+
+
+def test_build_analysis_prompt_switches_rubric_by_source():
+    """Corte de podcast e de gameplay não são avaliados pelos mesmos critérios."""
+    from app.prompts.viral_analysis import source_criteria
+
+    podcast = build_analysis_prompt(
+        words=SAMPLE_WORDS, title="T", channel="C", duration_seconds=60,
+        threshold=7.0, min_duration=15, max_duration=90, source_type="podcast",
+    )
+    gameplay = build_analysis_prompt(
+        words=SAMPLE_WORDS, title="T", channel="C", duration_seconds=60,
+        threshold=7.0, min_duration=15, max_duration=90, source_type="gameplay",
+    )
+
+    assert "podcast" in podcast
+    assert "gameplay" in gameplay
+    assert "Frase-momento" in source_criteria("podcast")
+    assert "Legibilidade sem áudio" in source_criteria("gameplay")
+    # Tipo desconhecido não pode quebrar a análise
+    assert source_criteria(None) == source_criteria("podcast")
+    assert source_criteria("outra-coisa") == source_criteria("podcast")
+
+
+# ─── Testes da rubrica de cinco eixos ──────────────────────────────────────────
+
+FULL_AXES = {
+    "hook_score": 9,
+    "retention_score": 8,
+    "shareability_score": 7,
+    "loopability_score": 6,
+    "comment_bait_score": 5,
+}
+
+
+def test_clip_score_recomputes_weighted_average():
+    """
+    A nota sai dos eixos, não do final_score que o modelo escreveu.
+
+    LLM erra média ponderada com frequência, e o cronograma escolhe clipe por
+    eixo — a nota geral tem que ser coerente com os eixos que ela resume.
+    """
+    clip = dict(FULL_AXES, final_score=99)  # aritmética errada de propósito
+    axes = _axis_scores(clip)
+
+    # 8*.30 + 9*.25 + 7*.20 + 5*.15 + 6*.10 = 7.4
+    assert _clip_score(clip, axes) == pytest.approx(7.4)
+
+
+def test_clip_score_falls_back_to_final_score():
+    """Sem os eixos completos, o final_score (0-100) vira a nota 0-10."""
+    clip = {"final_score": 82, "hook_score": 9}
+    assert _clip_score(clip, _axis_scores(clip)) == pytest.approx(8.2)
+
+
+def test_clip_score_falls_back_to_legacy_field():
+    """Resposta no formato antigo continua sendo entendida."""
+    clip = {"score": 8.6}
+    assert _clip_score(clip, _axis_scores(clip)) == pytest.approx(8.6)
+
+
+def test_clip_score_survives_garbage():
+    assert _clip_score({}, {}) == 0.0
+    assert _clip_score({"score": "não é número"}, {}) == 0.0
+
+
+def test_axis_scores_clamps_out_of_range():
+    """Eixo fora de 0-10 não pode contaminar a ordenação do cronograma."""
+    axes = _axis_scores(dict(FULL_AXES, hook_score=42, retention_score=-3))
+    assert axes["hook_score"] == 10.0
+    assert axes["retention_score"] == 0.0
+
+
+def test_axis_scores_ignores_missing_and_invalid():
+    axes = _axis_scores({"hook_score": 7, "retention_score": None, "shareability_score": "x"})
+    assert axes == {"hook_score": 7.0}
+
+
+def test_axis_weights_sum_to_one():
+    assert sum(AXIS_WEIGHTS.values()) == pytest.approx(1.0)
+
+
+def test_siege_rubric_targets_r6_moments():
+    """
+    A aba de Siege existe porque o que vira clipe em R6 é específico:
+    sequência de abates, morte rápida de um tiro, clutch e treta na call.
+    """
+    from app.prompts.viral_analysis import SOURCE_TYPES, source_criteria
+
+    siege = source_criteria("siege")
+
+    assert "siege" in SOURCE_TYPES
+    for termo in ("Sequência de eliminações", "um tiro", "Clutch", "Treta"):
+        assert termo in siege, termo
+    # Só existe transcrição: a rubrica precisa dizer como inferir a jogada
+    assert "SOMENTE a transcrição" in siege
+    # A nota vem da qualidade dos abates, não de quantos nem de quão rápidos:
+    # um 4k com quatro abates bonitos vale mais que um triplo relâmpago sortudo.
+    assert "QUALIDADE de cada abate" in siege
+    # Jogada espalhada não perde nota — quem se ajusta é o corte
+    assert "derruba o CORTE" in siege
+    assert "segments" in siege
+    # E não pode ser confundida com as outras
+    assert siege != source_criteria("gameplay")
+    assert siege != source_criteria("podcast")
+
+
+def test_siege_prompt_is_assembled_end_to_end():
+    """O prompt do sistema monta com a rubrica de Siege, sem placeholder solto."""
+    import re
+
+    from prompt_engine.prompt_builder import PromptBuilder
+    from app.prompts.viral_analysis import source_criteria
+
+    system = PromptBuilder().build(
+        min_duration=15, max_duration=90, source_criteria=source_criteria("siege")
+    )
+    user = build_analysis_prompt(
+        words=SAMPLE_WORDS, title="T", channel="C", duration_seconds=60,
+        threshold=7.0, min_duration=15, max_duration=90, source_type="siege",
+    )
+
+    assert "Sequência de eliminações" in system
+    assert re.findall(r"{[a-z_]+}", system) == []
+    assert "siege" in user
+
+
+# ─── Clipes costurados (só Siege) ─────────────────────────────────────────────
+
+def test_parse_segments_accepts_a_valid_ace():
+    """Ace espalhado pelo round vira três trechos emendados."""
+    from app.services.analyzer import parse_segments
+
+    got = parse_segments([[1820.4, 1834.0], [1851.2, 1863.5], [1879.0, 1892.4]])
+
+    assert got == [(1820.4, 1834.0), (1851.2, 1863.5), (1879.0, 1892.4)]
+
+
+def test_parse_segments_drops_blinks_and_disorder():
+    """Trecho curtíssimo vira piscada; fora de ordem ou sobreposto é lixo."""
+    from app.services.analyzer import parse_segments
+
+    assert parse_segments([[10.0, 11.0], [20.0, 25.0], [30.0, 36.0]]) == [
+        (20.0, 25.0), (30.0, 36.0)
+    ]
+    # Segundo trecho começa antes de o primeiro acabar
+    assert parse_segments([[10.0, 30.0], [25.0, 40.0]]) == []
+
+
+def test_parse_segments_caps_the_total_duration():
+    """
+    O clipe tem que ficar perto de um minuto, não do round inteiro.
+
+    Trechos que estouram o teto são cortados fora em vez de a lista ser
+    descartada — o começo da jogada é o que se perde, como manda a rubrica.
+    """
+    from app.services.analyzer import parse_segments
+
+    got = parse_segments([[0, 30], [40, 70], [80, 110], [120, 150]])
+
+    assert got == [(0.0, 30.0), (40.0, 70.0)]  # 60s; o terceiro passaria de 70
+
+
+def test_parse_segments_needs_at_least_two():
+    """Um trecho só não é costura — é corte contínuo comum."""
+    from app.services.analyzer import parse_segments
+
+    assert parse_segments([[10.0, 40.0]]) == []
+    assert parse_segments(None) == []
+    assert parse_segments("não é lista") == []
+    assert parse_segments([["a", "b"], [1, 2]]) == []
+
+
+def test_remap_words_follows_the_stitched_timeline():
+    """
+    A legenda tem que acompanhar a emenda.
+
+    Palavra do tempo morto descartado some junto — senão a legenda mostraria
+    fala que não está mais no vídeo.
+    """
+    from app.services.segments import remap_words, total_duration
+
+    words = [
+        {"text": "peguei", "start": 10.0, "end": 10.5},
+        {"text": "morto", "start": 25.0, "end": 25.4},   # cai no buraco
+        {"text": "ace", "start": 50.0, "end": 50.6},
+    ]
+    segments = [(8.0, 14.0), (48.0, 54.0)]
+
+    got = remap_words(words, segments)
+
+    assert [w["text"] for w in got] == ["peguei", "ace"]
+    assert got[0]["start"] == pytest.approx(2.0)    # 10.0 - 8.0
+    assert got[1]["start"] == pytest.approx(8.0)    # 6.0 (1º trecho) + 50.0-48.0
+    assert total_duration(segments) == pytest.approx(12.0)

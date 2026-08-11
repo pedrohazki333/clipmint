@@ -30,6 +30,9 @@ class JobCreate(BaseModel):
     youtube_url: str
     subtitle_mode: Literal["word_highlight", "traditional", "none"] = "word_highlight"
     layout_mode: Literal["cover", "streamer"] = "cover"
+    # Muda a rubrica da análise e define a conta no cronograma de postagem.
+    # Omitido = inferido do layout_mode (streamer→gameplay, cover→podcast).
+    source_type: Optional[Literal["podcast", "gameplay", "siege"]] = None
     # Só no modo streamer: posição da facecam. Omitido = detecção automática.
     facecam_rect: Optional[FacecamRectPayload] = None
 
@@ -51,6 +54,7 @@ class JobResponse(BaseModel):
     thumbnail_url: Optional[str]
     subtitle_mode: str
     layout_mode: str = "cover"
+    source_type: str = "podcast"
     facecam_rect: Optional[dict] = None
     status: str
     error_message: Optional[str]
@@ -86,6 +90,17 @@ class ClipResponse(BaseModel):
     end_time: float
     duration: float
     virality_score: float
+    # Eixos da rubrica (0-10). O cronograma escolhe o clip de cada horário por
+    # um deles; ficam nulos em clips analisados antes da rubrica de 5 eixos.
+    hook_score: Optional[float] = None
+    retention_score: Optional[float] = None
+    shareability_score: Optional[float] = None
+    loopability_score: Optional[float] = None
+    comment_bait_score: Optional[float] = None
+    verdict: Optional[str] = None
+    weak_points_json: Optional[str] = None
+    trim_reason: Optional[str] = None
+    segments_json: Optional[str] = None
     hook: Optional[str]
     reason: Optional[str]
     tags_json: Optional[str]

@@ -12,8 +12,10 @@ entre loops.
 
 import asyncio
 import json
+import os
 import subprocess
 import sys
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -159,6 +161,74 @@ def test_held_releases_lock_on_error(tmp_path, monkeypatch):
     assert not (settings.locks_dir / "job.pid").exists()
 
 
+def _live_owner(job_id):
+    """Processo vivo de verdade segurando o lock do job. Devolve (proc, lock)."""
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    lock = settings.locks_dir / f"{job_id}.pid"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text(str(proc.pid), encoding="utf-8")
+    return proc, lock
+
+
+def test_held_refuses_second_process_on_same_job(tmp_path, monkeypatch):
+    """
+    Dois pipelines no mesmo job escrevem nos mesmos arquivos e corrompem o
+    vídeo mesclado — o segundo tem que ser recusado.
+    """
+    monkeypatch.setattr(settings, "storage_dir", str(tmp_path))
+
+    proc, lock = _live_owner("job")
+    try:
+        with joblock.held("job"):
+            raise AssertionError("não deveria ter assumido o lock")
+    except joblock.JobAlreadyRunning as exc:
+        assert exc.pid == proc.pid
+    finally:
+        proc.kill()
+        proc.wait()
+
+    # O lock do dono original continua de pé.
+    assert lock.read_text(encoding="utf-8") == str(proc.pid)
+
+
+def test_held_takes_over_stale_lock(tmp_path, monkeypatch):
+    """Lock de processo morto não pode barrar um resume legítimo."""
+    monkeypatch.setattr(settings, "storage_dir", str(tmp_path))
+
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    proc.wait()  # PID liberado
+
+    lock = settings.locks_dir / "job.pid"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text(str(proc.pid), encoding="utf-8")
+
+    with joblock.held("job"):
+        assert joblock.owner_pid("job") == os.getpid()
+
+    assert not lock.exists()
+
+
+def test_run_pipeline_gives_up_when_job_has_owner(tmp_path, monkeypatch):
+    """run_pipeline não duplica trabalho nem toca no job de outro processo."""
+    monkeypatch.setattr(settings, "storage_dir", str(tmp_path))
+
+    executed = []
+
+    async def fake_execute(job_id, resume):
+        executed.append(job_id)
+
+    monkeypatch.setattr(pipeline, "_execute_pipeline", fake_execute)
+
+    proc, _ = _live_owner("job")
+    try:
+        asyncio.run(pipeline.run_pipeline("job", resume=True))  # não levanta
+    finally:
+        proc.kill()
+        proc.wait()
+
+    assert executed == []
+
+
 def test_reconcile_noop_without_running_jobs(tmp_path, monkeypatch):
     async def scenario():
         factory, engine = await _make_db(tmp_path)
@@ -176,7 +246,17 @@ def test_reconcile_noop_without_running_jobs(tmp_path, monkeypatch):
 
 # ─── Reaproveitamento do download ─────────────────────────────────────────────
 
-def test_media_from_job_reuses_files_on_disk(tmp_path):
+def _accept_media(monkeypatch, trustworthy=True):
+    """Neutraliza a conferência de mídia — os arquivos do teste são vazios."""
+
+    async def fake_ensure(job_id, video_path, audio_path, expected_duration=0.0):
+        return trustworthy
+
+    monkeypatch.setattr(pipeline, "ensure_media", fake_ensure)
+
+
+def test_media_from_job_reuses_files_on_disk(tmp_path, monkeypatch):
+    _accept_media(monkeypatch)
     saved = {
         "video_title": "Título",
         "channel_name": "Canal",
@@ -186,7 +266,7 @@ def test_media_from_job_reuses_files_on_disk(tmp_path):
         "audio_path": _touch(tmp_path / "audio.wav"),
     }
 
-    metadata = pipeline._media_from_job(saved)
+    metadata = asyncio.run(pipeline._media_from_job("job", saved))
 
     assert metadata is not None
     assert metadata.title == "Título"
@@ -194,7 +274,8 @@ def test_media_from_job_reuses_files_on_disk(tmp_path):
     assert metadata.video_path == saved["video_path"]
 
 
-def test_media_from_job_none_when_file_missing(tmp_path):
+def test_media_from_job_none_when_file_missing(tmp_path, monkeypatch):
+    _accept_media(monkeypatch)
     saved = {
         "video_title": None, "channel_name": None,
         "duration_seconds": None, "thumbnail_url": None,
@@ -202,17 +283,31 @@ def test_media_from_job_none_when_file_missing(tmp_path):
         "audio_path": str(tmp_path / "sumiu.wav"),  # não existe
     }
 
-    assert pipeline._media_from_job(saved) is None
+    assert asyncio.run(pipeline._media_from_job("job", saved)) is None
 
 
-def test_media_from_job_none_when_never_downloaded():
+def test_media_from_job_none_when_never_downloaded(monkeypatch):
+    _accept_media(monkeypatch)
     saved = {
         "video_title": None, "channel_name": None,
         "duration_seconds": None, "thumbnail_url": None,
         "video_path": None, "audio_path": None,
     }
 
-    assert pipeline._media_from_job(saved) is None
+    assert asyncio.run(pipeline._media_from_job("job", saved)) is None
+
+
+def test_media_from_job_rejects_corrupted_media(tmp_path, monkeypatch):
+    """Arquivo em disco com áudio fora do vídeo não é reaproveitado."""
+    _accept_media(monkeypatch, trustworthy=False)
+    saved = {
+        "video_title": "Título", "channel_name": "Canal",
+        "duration_seconds": 9556.0, "thumbnail_url": None,
+        "video_path": _touch(tmp_path / "video.mp4"),
+        "audio_path": _touch(tmp_path / "audio.wav"),
+    }
+
+    assert asyncio.run(pipeline._media_from_job("job", saved)) is None
 
 
 # ─── Reaproveitamento da transcrição ──────────────────────────────────────────
@@ -297,6 +392,96 @@ def test_tasks_from_db_only_counts_clips_with_file(tmp_path, monkeypatch):
         assert tasks[2].banner_text == "Gancho"
 
         assert await pipeline._tasks_from_db("outro-job") == []
+
+        await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+# ─── Descarte do que veio do vídeo antigo ─────────────────────────────────────
+
+def test_discard_derived_work_clears_transcript_and_clips(tmp_path, monkeypatch):
+    """
+    Baixar o vídeo de novo invalida transcrição, análise e clips: os timestamps
+    antigos apontam para outro momento do arquivo novo.
+    """
+
+    async def scenario():
+        factory, engine = await _make_db(tmp_path)
+        monkeypatch.setattr(pipeline, "AsyncSessionLocal", factory)
+        monkeypatch.setattr(settings, "storage_dir", str(tmp_path))
+
+        words_json = _touch(tmp_path / "words.json", "[]")
+        clips_dir = settings.clips_dir / "job"
+        clips_dir.mkdir(parents=True, exist_ok=True)
+        (clips_dir / "clip.mp4").write_text("x", encoding="utf-8")
+
+        async with factory() as db:
+            db.add(
+                Transcript(
+                    id="t1", job_id="job", full_text="oi",
+                    words_json_path=words_json,
+                )
+            )
+            db.add(
+                Clip(
+                    id="c1", job_id="job", start_time=0, end_time=10,
+                    duration=10, virality_score=8, status="ready",
+                )
+            )
+            # Job vizinho não pode ser afetado
+            db.add(
+                Clip(
+                    id="c2", job_id="outro", start_time=0, end_time=10,
+                    duration=10, virality_score=8, status="ready",
+                )
+            )
+            await db.commit()
+
+        await pipeline._discard_derived_work("job")
+
+        async with factory() as db:
+            transcripts = (await db.execute(select(Transcript))).scalars().all()
+            clips = (await db.execute(select(Clip))).scalars().all()
+
+        assert transcripts == []
+        assert [c.id for c in clips] == ["c2"]
+        assert not Path(words_json).exists()
+        assert not clips_dir.exists()
+
+        await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_status_update_clears_stale_error(tmp_path, monkeypatch):
+    """Resume que deu certo não pode deixar o job 'done' exibindo erro antigo."""
+
+    async def scenario():
+        factory, engine = await _make_db(tmp_path)
+        monkeypatch.setattr(pipeline, "AsyncSessionLocal", factory)
+
+        async with factory() as db:
+            db.add(
+                Job(
+                    id="job", youtube_url="u", status="error",
+                    error_message="Processamento interrompido",
+                )
+            )
+            await db.commit()
+
+        await pipeline._update_job_status("job", "done")
+
+        async with factory() as db:
+            job = (await db.execute(select(Job).where(Job.id == "job"))).scalar_one()
+        assert job.status == "done"
+        assert job.error_message is None
+
+        # Ir para 'error' continua guardando a mensagem
+        await pipeline._update_job_status("job", "error", error_message="boom")
+        async with factory() as db:
+            job = (await db.execute(select(Job).where(Job.id == "job"))).scalar_one()
+        assert job.error_message == "boom"
 
         await engine.dispose()
 

@@ -5,15 +5,14 @@ Este módulo contém os templates de prompt usados para instruir o Claude API
 a identificar trechos de vídeo com alto potencial viral. O prompt foi projetado
 para ser iterado e melhorado com o tempo; evite acoplá-lo à lógica do analyzer.
 
-Critérios de viralidade avaliados:
-  1. Gancho emocional (hook) — os primeiros 3 segundos prendem o espectador?
-  2. Compartilhamento — as pessoas vão querer mostrar isso a alguém?
-  3. Controvérsia / opinião forte — instiga comentários e debates?
-  4. Humor — provoca riso genuíno ou situação constrangedora relatable?
-  5. Revelação / surpresa — há um twist, fact inesperado ou "eu não sabia disso"?
-  6. Relatabilidade — o público-alvo vai pensar "isso acontece comigo"?
-  7. Tensão narrativa — há suspense, conflito ou clímax que prende até o fim?
-  8. Valor de informação — ensina algo útil de forma concisa e memorável?
+A rubrica tem cinco eixos (0-10 cada), derivados de como o algoritmo pondera
+os sinais: hook, retention, shareability, loopability e comment_bait. Eles são
+guardados por clip no banco porque o cronograma de postagem escolhe o clipe de
+cada horário por um eixo específico — não pela nota final.
+
+O system prompt vive em `prompt_engine/core_prompt.txt` (montado pelo
+PromptBuilder, que injeta exemplos validados). Aqui ficam os critérios que
+mudam por tipo de fonte e o prompt de usuário com o formato de saída.
 """
 
 # ─── Formato do transcript com timestamps ─────────────────────────────────────
@@ -23,84 +22,155 @@ The transcript below uses the format: [START_TIME - END_TIME] Text
 Times are in seconds (e.g., [12.4 - 15.1] Hello everyone).
 """
 
-# ─── System prompt ─────────────────────────────────────────────────────────────
+# ─── Critérios por tipo de fonte ───────────────────────────────────────────────
+# Injetados no core_prompt via {source_criteria}. O que prende alguém num corte
+# de podcast (frase-momento, arco de resolução) não é o que prende num corte de
+# gameplay (pico visual, legibilidade sem som), então a rubrica troca junto.
 
-SYSTEM_PROMPT = """You are an expert viral content strategist with deep knowledge of what makes short-form video content explode on TikTok, Instagram Reels, and YouTube Shorts.
+PODCAST_CRITERIA = """## Critérios para PODCAST
 
-Your task is to analyze a video transcript and identify the segments with the highest viral potential for clips between {min_duration}s and {max_duration}s.
+- Gancho verbal nos primeiros 3s: existe uma afirmação contra-intuitiva, uma revelação, uma pergunta em aberto, ou um sinal de autoridade/credibilidade logo de cara? Introduções ("então hoje eu vim falar sobre...") são fracas — penalize.
+- Arco de resolução: o trecho tem começo, meio e fim dentro de si mesmo (não depende de contexto anterior do podcast pra fazer sentido)?
+- Densidade de informação/emoção: há silêncios longos, hesitação, ou divagação que quebram o ritmo? Isso derruba completion rate.
+- Potencial de debate: a afirmação é polêmica ou opinativa o suficiente pra gerar comentários discordando ou concordando com força?
+- Frase-momento (soundbite): existe uma frase isolada que funcionaria como legenda de destaque ou citação compartilhável?"""
 
-You evaluate virality based on 8 criteria, each scored 0-10:
-1. **Emotional Hook**: Do the first 3 seconds immediately grab attention?
-2. **Share-worthiness**: Will viewers compulsively share this with friends?
-3. **Controversy/Strong Opinion**: Does it provoke debate, strong reactions, or challenge assumptions?
-4. **Humor/Entertainment**: Genuine laughter, relatable awkwardness, or entertaining chaos?
-5. **Revelation/Surprise**: Unexpected twist, counterintuitive fact, or "I never knew that" moment?
-6. **Relatability**: Will the target audience feel "this is exactly me"?
-7. **Narrative Tension**: Is there suspense, conflict, or a satisfying resolution?
-8. **Information Value**: Does it teach something memorable and immediately useful?
+GAMEPLAY_CRITERIA = """## Critérios para GAMEPLAY
 
-The final virality score (0.0-10.0) is a weighted average:
-- Hook (25%) + Share-worthiness (20%) + Surprise (15%) + Tension (15%) + Relatability (10%) + Controversy (5%) + Humor (5%) + Info Value (5%)
+- Pico visual nos primeiros 3s: o clipe abre já em tensão (quase morrendo, prestes a uma jogada) ou precisa de "aquecimento" antes do momento bom? Aquecimento é fraco — penalize.
+- Reviravolta clara: há uma mudança de estado legível em poucos segundos (derrota virando vitória, erro virando acerto, reação de susto/comemoração)?
+- Legibilidade sem áudio: o momento é compreensível só pelo visual (muita gente assiste sem som)? Isso importa mais que em podcast.
+- Loop natural: a ação termina de um jeito que poderia reiniciar o clipe sem parecer cortado no meio?
+- Reação humana: há reação de voz/call do jogador (grito, xingamento, comemoração) que reforça o pico visual?
 
-DURATION STRATEGY:
-- The viral sweet spot is {preferred_min}-{preferred_max}s: one idea, delivered fast, payoff early. Whenever a moment lands its full punch inside this window, cut it there — do not pad it to feel "complete".
-- Cuts longer than {preferred_max}s are allowed up to {max_duration}s, but only when the segment genuinely needs the build-up (a story whose payoff depends on its setup, an argument that collapses if trimmed).
-- Never stretch or trim a clip just to hit a length target; natural speech boundaries always win.
+Atenção: você recebe apenas a transcrição, então o pico visual é inferido pela reação falada (grito, silêncio súbito, "não acredito", xingamento, contagem regressiva). Quando não houver sinal falado do que aconteceu na tela, seja conservador na nota em vez de supor a jogada."""
 
-IMPORTANT RULES:
-- Clips MUST be between {min_duration}s and {max_duration}s duration
-- Prefer clips that start mid-sentence only if the hook is incredibly strong; otherwise start at a natural speech boundary
-- End clips at complete sentences or natural pauses, never mid-word
-- Overlapping clips are allowed if different parts are independently viral
-- Be selective — only return clips that genuinely score above the threshold; don't pad results
-- The "hook" field should be a suggested on-screen text overlay for the first frame (max 8 words, punchy)
-""".strip()
+SIEGE_CRITERIA = """## Critérios para SIEGE (Rainbow Six Siege / Siege X)
+
+O público de Siege é jogador: ele reconhece uma jogada boa em dois segundos e não precisa de explicação. Priorize, nesta ordem:
+
+- Sequência de eliminações: dois ou mais abates no mesmo round. O que decide a nota é a QUALIDADE de cada abate, não a quantidade nem a velocidade. Um 4k em que os quatro são bonitos — reação rápida num inimigo que aparece de surpresa, ângulo difícil, tiro pela parede lendo o som, negar um push sozinho, vencer em desvantagem — vale mais que um triplo relâmpago em que dois foram sorte ou spray. Ace (5 abates) e clutch (1vX vencido) são o teto: material de nota alta quase automática.
+
+  Espalhamento não derruba a nota da JOGADA, derruba o CORTE — e corte é você quem decide. Um 4k ou um ace distribuído pelo round inteiro continua sendo ótimo material; o que não pode é virar um clipe com um minuto de caminhada entre um abate e outro, porque tempo morto destrói retenção. Para esses casos use `segments` (ver abaixo): a jogada inteira entra num vídeo só, com o tempo morto removido.
+- Abate rápido de um tiro só: headshot instantâneo, reação a um inimigo que aparece de surpresa, troca de duelo ganha no reflexo. O sinal na transcrição é a reação imediata — o próprio streamer ou a call comentando a velocidade ("que reflexo", "nem viu", "na cabeça", "instantâneo") — ou o silêncio tenso seguido de explosão.
+- Clutch sob pressão: último vivo, bomba plantada, tempo acabando. O relógio faz o trabalho de tensão sozinho; o valor está em entrar já no aperto, não na preparação.
+- Leitura e domínio: prefire acertado, ler o som e matar pela parede, drone que entrega a posição, spawnpeek. É o que o público de Siege comenta e discute nos comentários.
+- Treta e zoeira na call: briga entre os jogadores, xingamento, acusação de teamkill, alguém culpando o outro pela derrota. Vale tanto quanto a jogada — muitas vezes mais, porque compartilha melhor.
+- Fracasso cômico: teamkill, cair do mapa, gastar o round inteiro numa parede errada, whiff na cara do inimigo. O erro absurdo compartilha tão bem quanto o acerto.
+
+Atenção — você recebe SOMENTE a transcrição, sem imagem: a jogada é inferida pela fala. Em partida competitiva a call é TÁTICA, não comemorativa ("puxa a câmera", "espera abrir o alçapão"), então não espere narração de abate: aprenda a ler os sinais que aparecem de verdade.
+
+Sinais que CONFIRMAM abate, e devem ser tratados como confirmação, não como suposição:
+- "peguei", "matei", "pegou", "matou", "tá down", "caiu" — cada um é um abate.
+- Placar falado: "tá 3v2", "1v3", "somos 4 contra 5". A queda de um placar para o outro entre duas falas conta os abates que aconteceram no meio, mesmo sem ninguém narrar. É o sinal mais confiável em FPL.
+- Vários desses sinais concentrados numa janela curta = sequência de eliminações, mesmo sem ninguém dizer "double" ou "triple".
+- Reação súbita da call (grito, xingamento, "isso!", "boa!") logo após silêncio tenso normalmente marca o abate importante.
+
+Seja conservador só quando NENHUM desses sinais aparece — trecho de gameplay silencioso e sem reação não vira clipe. Mas não descarte um bom momento por falta de narração explícita: em Siege a jogada quase nunca é narrada, é confirmada por essas pistas.
+
+Não confunda narração de rotina ("vou de Ash", "alguém dá drone") com momento: sem pico de reação, sem abate encadeado e sem treta, o trecho é enchimento por melhor que seja a partida."""
+
+# Só Siege monta clipe com trechos costurados. Nos outros nichos o corte
+# contínuo é o certo, e liberar segmentos lá só criaria clipe picotado.
+SEGMENTS_RULE = """
+## Trechos costurados (`segments`)
+
+Quando a jogada é boa mas está espalhada — o caso típico é o ace com caminhada entre os abates —, devolva `segments`: uma lista de trechos do vídeo que serão emendados num clipe único, na ordem, com o tempo morto entre eles removido.
+
+```
+"segments": [[1820.4, 1834.0], [1851.2, 1863.5], [1879.0, 1892.4]]
+```
+
+Regras:
+- Use `segments` só quando remover o meio melhora de verdade. Jogada que já acontece seguida NÃO precisa disso — nesse caso devolva apenas `start`/`end`, como sempre.
+- Cada trecho tem no mínimo 3s. Trecho curtíssimo vira piscada e confunde.
+- A soma dos trechos não passa de {max_segmented}s — o clipe final tem que ficar perto de um minuto, não do round inteiro. Se a jogada não couber, corte o começo dela e fique com os melhores abates.
+- Os trechos vêm em ordem cronológica e não se sobrepõem.
+- A emenda é corte seco, sem transição: termine cada trecho num ponto que não corte uma palavra ao meio quando der.
+- `start` e `end` continuam obrigatórios: use o começo do primeiro trecho e o fim do último.
+- Explique no `trim_reason` o que foi removido e por quê.
+"""
+
+
+SOURCE_CRITERIA = {
+    "podcast": PODCAST_CRITERIA,
+    "gameplay": GAMEPLAY_CRITERIA,
+    "siege": SIEGE_CRITERIA,
+}
+
+DEFAULT_SOURCE_TYPE = "podcast"
+SOURCE_TYPES = ("podcast", "gameplay", "siege")
+
+
+def default_source_type(layout_mode: str | None) -> str:
+    """
+    Palpite do tipo de fonte a partir do layout escolhido.
+
+    O layout 'streamer' (facecam + gameplay) é o de live/gameplay; 'cover' é o
+    formato dos cortes de podcast. É só um default: o usuário confirma na
+    criação do job, porque o tipo decide em qual conta o clipe é postado.
+    """
+    return "gameplay" if (layout_mode or "").lower() == "streamer" else "podcast"
+
+
+def source_criteria(source_type: str | None) -> str:
+    """Bloco de critérios do tipo de fonte, caindo em podcast se desconhecido."""
+    return SOURCE_CRITERIA.get(
+        (source_type or DEFAULT_SOURCE_TYPE).lower(),
+        PODCAST_CRITERIA,
+    )
+
 
 # ─── User prompt template ──────────────────────────────────────────────────────
 
-USER_PROMPT_TEMPLATE = """Analyze this video transcript and identify all segments with viral potential scoring {threshold} or above.
+USER_PROMPT_TEMPLATE = """Analise a transcrição abaixo e identifique todos os trechos com potencial viral de {threshold_100} ou mais no final_score.
 
-## Video Metadata
-- **Title**: {title}
-- **Channel**: {channel}
-- **Total Duration**: {duration_str}
+## Metadados do vídeo
+- **Título**: {title}
+- **Canal**: {channel}
+- **Duração total**: {duration_str}
+- **Tipo de fonte**: {source_type}
 
-## Transcript (with timestamps in seconds)
+## Transcrição (timestamps em segundos)
 {transcript_with_timestamps}
 
-## Task
-Find ALL segments that score {threshold}+ on the virality scale.
-Favor tight {preferred_min}-{preferred_max}s cuts for reach; go longer (up to {max_duration}s) only when the moment truly needs its build-up.
-Return ONLY valid JSON — no markdown, no explanation outside the JSON.
+## Tarefa
+Encontre TODOS os trechos que fecham {threshold_100}+ de final_score, aplicando os critérios de {source_type}.
+Prefira cortes enxutos de {preferred_min}-{preferred_max}s; passe disso (até {max_duration}s) só quando o momento realmente precisar da construção.
+Os campos `start` e `end` são o corte final, em segundos absolutos do vídeo.
+Retorne SOMENTE JSON válido — sem markdown, sem texto fora do JSON.
 
-## Required JSON Format
+## Formato exigido
 {{
   "clips": [
     {{
       "start": 12.4,
       "end": 47.2,
-      "score": 8.7,
-      "hook": "Nobody talks about this",
-      "suggested_title": "The hidden truth about [topic]",
-      "reason": "Strong revelation hook combined with counterintuitive insight. Opens with a direct challenge to common belief, builds tension through personal story, ends with a memorable punchline that begs to be shared.",
-      "tags": ["revelation", "controversial", "educational"],
-      "criteria_scores": {{
-        "hook": 9,
-        "share_worthiness": 8,
-        "controversy": 7,
-        "humor": 3,
-        "revelation": 10,
-        "relatability": 8,
-        "tension": 7,
-        "info_value": 9
-      }}
+      "hook_score": 9,
+      "retention_score": 8,
+      "shareability_score": 8,
+      "loopability_score": 6,
+      "comment_bait_score": 7,
+      "final_score": 79,
+      "verdict": "post",
+      "trim_reason": "Começa direto na afirmação polêmica e termina na frase-momento, sem a divagação de 15s que vinha antes.",
+      "suggested_hook_caption": "Ninguém fala sobre isso",
+      "suggested_title": "A verdade escondida sobre [tema]",
+      "reason": "Gancho de revelação com afirmação contra-intuitiva, tensão construída por história pessoal e um soundbite final que pede compartilhamento.",
+      "weak_points": ["hesitação curta aos 31s, não chega a quebrar o ritmo"],
+      "tags": ["revelation", "controversial", "educational"]
     }}
   ],
-  "analysis_notes": "Brief overall assessment of the video's viral potential and content themes"
+  "analysis_notes": "Avaliação geral do potencial viral do vídeo e dos temas."
 }}
 
-If no segments meet the threshold, return: {{"clips": [], "analysis_notes": "reason why"}}
-"""
+Regras do JSON:
+- `verdict` é "post" quando o trecho está pronto para publicar, ou "revisar_corte" quando vale a pena mas o corte precisa de ajuste humano. Trechos que você descartaria simplesmente não entram na lista.
+- `weak_points` lista os pontos que derrubam retenção; use lista vazia quando não houver.
+- `final_score` é a média ponderada dos cinco eixos (retention 30%, hook 25%, shareability 20%, comment_bait 15%, loopability 10%), numa escala de 0 a 100.
+
+Se nenhum trecho atingir o limiar, retorne: {{"clips": [], "analysis_notes": "motivo"}}
+{segments_rule}"""
 
 # ─── Helper functions ──────────────────────────────────────────────────────────
 
@@ -166,31 +236,37 @@ def build_analysis_prompt(
     max_duration: int,
     preferred_min: int = 25,
     preferred_max: int = 40,
-) -> tuple[str, str]:
+    source_type: str = DEFAULT_SOURCE_TYPE,
+    max_segmented: int = 70,
+) -> str:
     """
-    Constrói os prompts system e user para análise de viralidade.
+    Constrói o prompt de usuário da análise de viralidade.
 
-    Retorna uma tupla (system_prompt, user_prompt) prontos para envio ao Claude.
+    O system prompt não sai daqui: ele é montado pelo PromptBuilder a partir de
+    `prompt_engine/core_prompt.txt`, que injeta exemplos validados e padrões
+    aprendidos. Manter uma segunda cópia neste módulo só criava divergência.
+
+    Args:
+        threshold: Limiar na escala 0-10 do sistema; convertido para a escala
+            0-100 do final_score que o modelo devolve.
     """
-    system = SYSTEM_PROMPT.format(
-        min_duration=min_duration,
-        max_duration=max_duration,
-        preferred_min=preferred_min,
-        preferred_max=preferred_max,
-    )
-
     transcript_text = format_transcript_with_timestamps(words)
+    source = (source_type or DEFAULT_SOURCE_TYPE).lower()
 
-    user = USER_PROMPT_TEMPLATE.format(
+    return USER_PROMPT_TEMPLATE.format(
+        segments_rule=(
+            SEGMENTS_RULE.format(max_segmented=max_segmented)
+            if source == "siege"
+            else ""
+        ),
         title=title,
         channel=channel,
         duration_str=format_duration(duration_seconds),
         transcript_with_timestamps=transcript_text,
-        threshold=threshold,
+        threshold_100=round(threshold * 10),
         min_duration=min_duration,
         max_duration=max_duration,
         preferred_min=preferred_min,
         preferred_max=preferred_max,
+        source_type=(source_type or DEFAULT_SOURCE_TYPE).lower(),
     )
-
-    return system, user

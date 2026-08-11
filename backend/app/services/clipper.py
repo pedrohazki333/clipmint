@@ -68,6 +68,7 @@ async def cut_and_crop(
     words: list[dict],
     subtitle_mode: str,
     banner_text: str = "",
+    source_type: str | None = None,
 ) -> tuple[str, int]:
     """
     Corta o segmento e monta o clip final: capa + banner + vídeo com face
@@ -97,7 +98,7 @@ async def cut_and_crop(
 
     # Detecta marcas de terceiros primeiro (a capa precisa das regiões);
     # face tracking + capa rodam em paralelo na sequência
-    watermark = user_watermark_path()
+    watermark = user_watermark_path(source_type)
     brand = await asyncio.to_thread(
         detect_brand_regions, video_path, start_time, end_time
     )
@@ -206,7 +207,7 @@ async def cut_and_crop(
     if banner_text.strip():
         banner_path = str(clip_dir / f"{clip_id}_banner.png")
         _, banner_h = await asyncio.to_thread(
-            generate_banner, banner_text, banner_path
+            generate_banner, banner_text, banner_path, None, None, source_type
         )
         banner_y = BANNER_CENTER_Y - banner_h // 2
         banner_idx = n_inputs
@@ -252,6 +253,10 @@ async def cut_and_crop(
         "-bufsize", "24000k",
         "-profile:v", "high",
         "-pix_fmt", "yuv420p",
+        # Índice do MP4 no começo do arquivo. Não muda a imagem, mas é o que
+        # deixa o vídeo tocar antes de baixar inteiro e o que alguns uploaders
+        # web esperam para processar sem reler o arquivo todo.
+        "-movflags", "+faststart",
         "-c:a", "aac",
         "-b:a", "192k",
         final_path,
@@ -274,6 +279,7 @@ async def cut_and_stack(
     subtitle_mode: str,
     facecam: FacecamRect | list[CamPhase],
     streamer_name: str = "",
+    source_type: str | None = None,
 ) -> tuple[str, int]:
     """
     Monta o clip no layout de live de streamer: facecam em cima, faixa com a
@@ -342,7 +348,8 @@ async def cut_and_stack(
     bar_path = str(clip_dir / f"{clip_id}_bar.png")
     await asyncio.to_thread(
         generate_divider_bar,
-        geo.canvas_w, geo.bar_h, bar_path, user_watermark_path(), streamer_name,
+        geo.canvas_w, geo.bar_h, bar_path, user_watermark_path(source_type),
+        streamer_name, None, None, None, source_type,
     )
 
     # ── Filter_complex ────────────────────────────────────────────────────────
@@ -419,6 +426,10 @@ async def cut_and_stack(
         "-bufsize", "24000k",
         "-profile:v", "high",
         "-pix_fmt", "yuv420p",
+        # Índice do MP4 no começo do arquivo. Não muda a imagem, mas é o que
+        # deixa o vídeo tocar antes de baixar inteiro e o que alguns uploaders
+        # web esperam para processar sem reler o arquivo todo.
+        "-movflags", "+faststart",
         "-c:a", "aac",
         "-b:a", "192k",
         final_path,

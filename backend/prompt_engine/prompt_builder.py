@@ -38,6 +38,7 @@ class PromptBuilder:
         max_duration: int = 90,
         preferred_min: int = 25,
         preferred_max: int = 40,
+        source_criteria: str = "",
         nicho: Optional[str] = None,
         max_examples: int = 6,
         max_per_category: int = 2,
@@ -50,6 +51,9 @@ class PromptBuilder:
             max_duration: Duração máxima de clip em segundos (repassado ao core_prompt).
             preferred_min / preferred_max: Faixa preferida (sweet spot) de duração,
                 usada na estratégia de duração do core_prompt.
+            source_criteria: Bloco de critérios do tipo de fonte (podcast ou
+                gameplay), vindo de app.prompts.viral_analysis. Passado como
+                texto para o prompt_engine não depender do pacote da aplicação.
             nicho: Filtro opcional de nicho (não implementado ainda, reservado para futuro).
             max_examples: Número máximo de exemplos a injetar (default: 6).
             max_per_category: Máximo de exemplos por tag primária (default: 2).
@@ -63,6 +67,7 @@ class PromptBuilder:
             max_duration=max_duration,
             preferred_min=preferred_min,
             preferred_max=preferred_max,
+            source_criteria=source_criteria.strip(),
         )
 
         prompt = core

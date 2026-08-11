@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { Clip } from "@/lib/types";
+import { SCORE_AXES } from "@/lib/types";
 import { getDownloadUrl } from "@/lib/api";
 import ValidateModal from "@/components/ValidateModal";
 
@@ -35,7 +36,19 @@ const SCORE_COLOR = (score: number) => {
   return "text-orange-400";
 };
 
+/** Quantos trechos foram emendados neste clipe (1 = corte contínuo). */
+function countSegments(segmentsJson: string | null): number {
+  if (!segmentsJson) return 1;
+  try {
+    const parsed = JSON.parse(segmentsJson);
+    return Array.isArray(parsed) ? parsed.length : 1;
+  } catch {
+    return 1;
+  }
+}
+
 export default function ClipCard({ clip }: Props) {
+  const segmentCount = countSegments(clip.segments_json);
   const [modalOpen, setModalOpen] = useState(false);
   const tags = parseTags(clip.tags_json);
   const isReady = clip.status === "ready";
@@ -60,6 +73,40 @@ export default function ClipCard({ clip }: Props) {
           <div className="text-xs text-gray-500">score</div>
         </div>
       </div>
+
+      {/* Eixos da rubrica — é por eles que o cronograma escolhe o clipe de
+          cada horário, então valem espaço na tela. */}
+      {clip.hook_score !== null && (
+        <div className="grid grid-cols-5 gap-1">
+          {SCORE_AXES.map((axis) => {
+            const value = clip[axis.key];
+            return (
+              <div
+                key={axis.key}
+                title={axis.hint}
+                className="rounded bg-gray-800 px-1 py-1.5 text-center"
+              >
+                <div className={`text-sm font-semibold ${SCORE_COLOR((value ?? 0))}`}>
+                  {value === null ? "–" : value.toFixed(0)}
+                </div>
+                <div className="text-[10px] leading-tight text-gray-500">{axis.label}</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {segmentCount > 1 && (
+        <p className="text-xs text-sky-400">
+          Costurado de {segmentCount} trechos — o tempo morto entre os momentos foi removido.
+        </p>
+      )}
+
+      {clip.verdict === "revisar_corte" && (
+        <p className="text-xs text-amber-400">
+          A análise sugeriu revisar o corte antes de postar.
+        </p>
+      )}
 
       {/* Hook */}
       {clip.hook && (
