@@ -441,7 +441,7 @@ async def _resolve_facecam(
     start_time: float,
     end_time: float,
     store: bool,
-) -> list[CamPhase]:
+) -> tuple[list[CamPhase], str | None]:
     """
     Linha do tempo da facecam PARA ESTE CLIP, nesta ordem:
       1. a caixa informada pelo usuário (vale para o job inteiro);
@@ -455,13 +455,19 @@ async def _resolve_facecam(
 
     Com store=True o resultado vai para o job — é o que a UI mostra e o usuário
     edita. Só o primeiro clip grava, senão cada clip sobrescreveria o anterior.
+
+    Returns:
+        (fases, json da caixa dominante) — o JSON só vem preenchido quando
+        store=True, para o chamador usar como referência de tamanho nos clipes
+        seguintes DESTA execução. Sem isso a referência só existiria depois de
+        um resume, e `reject_size_outliers` nunca rodaria num job novo.
     """
     duration = end_time - start_time
 
     manual = _manual_rect(facecam_json)
     if manual:
         logger.info(f"[{job_id}] Facecam: using rect from job ({manual.method})")
-        return single_phase(manual, duration)
+        return single_phase(manual, duration), None
 
     geo = streamer_geometry()
     phases = await asyncio.to_thread(
@@ -487,10 +493,10 @@ async def _resolve_facecam(
 
     if store:
         dominant = max(phases, key=lambda p: p.end - p.start).rect
-        await _update_job_status(
-            job_id, "clipping", facecam_rect=json.dumps(dominant.as_dict())
-        )
-    return phases
+        stored = json.dumps(dominant.as_dict())
+        await _update_job_status(job_id, "clipping", facecam_rect=stored)
+        return phases, stored
+    return phases, None
 
 
 async def run_pipeline(job_id: str, resume: bool = False) -> None:
@@ -691,7 +697,7 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                 if layout_mode == "streamer":
                     # O layout da live muda ao longo do vídeo: cada clip tem a
                     # sua própria linha do tempo de facecam.
-                    facecam = await _resolve_facecam(
+                    facecam, stored_rect = await _resolve_facecam(
                         job_id=job_id,
                         video_path=source_path,
                         facecam_json=facecam_json,
@@ -699,6 +705,12 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                         end_time=clip_end,
                         store=index == 0,
                     )
+                    # Sem isto a caixa do 1º clip ia só para o banco, e os
+                    # clipes seguintes desta execução ficariam sem referência
+                    # de tamanho — era assim que um encaixe inflado passava e
+                    # trazia gameplay para dentro do painel do rosto.
+                    if stored_rect:
+                        facecam_json = stored_rect
                     file_path, file_size = await cut_and_stack(
                         job_id=job_id,
                         clip_id=task.clip_id,

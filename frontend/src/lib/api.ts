@@ -8,6 +8,7 @@ import type {
   SourceType,
   UpdateReferencePayload,
   LearnedPatterns,
+  VideoEnhanceJob,
 } from "./types";
 
 /** Extrai uma mensagem legível de um erro de API (detail do FastAPI ou fallback). */
@@ -262,4 +263,33 @@ export async function minePatterns(): Promise<LearnedPatterns> {
 
 export async function deletePatterns(): Promise<void> {
   await api.delete("/patterns");
+}
+
+// ─── Melhorar vídeo ──────────────────────────────────────────────────────────
+
+export async function createVideoEnhance(video: File): Promise<VideoEnhanceJob> {
+  const form = new FormData();
+  form.append("video", video);
+  const { data } = await api.post<VideoEnhanceJob>("/video-enhance", form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return data;
+}
+
+export async function listVideoEnhance(): Promise<VideoEnhanceJob[]> {
+  const { data } = await api.get<VideoEnhanceJob[]>("/video-enhance");
+  return data;
+}
+
+export async function deleteVideoEnhance(id: string): Promise<void> {
+  await api.delete(`/video-enhance/${id}`);
+}
+
+/** Inline, para o <video>. O /download manda attachment e o player não tocaria. */
+export function getVideoEnhanceStreamUrl(id: string): string {
+  return `/api/video-enhance/${id}/video`;
+}
+
+export function getVideoEnhanceDownloadUrl(id: string): string {
+  return `/api/video-enhance/${id}/download`;
 }

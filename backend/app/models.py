@@ -108,6 +108,40 @@ class ReferenceExample(Base):
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class VideoEnhanceJob(Base):
+    """
+    Melhoria de um vídeo enviado pelo usuário.
+
+    O vídeo vem pronto de fora (na prática, gerado no app do Gemini/Flow, que
+    entrega 720p com bitrate baixo) e aqui passa pelo tratamento local: upscale
+    para 1080p, interpolação se estiver abaixo do fps alvo, e reencode com
+    bitrate limpo. Cada etapa é pulada quando a fonte já está no alvo.
+
+    Pipeline de status:
+      pending → processing → done | failed
+
+    `status_detail` é o texto que a UI mostra durante as etapas ("fazendo
+    upscale"); sem ele a tela fica parada num status só enquanto o FFmpeg roda.
+    """
+
+    __tablename__ = "video_enhance_jobs"
+
+    id = Column(String, primary_key=True, default=uuid4_hex)
+    original_filename = Column(String, nullable=True)   # como o usuário chamou
+    source_video_path = Column(String, nullable=False)  # o arquivo enviado
+    final_video_path = Column(String, nullable=True)    # depois do tratamento
+    # Antes/depois, para a tela justificar o tratamento em vez de só afirmar.
+    source_summary = Column(String, nullable=True)      # ex.: "720x1280 · 24fps · 1.9 Mbps"
+    final_summary = Column(String, nullable=True)
+    # Etapas que rodaram e as que foram dispensadas/falharam, JSON de listas.
+    steps_json = Column(Text, nullable=True)
+    status = Column(String, default="pending")  # pending|processing|done|failed
+    status_detail = Column(String, nullable=True)
+    error_message = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class Clip(Base):
     __tablename__ = "clips"
 

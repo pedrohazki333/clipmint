@@ -16,6 +16,49 @@ class Settings(BaseSettings):
     claude_model: str = "claude-sonnet-4-6"
     claude_max_tokens: int = 8192
 
+    # AssemblyAI
+    # O antigo `best` (= universal-2) se perde em grito distorcido e fala
+    # regional: num trecho de teste ele alucinou "TREADOR!" e travou repetindo
+    # "eu tô trabalhando", com 46% das palavras abaixo de 0.7 de confiança.
+    #
+    # O universal-3-5-pro é o mais preciso (9% no mesmo trecho), mas no vídeo
+    # inteiro ele travou em loop duas vezes — 128x e 121x "não" — e um dos
+    # loops comeu a fala que estava ali. O universal-3-pro leu o mesmo trecho
+    # sem nenhum loop e com 1/3 das palavras sem duração própria, então é ele
+    # o padrão: acerto médio um pouco menor vale menos que não produzir lixo.
+    # Valores aceitos: universal-2, universal-3-pro, universal-3-5-pro.
+    assemblyai_speech_model: str = "universal-3-pro"
+    # Vazio = deixa a AssemblyAI detectar o idioma.
+    assemblyai_language: str = "pt"
+
+    # Acesso remoto: senha única compartilhada. Vazia = sem checagem (uso
+    # puramente local). Preenchida, exige o header X-ClipMint-Token nas
+    # requisições que não vêm do próprio host — ver app/main.py.
+    clipmint_password: str = ""
+
+    # Porta em que o uvicorn sobe. Quem lê de verdade são o Makefile e o
+    # next.config (para o proxy); aqui existe para o pydantic não recusar a
+    # chave do .env, e para o valor ficar documentado junto dos outros.
+    backend_port: int = 8001
+
+    # ── Pós-processamento do vídeo bruto ──────────────────────────────────────
+    # Altura alvo do lado menor: 1080 dá 1080x1920 no vertical e 1920x1080 no
+    # horizontal, sem precisar de dois ajustes.
+    enhance_target_height: int = 1080
+    # 24 = mesmo fps que o Veo entrega, ou seja, a interpolação é dispensada.
+    # Medido em 13/08/2026 num clipe de 8s em 1080p: interpolar para 48fps leva
+    # 138s contra 3,6s do reencode sozinho — 38x o custo. E como o bitrate alvo
+    # é fixo, dobrar os quadros dá metade dos bits para cada um: em 24fps cada
+    # quadro fica mais nítido. Só suba para 48 se o movimento rápido justificar.
+    enhance_target_fps: int = 24
+    enhance_video_bitrate: str = "12M"  # faixa pedida: 10–15Mbps
+    # Ampliar com lanczos deixa a imagem macia; um unsharp leve devolve a
+    # impressão de foco. Mesmo valor usado na facecam (ver facecam_sharpen).
+    enhance_sharpen: float = 0.8
+    # Cada etapa do FFmpeg tem teto próprio: a interpolação com compensação de
+    # movimento é de longe a mais cara e trava o job se algo der errado.
+    enhance_step_timeout: int = 1800
+
     # Storage
     storage_dir: str = "./storage"
 
@@ -47,6 +90,12 @@ class Settings(BaseSettings):
     # fatia é menor (imagem mais fechada) e sobra espaço para ela desviar da
     # facecam sem chegar perto da moldura.
     streamer_game_zoom: float = 1.06
+    # A facecam da fonte é pequena (numa live 1080p pode ser 486x257) e sobe
+    # ~1.4x a 2.2x para preencher o painel. O lanczos amplia sem inventar
+    # detalhe, e o resultado sai macio; um unsharp leve depois da ampliação
+    # devolve a impressão de foco. 0 desliga; acima de ~1.2 começa a marcar
+    # halo em volta dos óculos e do contorno do cabelo.
+    facecam_sharpen: float = 0.8
 
     @property
     def downloads_dir(self) -> Path:
@@ -69,13 +118,18 @@ class Settings(BaseSettings):
         return Path(self.storage_dir) / "references"
 
     @property
+    def video_enhance_dir(self) -> Path:
+        """Vídeos enviados e tratados da aba Melhorar vídeo."""
+        return Path(self.storage_dir) / "video_enhance"
+
+    @property
     def locks_dir(self) -> Path:
         """PID de quem está processando cada job (ver workers/joblock.py)."""
         return Path(self.storage_dir) / "locks"
 
     def ensure_dirs(self) -> None:
         """Cria os diretórios de storage se não existirem."""
-        for d in [self.downloads_dir, self.clips_dir, self.transcripts_dir, self.branding_dir, self.references_dir, self.locks_dir]:
+        for d in [self.downloads_dir, self.clips_dir, self.transcripts_dir, self.branding_dir, self.references_dir, self.video_enhance_dir, self.locks_dir]:
             d.mkdir(parents=True, exist_ok=True)
 
 

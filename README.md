@@ -100,7 +100,7 @@ make setup
 ## Running
 
 ```bash
-# Backend (port 8000) and frontend (port 3000) together
+# Backend (port 8001, set by BACKEND_PORT in .env) and frontend (port 3000)
 make dev
 
 # Or separately:

@@ -178,3 +178,25 @@ class ReferenceUpdateRequest(BaseModel):
 class ReferenceConfirmResponse(BaseModel):
     reference_id: str
     example_path: str
+
+
+# ─── Melhorar vídeo ───────────────────────────────────────────────────────────
+
+class VideoEnhanceJobResponse(BaseModel):
+    id: str
+    original_filename: Optional[str] = None
+    status: Literal["pending", "processing", "done", "failed"]
+    # Etapa atual ("fazendo upscale"). Só preenchido durante o trabalho.
+    status_detail: Optional[str] = None
+    # Em 'failed', o motivo. Em 'done', o aviso das etapas que falharam — o
+    # vídeo existe do mesmo jeito.
+    error_message: Optional[str] = None
+    # Antes/depois em texto, para a tela mostrar o ganho em vez de prometê-lo.
+    source_summary: Optional[str] = None
+    final_summary: Optional[str] = None
+    steps_applied: list[str] = []
+    # Dispensadas por já estarem no alvo — não são problema.
+    steps_skipped: list[str] = []
+    has_video: bool = False
+    created_at: datetime
+    updated_at: datetime

@@ -253,6 +253,13 @@ async def cut_and_crop(
         "-bufsize", "24000k",
         "-profile:v", "high",
         "-pix_fmt", "yuv420p",
+        # Sem estas tags o arquivo não declara em que espaço de cor foi
+        # codificado, e cada player/plataforma chuta — é o que faz o mesmo
+        # vídeo sair lavado num lugar e saturado em outro. Live do YouTube
+        # em SDR é bt709.
+        "-colorspace", "bt709",
+        "-color_primaries", "bt709",
+        "-color_trc", "bt709",
         # Índice do MP4 no começo do arquivo. Não muda a imagem, mas é o que
         # deixa o vídeo tocar antes de baixar inteiro e o que alguns uploaders
         # web esperam para processar sem reler o arquivo todo.
@@ -364,6 +371,13 @@ async def cut_and_stack(
         f"[0:v]split={len(phases) + 1}[gpsrc]"
         + "".join(f"[fc{i}]" for i in range(len(phases)))
     ]
+    # Só na luminância (croma zerado): realçar o croma levanta o ruído de cor
+    # da webcam sem acrescentar nitidez percebida.
+    sharpen = (
+        f",unsharp=5:5:{settings.facecam_sharpen:.2f}:5:5:0"
+        if settings.facecam_sharpen > 0
+        else ""
+    )
     for i, (cam_x, cam_y, cam_w, cam_h) in enumerate(cam_boxes):
         # A caixa detectada raramente bate com a proporção do painel: amplia
         # até cobrir e recorta o excedente pelo centro (sem barras pretas).
@@ -371,7 +385,7 @@ async def cut_and_stack(
             f"[fc{i}]crop={cam_w}:{cam_h}:{cam_x}:{cam_y},"
             f"scale={geo.canvas_w}:{geo.facecam_h}:"
             f"force_original_aspect_ratio=increase:flags=lanczos,"
-            f"crop={geo.canvas_w}:{geo.facecam_h}[{cam_labels[i]}]"
+            f"crop={geo.canvas_w}:{geo.facecam_h}{sharpen}[{cam_labels[i]}]"
         )
     parts.append(
         f"[gpsrc]crop={game_w}:{game_h}:{game_x}:{game_y},"
@@ -426,6 +440,13 @@ async def cut_and_stack(
         "-bufsize", "24000k",
         "-profile:v", "high",
         "-pix_fmt", "yuv420p",
+        # Sem estas tags o arquivo não declara em que espaço de cor foi
+        # codificado, e cada player/plataforma chuta — é o que faz o mesmo
+        # vídeo sair lavado num lugar e saturado em outro. Live do YouTube
+        # em SDR é bt709.
+        "-colorspace", "bt709",
+        "-color_primaries", "bt709",
+        "-color_trc", "bt709",
         # Índice do MP4 no começo do arquivo. Não muda a imagem, mas é o que
         # deixa o vídeo tocar antes de baixar inteiro e o que alguns uploaders
         # web esperam para processar sem reler o arquivo todo.
