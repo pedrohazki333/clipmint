@@ -23,9 +23,17 @@ logger = logging.getLogger(__name__)
 
 # Nome dos arquivos de preset, iguais dentro de cada nicho.
 WATERMARK_FILE = "watermark.png"
+# Arte queimada no clipe inteiro. É um arquivo separado do WATERMARK_FILE de
+# propósito: aquele cobre QR code detectado na fonte e é escolhido para tapar
+# uma área, este é a assinatura da conta e é escolhido para ser visto. Quem
+# quiser a mesma imagem nos dois sobe duas vezes; quem não subir esta não ganha
+# marca nenhuma no clipe, que é o que mantém as outras contas intactas.
+CLIP_WATERMARK_FILE = "clip_watermark.png"
 BANNER_COLORS_FILE = "banner_colors.json"
 BAR_STYLE_FILE = "bar_style.json"
 
+# Só o que existia no layout global antigo — a marca do clipe nasceu já por
+# nicho, então não há nada dela para migrar.
 _PRESET_FILES = (WATERMARK_FILE, BANNER_COLORS_FILE, BAR_STYLE_FILE)
 
 

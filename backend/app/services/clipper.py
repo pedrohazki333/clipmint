@@ -40,7 +40,11 @@ from app.services.layout import (
     streamer_geometry,
 )
 from app.services.subtitler import FONT_SIZE_WORD, generate_ass_subtitles
-from app.services.watermark import detect_brand_regions, user_watermark_path
+from app.services.watermark import (
+    clip_watermark_path,
+    detect_brand_regions,
+    user_watermark_path,
+)
 from app.utils.ffmpeg import run_ffmpeg, get_video_dimensions, probe_video
 
 logger = logging.getLogger(__name__)
@@ -406,6 +410,23 @@ async def cut_and_stack(
     parts.append(f"[{last_label}][1:v]overlay=0:{geo.facecam_h}[withbar]")
     last_label = "withbar"
 
+    # A marca da conta entra depois da faixa e ANTES da legenda: se as duas se
+    # encontrarem, quem tem que continuar legível é a legenda.
+    extra_inputs: list[str] = []
+    watermark_art = clip_watermark_path(source_type)
+    if watermark_art:
+        extra_inputs += ["-i", watermark_art]
+        parts.extend(
+            _clip_watermark_filters(
+                input_idx=2,  # 0 = vídeo fonte, 1 = faixa
+                base_label=last_label,
+                out_label="withwm",
+                canvas_w=geo.canvas_w,
+                canvas_h=geo.canvas_h,
+            )
+        )
+        last_label = "withwm"
+
     if subtitle_mode != "none":
         ass_path = str(clip_dir / f"{clip_id}.ass")
         generate_ass_subtitles(
@@ -429,6 +450,7 @@ async def cut_and_stack(
     await run_ffmpeg(
         "-ss", str(start_time), "-i", video_path,
         "-i", bar_path,
+        *extra_inputs,
         "-t", str(duration),
         "-filter_complex", ";".join(parts),
         "-map", "[outv]",
@@ -509,6 +531,35 @@ def _gameplay_crop_size(
         game_w = src_w
         game_h = min(src_h, int(game_w / pane_aspect))
     return max(2, game_w - game_w % 2), max(2, game_h - game_h % 2)
+
+
+def _clip_watermark_filters(
+    input_idx: int, base_label: str, out_label: str, canvas_w: int, canvas_h: int
+) -> list[str]:
+    """
+    Filtros que escalam a arte, baixam a opacidade e a assentam sobre o clipe.
+
+    A largura vem em fração da largura do canvas e a altura sai por `-1`, então
+    a proporção da arte é preservada seja ela qual for. A posição é dada pelo
+    CENTRO vertical, e não pelo topo: o topo faria a marca subir ou descer só
+    porque a arte é mais alta ou mais baixa, e o que tem que ficar parado entre
+    uma arte e outra é o meio dela.
+
+    `colorchannelmixer=aa` multiplica o alfa em vez de substituí-lo — o recorte
+    da arte continua recortado, só fica translúcido.
+    """
+    width = max(2, round(canvas_w * settings.clip_watermark_width))
+    opacity = min(1.0, max(0.0, settings.clip_watermark_opacity))
+    center_y = round(canvas_h * settings.clip_watermark_center_y)
+
+    return [
+        f"[{input_idx}:v]scale={width}:-1:flags=lanczos,"
+        f"format=rgba,colorchannelmixer=aa={opacity:.3f}[cwm]",
+        # overlay_h só é conhecido pelo FFmpeg em tempo de execução, então o
+        # centro vira expressão em vez de número.
+        f"[{base_label}][cwm]overlay=(main_w-overlay_w)/2:"
+        f"{center_y}-overlay_h/2[{out_label}]",
+    ]
 
 
 def _streamer_caption_margin(geo) -> int:

@@ -18,7 +18,7 @@ import tempfile
 from typing import Optional
 
 from app.config import settings
-from app.services.branding import WATERMARK_FILE, preset_path
+from app.services.branding import CLIP_WATERMARK_FILE, WATERMARK_FILE, preset_path
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,18 @@ _OVERLAY_STABLE_DIFF = 12     # |diff| máximo para um pixel contar como estáve
 def user_watermark_path(source_type: Optional[str] = None) -> Optional[str]:
     """Caminho da logo do nicho, ou None se não configurada."""
     path = preset_path(source_type, WATERMARK_FILE)
+    return str(path) if path.exists() else None
+
+
+def clip_watermark_path(source_type: Optional[str] = None) -> Optional[str]:
+    """
+    Caminho da arte queimada no clipe, ou None se a conta não configurou uma.
+
+    None é o estado normal, não um erro: só as contas em que o usuário subiu a
+    arte ganham a marca, e é isso que impede uma conta de sair assinada com a
+    logo que outra escolheu.
+    """
+    path = preset_path(source_type, CLIP_WATERMARK_FILE)
     return str(path) if path.exists() else None
 
 

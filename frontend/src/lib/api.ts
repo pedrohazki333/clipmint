@@ -89,8 +89,53 @@ export async function hasWatermark(source: SourceType): Promise<boolean> {
   }
 }
 
-export function getWatermarkUrl(source: SourceType): string {
-  return `/api/settings/watermark?source=${source}`;
+/**
+ * URL da imagem para uso direto em `<img src>`.
+ *
+ * `version` entra como parâmetro daqui, e não concatenado no ponto de chamada:
+ * a URL já carrega `?source=`, então quem colava `?v=` no fim gerava
+ * `?source=gameplay?v=123` — o `source` chegava no backend com o sufixo colado,
+ * a validação recusava com 422 e o preview ficava quebrado.
+ */
+export function getWatermarkUrl(source: SourceType, version?: number): string {
+  const bust = version ? `&v=${version}` : "";
+  return `/api/settings/watermark?source=${source}${bust}`;
+}
+
+// ─── Marca d'água do clipe (arte queimada no vídeo, modo streamer) ────────────
+
+export async function uploadClipWatermark(
+  source: SourceType,
+  file: File
+): Promise<void> {
+  const form = new FormData();
+  form.append("file", file);
+  await api.post("/settings/clip-watermark", form, {
+    params: { source },
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+}
+
+export async function deleteClipWatermark(source: SourceType): Promise<void> {
+  await api.delete("/settings/clip-watermark", { params: { source } });
+}
+
+export async function hasClipWatermark(source: SourceType): Promise<boolean> {
+  try {
+    await api.get("/settings/clip-watermark", {
+      params: { source },
+      responseType: "blob",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Ver a nota de getWatermarkUrl sobre o `version`. */
+export function getClipWatermarkUrl(source: SourceType, version?: number): string {
+  const bust = version ? `&v=${version}` : "";
+  return `/api/settings/clip-watermark?source=${source}${bust}`;
 }
 
 export interface BannerColors {

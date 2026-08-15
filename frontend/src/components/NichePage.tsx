@@ -9,6 +9,7 @@ import UrlInput from "@/components/UrlInput";
 import JobCard from "@/components/JobCard";
 import SchedulePanel from "@/components/SchedulePanel";
 import WatermarkSettings from "@/components/WatermarkSettings";
+import ClipWatermarkSettings from "@/components/ClipWatermarkSettings";
 import BannerColorSettings from "@/components/BannerColorSettings";
 import BarStyleSettings from "@/components/BarStyleSettings";
 
@@ -128,6 +129,7 @@ export default function NichePage({ source }: Props) {
 
       {/* Presets de marca desta conta */}
       <WatermarkSettings source={source} />
+      <ClipWatermarkSettings source={source} />
       <BannerColorSettings source={source} />
       <BarStyleSettings source={source} />
 

@@ -140,6 +140,7 @@ All settings live in `.env` (see `.env.example`):
 | `POST` | `/api/settings/watermark` | Upload the user watermark/logo (PNG/JPEG/WebP) |
 | `GET` | `/api/settings/watermark` | Get the current watermark |
 | `DELETE` | `/api/settings/watermark` | Remove the watermark |
+| `POST`/`GET`/`DELETE` | `/api/settings/clip-watermark` | The art burned into the clip itself (streamer layout), per account |
 | `GET` | `/health` | Health check |
 
 ## Roadmap

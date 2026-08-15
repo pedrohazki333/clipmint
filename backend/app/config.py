@@ -97,6 +97,16 @@ class Settings(BaseSettings):
     # halo em volta dos óculos e do contorno do cabelo.
     facecam_sharpen: float = 0.8
 
+    # ── Marca d'água do clipe (storage/branding/<nicho>/clip_watermark.png) ───
+    # Medidos por template matching sobre o clipe de referência enviado em
+    # 15/08/2026 (casamento de 0.977): a arte ocupava 200px de largura num
+    # canvas de 1080 e o centro dela ficava a 79.4% da altura, centralizada na
+    # horizontal. Frações, e não pixels, para o mesmo enquadramento valer se a
+    # saída deixar de ser 1080x1920.
+    clip_watermark_width: float = 0.185     # largura, em frações da largura
+    clip_watermark_center_y: float = 0.794  # centro vertical, em frações da altura
+    clip_watermark_opacity: float = 0.70    # 1.0 = opaca; multiplica o alfa da arte
+
     @property
     def downloads_dir(self) -> Path:
         return Path(self.storage_dir) / "downloads"
