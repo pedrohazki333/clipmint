@@ -397,25 +397,6 @@ async def _create_clip_records(
     return tasks
 
 
-def _detected_rect(facecam_json: str | None):
-    """
-    Caixa que o DETECTOR gravou no job (None se não houver ou for do usuário).
-
-    Serve de referência de tamanho para os clipes seguintes — ver
-    facecam.reject_size_outliers. A do usuário não passa por aqui porque ela já
-    vence antes, em _manual_rect.
-    """
-    if not facecam_json:
-        return None
-    try:
-        rect = rect_from_dict(json.loads(facecam_json))
-    except json.JSONDecodeError:
-        return None
-    if rect is None or rect.method == "manual":
-        return None
-    return rect
-
-
 def _manual_rect(facecam_json: str | None):
     """
     Caixa que o USUÁRIO informou no job (None se não houver ou for ilegível).
@@ -461,7 +442,7 @@ async def _resolve_facecam(
         (fases, json da caixa dominante) — o JSON só vem preenchido quando
         store=True, para o chamador usar como referência de tamanho nos clipes
         seguintes DESTA execução. Sem isso a referência só existiria depois de
-        um resume, e `reject_size_outliers` nunca rodaria num job novo.
+        um resume. Ela NÃO é imposta às fases — serve à UI e ao usuário.
     """
     duration = end_time - start_time
 
@@ -481,16 +462,17 @@ async def _resolve_facecam(
             f"Ajuste a caixa no job para corrigir o enquadramento."
         )
 
-    else:
-        # A caixa que o detector gravou no 1º clip vira referência de TAMANHO
-        # para os seguintes. Ela não congela a detecção (a cam pode mudar de
-        # canto à vontade); só barra o encaixe que errou tanto de escala que
-        # traria gameplay para dentro do painel do rosto.
-        phases, trocadas = reject_size_outliers(phases, _detected_rect(facecam_json))
-        if trocadas:
-            logger.warning(
-                f"[{job_id}] {trocadas} fase(s) fora de escala — caixa do job aplicada"
-            )
+    # A caixa gravada no job NÃO é mais imposta às fases. Ela existia como
+    # referência de tamanho entre clipes, mas a referência é ela própria uma
+    # detecção — e quando ERRA, o erro passa a ser forçado por cima de todas as
+    # detecções boas dos clipes seguintes. Foi o que aconteceu no vídeo do
+    # Bahiaqz: uma execução gravou o card "RELATÓRIO" do jogo (40% x 44% do
+    # frame) e, a partir daí, todo clipe do job renderizou o painel do rosto
+    # mostrando o card, inclusive os que tinham detectado a cam certa.
+    #
+    # A consistência que ela tentava garantir agora é feita DENTRO de cada
+    # clipe (facecam._absorb_size_outliers), onde a referência é a própria cam
+    # daquele trecho e não um palpite herdado.
 
     if store:
         dominant = max(phases, key=lambda p: p.end - p.start).rect
@@ -611,6 +593,15 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
             )
         else:
             await _update_job_status(job_id, "analyzing")
+
+            # O que a transcrição não conta: onde os buracos sem fala são a
+            # gargalhada ou a jogada, e não tempo morto. Sem isto a análise lê
+            # o melhor momento do vídeo como ausência de conteúdo.
+            gaps = await detect_gaps(job_id, metadata.audio_path, words)
+
+            # E o que a tela mostrava nesses momentos. O áudio diz quando; a
+            # imagem diz o quê — e só olha as janelas que o áudio apontou.
+            await describe_events(job_id, metadata.video_path, gaps)
 
             analysis = await analyze_virality(
                 job_id=job_id,

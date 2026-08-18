@@ -9,9 +9,9 @@ import numpy as np
 import pytest
 
 from app.services.facecam import (
+    _absorb_size_outliers,
     _best_box,
     _merge_equivalent_phases,
-    reject_size_outliers,
     CamPhase,
     FacecamRect,
     _Obs,
@@ -19,7 +19,7 @@ from app.services.facecam import (
     _cam_track,
     _dedupe,
     _tiles,
-    _phase_spans,
+    _group_spans,
     _box_from_face,
     _fit_cam_rect,
     default_rect,
@@ -399,7 +399,7 @@ def test_sub_popup_does_not_steal_the_cam():
             frame.append(_obs(0.35, 0.55, size=0.18, score=0.99))
         per_frame.append(frame)
 
-    track, confidence = _cam_track(per_frame, 24)
+    track, confidence, _ = _cam_track(per_frame, 24)
 
     assert {round(o.cx, 2) for o in track if o} == {0.85}
     assert confidence == pytest.approx(1.0)
@@ -410,7 +410,7 @@ def test_cam_that_changes_corner_keeps_both_positions():
     per_frame = [[_obs(0.85, 0.15)] for _ in range(12)]
     per_frame += [[_obs(0.12, 0.15)] for _ in range(12)]
 
-    track, _ = _cam_track(per_frame, 24)
+    track, _, _ = _cam_track(per_frame, 24)
 
     assert {round(o.cx, 2) for o in track if o} == {0.85, 0.12}
 
@@ -421,55 +421,94 @@ def test_no_persistent_face_gives_up():
     for i in range(8, 13):
         per_frame[i] = [_obs(0.35, 0.55, size=0.18, score=0.99)]
 
-    track, confidence = _cam_track(per_frame, 24)
+    track, confidence, _ = _cam_track(per_frame, 24)
 
     assert track is None and confidence == 0.0
 
 
 # ─── Fases (a cam muda de lugar ou dá zoom no meio do clip) ───────────────────
 
-def test_still_cam_is_a_single_phase():
-    assert _phase_spans([_obs(0.8, 0.2) for _ in range(10)]) == [(0, 9)]
+def _spans(track):
+    """
+    Trechos por cam, no formato (i0, i1) para comparação.
+
+    Passa pelo _cam_track de propósito: é ele que decide quais aglomerados são
+    cam de verdade, e os trechos herdam essa identidade.
+    """
+    per_frame = [[obs] if obs is not None else [] for obs in track]
+    real_track, _, groups = _cam_track(per_frame, len(track))
+    return [(a, b) for a, b, _ in _group_spans(real_track, groups)]
 
 
-def test_cam_moving_splits_the_timeline():
-    track = [_obs(0.8, 0.2) for _ in range(6)] + [_obs(0.15, 0.2) for _ in range(6)]
-
-    assert _phase_spans(track) == [(0, 5), (6, 11)]
+def test_cam_parada_e_uma_fase_so():
+    assert _spans([_obs(0.8, 0.2) for _ in range(10)]) == [(0, 9)]
 
 
-def test_cam_zooming_splits_the_timeline():
-    """Mesma posição, rosto muito maior: a cena mudou de enquadramento."""
-    track = [_obs(0.8, 0.2, size=0.10) for _ in range(6)]
-    track += [_obs(0.8, 0.2, size=0.16) for _ in range(6)]
-
-    assert _phase_spans(track) == [(0, 5), (6, 11)]
+def test_cam_que_muda_de_canto_vira_duas_fases():
+    track = [_obs(0.8, 0.2) for _ in range(6)] + [_obs(0.1, 0.2) for _ in range(6)]
+    assert _spans(track) == [(0, 5), (6, 11)]
 
 
-def test_one_off_frame_does_not_split_the_timeline():
-    """Streamer se mexendo na cadeira (ou detecção ruim) não é troca de cena."""
-    track = [_obs(0.8, 0.2)] * 5 + [_obs(0.2, 0.6)] + [_obs(0.8, 0.2)] * 5
-
-    assert _phase_spans(track) == [(0, 10)]
-
-
-def test_frames_without_face_stay_in_the_current_phase():
-    track = [_obs(0.8, 0.2)] * 4 + [None, None] + [_obs(0.8, 0.2)] * 4
-
-    assert _phase_spans(track) == [(0, 9)]
+def test_frame_sem_rosto_nao_quebra_a_fase():
+    """A cam continua lá; quem piscou foi o detector."""
+    track = [_obs(0.8, 0.2), None, _obs(0.8, 0.2), None, _obs(0.8, 0.2), _obs(0.8, 0.2)]
+    track += [_obs(0.1, 0.2) for _ in range(6)]
+    assert _spans(track) == [(0, 5), (6, 11)]
 
 
-def test_phase_count_is_capped():
-    """Detecção instável não pode virar dezenas de recortes no filtergraph."""
-    track = []
-    for i in range(20):
-        track += [_obs(0.1 + 0.04 * i, 0.2)] * 3
+def test_streamer_se_mexendo_na_cadeira_nao_abre_fase():
+    """
+    Deslocamento pequeno é o streamer se mexendo, não a cam mudando de lugar:
+    fica no mesmo grupo e o enquadramento não troca.
+    """
+    track = [_obs(0.80, 0.2) for _ in range(5)] + [_obs(0.83, 0.2)] + [_obs(0.80, 0.2) for _ in range(5)]
+    assert _spans(track) == [(0, 10)]
 
-    spans = _phase_spans(track)
 
-    assert len(spans) <= 6
+def test_plano_curto_mas_recorrente_troca_o_enquadramento():
+    """
+    O caso do vídeo editado: cada aparição do outro POV dura 1-2 amostras, mas
+    ela se repete. A troca vale já na primeira amostra — exigir confirmação era
+    o que mantinha o defeito, porque com plano de ~4s e amostra a cada 1,7s a
+    contagem nunca fechava e o trecho inteiro herdava o enquadramento do outro
+    streamer.
+    """
+    track = ([_obs(0.80, 0.2)] * 4 + [_obs(0.10, 0.2)]) * 3
+
+    assert _spans(track) == [(0, 3), (4, 4), (5, 8), (9, 9), (10, 13), (14, 14)]
+
+
+def test_deteccao_isolada_e_ruido_e_nao_troca_nada():
+    """
+    Um rosto que aparece uma vez só não é cam: pode ser personagem do jogo,
+    plateia, um popup. O filtro de persistência derruba antes de virar fase.
+    """
+    track = [_obs(0.80, 0.2) for _ in range(5)] + [_obs(0.10, 0.2)] + [_obs(0.80, 0.2) for _ in range(5)]
+
+    assert _spans(track) == [(0, 10)]
+
+
+def test_cam_que_volta_para_o_canto_anterior_reusa_o_grupo():
+    """
+    O caso do vídeo editado: a edição alterna entre POVs e volta. As idas e
+    vindas ao MESMO canto têm que cair no mesmo grupo, senão cada plano é
+    encaixado sozinho com 2 amostras e o mapa de bordas não fecha caixa.
+    """
+    track = ([_obs(0.05, 0.2)] * 3 + [_obs(0.85, 0.2)] * 3) * 3
+    per_frame = [[o] for o in track]
+    real_track, _, groups = _cam_track(per_frame, len(track))
+
+    assert len(groups) == 2, "as idas e vindas ao mesmo canto viraram grupos demais"
+    assert sorted(len(v) for v in groups.values()) == [9, 9]
+    assert len(_group_spans(real_track, groups)) == 6   # seis trechos, duas caixas
+
+
+def test_spans_cobrem_todos_os_frames_sem_buraco():
+    track = ([_obs(0.05, 0.2)] * 3 + [_obs(0.85, 0.2)] * 3) * 3
+    spans = _spans(track)
+
     assert spans[0][0] == 0 and spans[-1][1] == len(track) - 1
-    assert all(a[1] + 1 == b[0] for a, b in zip(spans, spans[1:]))  # sem buracos
+    assert all(a[1] + 1 == b[0] for a, b in zip(spans, spans[1:]))
 
 
 # ─── Fatia de gameplay com a cam em vários lugares ────────────────────────────
@@ -656,48 +695,43 @@ def _ref(w=0.193, h=0.253):
     return FacecamRect(x=0.804, y=0.006, w=w, h=h, confidence=1.0, method="borders")
 
 
-def test_rejects_a_phase_that_disagrees_in_scale():
-    """
-    Caso real (job MrFall, agosto/2026): 4 clipes acharam a cam em 0.193x0.253
-    e um achou 0.450x0.455 — passou no teto de área, mas trouxe o cenário e o
-    HUD para dentro do painel do rosto.
-    """
-    phases = [_phase(0.0, 41.7, 0.544, 0.004, 0.450, 0.455)]
-
-    fixed, trocadas = reject_size_outliers(phases, _ref())
-
-    assert trocadas == 1
-    assert fixed[0].rect.w == pytest.approx(0.193)
-    assert fixed[0].rect.method == "job_rect"
-
-
-def test_keeps_a_phase_that_only_moved():
-    """Cam que troca de canto mantendo o tamanho é mudança real de layout."""
-    phases = [_phase(0.0, 30.0, 0.02, 0.70, 0.193, 0.253)]
-
-    fixed, trocadas = reject_size_outliers(phases, _ref())
-
-    assert trocadas == 0
-    assert fixed[0].rect.x == 0.02
-
-
-def test_tolerates_normal_variation_between_clips():
-    """Variação de encaixe entre clipes do mesmo vídeo não pode ser 'corrigida'."""
+def test_absorve_moldura_da_ui_do_jogo():
+    """A fase fora de escala herda a caixa da vizinha boa mais próxima."""
     phases = [
-        _phase(0.0, 10.0, 0.80, 0.01, 0.176, 0.259),   # 0.91x
-        _phase(10.0, 20.0, 0.80, 0.01, 0.237, 0.285),  # 1.23x
+        _phase(0.0, 11.6, 0.096, 0.087, 0.119, 0.122),
+        _phase(11.6, 18.5, 0.221, 0.088, 0.463, 0.444),   # o card do jogo
+        _phase(18.5, 43.9, 0.003, 0.003, 0.170, 0.220),   # a cam de verdade
+        _phase(43.9, 55.5, 0.010, 0.003, 0.204, 0.206),
     ]
+    out = _absorb_size_outliers(phases)
 
-    _, trocadas = reject_size_outliers(phases, _ref(0.193, 0.253))
+    assert all(p.rect.w < 0.3 for p in out), "sobrou caixa do tamanho do card"
+    assert len(out) < 4, "as fases iguais deveriam ter sido fundidas"
 
-    assert trocadas == 0
+
+def test_cam_que_troca_de_canto_passa_intacta():
+    """Mudança de posição com tamanho igual é layout real, não erro."""
+    phases = [
+        _phase(0.0, 20.0, 0.02, 0.02, 0.20, 0.25),
+        _phase(20.0, 40.0, 0.78, 0.02, 0.20, 0.25),
+    ]
+    out = _absorb_size_outliers(phases)
+
+    assert len(out) == 2
+    assert out[1].rect.x == 0.78
+    assert all(p.rect.method != "phase_fix" for p in out), "trocou caixa boa"
 
 
-def test_no_reference_means_nothing_is_touched():
-    """Primeiro clipe do job não tem referência — nada a comparar."""
-    phases = [_phase(0.0, 30.0, 0.5, 0.5, 0.45, 0.45)]
+def test_uma_fase_so_nao_tem_com_o_que_comparar():
+    phases = [_phase(0.0, 30.0, 0.2, 0.1, 0.46, 0.44)]
+    assert _absorb_size_outliers(phases) == phases
 
-    fixed, trocadas = reject_size_outliers(phases, None)
 
-    assert trocadas == 0
-    assert fixed[0].rect.w == 0.45
+def test_todas_fora_de_escala_ficam_como_estao():
+    """Sem maioria boa não há referência confiável: melhor não mexer."""
+    phases = [
+        _phase(0.0, 10.0, 0.1, 0.1, 0.46, 0.44),
+        _phase(10.0, 20.0, 0.1, 0.1, 0.45, 0.43),
+    ]
+    out = _absorb_size_outliers(phases)
+    assert all(p.rect.w > 0.4 for p in out)

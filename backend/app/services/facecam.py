@@ -42,6 +42,7 @@ Sem rosto estável no trecho, a lista volta vazia — o clipper cai para um reco
 padrão no canto e o usuário pode corrigir manualmente pelo job.
 """
 
+import copy
 import glob
 import logging
 import math
@@ -54,7 +55,13 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 # Amostragem
-_MAX_SAMPLES = 24          # frames analisados no trecho
+# Frames analisados no trecho. Eram 24, que num clipe de 80s dá uma amostra a
+# cada 3,4s — mais lento que o ritmo de corte de um vídeo EDITADO, em que a
+# edição alterna entre os POVs de vários streamers. Medido num clipe do
+# Bahiaqz: com 24 amostras o detector colocou a cam à direita num trecho em que
+# o rosto estava à esquerda, e o painel saiu mostrando tela vazia. Com 48 o
+# intervalo cai para ~1,7s e as trocas são acompanhadas.
+_MAX_SAMPLES = 48
 _DETECT_WIDTH = 1920       # teto da largura de trabalho (4K inteiro não compensa)
 
 # Ladrilhos de detecção. O rosto dentro de uma facecam pequena ocupa ~3% da
@@ -82,17 +89,23 @@ _CLUSTER_SIZE_RATIO = 2.5  # ...e o rosto tem que ter tamanho comparável ao pri
 _PHASE_MOVE = 0.06         # deslocamento do centro do rosto que denuncia outra caixa
 _PHASE_ZOOM = 1.45         # razão de área do rosto que denuncia zoom (e o inverso)
 _PHASE_CONFIRM = 2         # amostras seguidas para a mudança valer (anti-ruído)
-_MIN_PHASE_SAMPLES = 3     # fase menor que isso é absorvida pela vizinha
-_MAX_PHASES = 6            # teto de recortes por clip no filtergraph
+# Não há mais teto de fases nem mínimo de amostras por fase. Os dois existiam
+# porque cada fase custava um recorte no filtergraph, e fundir as sobrantes era
+# o preço — só que fundir fases de POSIÇÕES diferentes é exatamente o que
+# quebrava o enquadramento em vídeo editado: o encaixe passava a procurar
+# bordas comuns entre planos que não têm nenhuma, e achava a moldura da UI do
+# jogo. Agora o custo do render é por CAIXA ÚNICA (ver clipper), então a
+# quantidade de trocas deixou de importar.
 # Fases vizinhas dentro destas margens enquadram a mesma cam e viram uma só —
 # trocar o recorte à toa no meio do clipe aparece como pulinho de zoom.
 _SAME_BOX_CENTER = 0.02    # deslocamento do centro, em fração do frame
 _SAME_BOX_SIZE = 0.12      # diferença de lado, em fração do maior
-# Quanto o tamanho da cam de um clipe pode divergir do tamanho já estabelecido
-# no job antes de ser tratado como erro de encaixe. Medido: dentro de um mesmo
-# vídeo as caixas boas variam até ~1.3x entre clipes; os erros observados
-# apareceram a 1.8x e 2.3x.
-_JOB_SIZE_TOLERANCE = 1.5
+# Quanto uma fase pode destoar de tamanho das outras DO MESMO clip antes de ser
+# tratada como trava errada. Mais folgado que a tolerância do job porque num
+# vídeo editado streamers diferentes têm cams de tamanhos diferentes — mas não
+# de 2x. Medido no caso do Bahiaqz: cam real ~0.17-0.20 de largura, card do
+# jogo 0.46 (2.7x).
+_CLIP_SIZE_TOLERANCE = 1.6
 
 # Enquadramento derivado do rosto
 _BOX_FROM_FACE = 2.6       # altura da caixa ≈ 2.6x a altura do rosto (cabeça + ombros)
@@ -315,21 +328,34 @@ def detect_facecam_phases(
             return []
 
         per_frame = _detect_faces_per_frame(frames, cv2, mp)
-        track, confidence = _cam_track(per_frame, len(frames))
+        track, confidence, groups = _cam_track(per_frame, len(frames))
         if track is None:
             return []
 
-        spans = _phase_spans(track)
-        phases: list[CamPhase] = []
-        for i0, i1 in spans:
-            rect = _fit_phase(
-                frames[i0:i1 + 1], track[i0:i1 + 1], box_aspect, confidence, cv2, np
-            )
-            phases.append(
-                CamPhase(start=i0 * interval, end=(i1 + 1) * interval, rect=rect)
+        # Uma caixa por POSIÇÃO da cam, encaixada com TODOS os frames em que
+        # ela aparece — não por trecho contíguo. Num vídeo editado cada plano
+        # dura 2-3 amostras, o que é pouco demais para o mapa de bordas fechar
+        # uma caixa; juntando os frames do clipe inteiro que compartilham o
+        # mesmo enquadramento, o encaixe volta a ter material de sobra.
+        rect_by_group: dict[int, FacecamRect] = {}
+        for gid, indexes in groups.items():
+            rect_by_group[gid] = _fit_phase(
+                [frames[i] for i in indexes],
+                [track[i] for i in indexes],
+                box_aspect, confidence, cv2, np,
             )
 
+        rect_by_group = _consolidate_boxes(rect_by_group, groups)
+
+        spans = _group_spans(track, groups)
+        phases = [
+            CamPhase(start=i0 * interval, end=(i1 + 1) * interval,
+                     rect=copy.copy(rect_by_group[gid]))
+            for i0, i1, gid in spans
+        ]
+
     phases = _merge_equivalent_phases(phases)
+    phases = _absorb_size_outliers(phases)
 
     # As bordas da linha do tempo são das amostras, não do vídeo: estica para
     # cobrir o trecho inteiro (senão sobra um buraco antes da 1ª/depois da última).
@@ -348,56 +374,64 @@ def detect_facecam_phases(
     return phases
 
 
-def reject_size_outliers(
-    phases: list[CamPhase], reference: Optional[FacecamRect]
-) -> tuple[list[CamPhase], int]:
+def _absorb_size_outliers(phases: list[CamPhase]) -> list[CamPhase]:
     """
-    Troca pela caixa de referência as fases cujo TAMANHO destoa dela.
+    Descarta as fases cuja caixa destoa de tamanho das outras DO MESMO clip.
 
-    O layout de uma live é estável dentro do mesmo vídeo: a cam muda de canto,
-    some, volta — mas não dobra de tamanho de um clipe para o outro. Quando a
-    detecção de um clipe discorda muito do tamanho já estabelecido no job, quem
-    errou foi o encaixe daquele clipe, e aceitar isso põe gameplay dentro do
-    painel do rosto.
+    O detector de bordas procura retângulos com moldura forte, e a UI do jogo
+    também é isso. Num vídeo do Bahiaqz ele travou no card "RELATÓRIO"
+    desenhado no meio da tela: 46% da largura por 44% da altura, contra ~17%
+    das fases vizinhas, que eram a cam de verdade no canto.
 
-    Só o tamanho é comparado, nunca a posição: cam que troca de canto é
-    mudança real e precisa continuar passando.
+    A referência é o próprio clipe: a fase mais LONGA. Uma trava errada costuma
+    durar poucos segundos, enquanto o enquadramento certo domina o trecho. A
+    fase fora de escala herda a caixa da vizinha boa mais próxima no tempo, que
+    num vídeo editado é quase sempre o mesmo layout de câmera.
 
-    Returns:
-        (fases, quantas foram substituídas).
+    Só o tamanho é comparado. Cam que troca de canto mantendo o tamanho é
+    mudança real de layout e passa intacta.
     """
-    if reference is None or not phases:
-        return phases, 0
+    if len(phases) < 2:
+        return phases
 
-    trocadas = 0
-    for phase in phases:
-        rect = phase.rect
+    reference = max(phases, key=lambda p: p.end - p.start).rect
+
+    def _off(rect: FacecamRect) -> float:
         w_ratio = rect.w / reference.w if reference.w else 1.0
         h_ratio = rect.h / reference.h if reference.h else 1.0
-        off = max(w_ratio, 1 / w_ratio, h_ratio, 1 / h_ratio)
-        if off > _JOB_SIZE_TOLERANCE:
-            logger.warning(
-                f"Facecam: caixa {rect.w:.3f}x{rect.h:.3f} destoa {off:.1f}x do "
-                f"tamanho do job ({reference.w:.3f}x{reference.h:.3f}) — "
-                f"usando a caixa do job"
-            )
-            phase.rect = FacecamRect(
-                x=reference.x, y=reference.y, w=reference.w, h=reference.h,
-                confidence=reference.confidence, method="job_rect",
-            )
-            trocadas += 1
-    return phases, trocadas
+        return max(w_ratio, 1 / w_ratio, h_ratio, 1 / h_ratio)
+
+    good = [i for i, p in enumerate(phases) if _off(p.rect) <= _CLIP_SIZE_TOLERANCE]
+    if not good or len(good) == len(phases):
+        return phases
+
+    for i, phase in enumerate(phases):
+        if i in good:
+            continue
+        nearest = min(good, key=lambda g: abs(g - i))
+        source = phases[nearest].rect
+        logger.warning(
+            f"Facecam: fase [{phase.start:.1f}s–{phase.end:.1f}s] com caixa "
+            f"{phase.rect.w:.3f}x{phase.rect.h:.3f} destoa {_off(phase.rect):.1f}x "
+            f"das outras do clip — provável moldura da UI do jogo; "
+            f"usando a caixa de [{phases[nearest].start:.1f}s–{phases[nearest].end:.1f}s]"
+        )
+        phase.rect = FacecamRect(
+            x=source.x, y=source.y, w=source.w, h=source.h,
+            confidence=source.confidence, method="phase_fix",
+        )
+
+    return _merge_equivalent_phases(phases)
 
 
 def _merge_equivalent_phases(phases: list[CamPhase]) -> list[CamPhase]:
     """
     Junta fases vizinhas que descrevem a MESMA caixa.
 
-    A divisão em fases existe para a cam que se move. Quando o encaixe das duas
-    fases cai quase no mesmo lugar, a cam não mudou — foi o rosto que oscilou —
-    e manter a divisão troca o recorte no meio do clipe, o que aparece como um
-    pulinho de zoom. Fica a caixa da fase mais longa, que teve mais frames para
-    encaixar.
+    A divisão em fases existe para a cam que se move. Quando duas fases vizinhas
+    caem na mesma caixa, a cam não mudou — foi o rosto que oscilou — e manter a
+    divisão troca o recorte no meio do clipe, o que aparece como um pulinho de
+    zoom. Fica a caixa da fase mais longa, que teve mais frames para encaixar.
     """
     if not phases:
         return phases
@@ -407,11 +441,43 @@ def _merge_equivalent_phases(phases: list[CamPhase]) -> list[CamPhase]:
         last = merged[-1]
         if _same_box(last.rect, phase.rect):
             if (phase.end - phase.start) > (last.end - last.start):
-                last.rect = phase.rect  # a fase mais longa manda na caixa
+                last.rect = phase.rect
             last.end = phase.end
             continue
         merged.append(phase)
     return merged
+
+
+def _consolidate_boxes(
+    rect_by_group: dict[int, FacecamRect], groups: dict[int, list[int]]
+) -> dict[int, FacecamRect]:
+    """
+    Faz grupos que enquadram a MESMA cam compartilharem uma caixa só.
+
+    O rosto oscila dentro da cam — o streamer se inclina, chega perto —, então
+    o mesmo enquadramento vira vários grupos e cada um encaixa uma caixa
+    ligeiramente diferente. Num clipe do Bahiaqz eram 10 caixas para 2 cams. Se
+    isso chega ao render, cada volta ao mesmo canto recorta alguns pixels
+    diferente da anterior, e o painel dá um pulinho a cada troca de plano.
+
+    Vence a caixa do grupo com MAIS frames: foi a que teve mais material para o
+    encaixe nas bordas.
+
+    A consolidação também é o que mantém o filtergraph pequeno, já que o render
+    cria um ramo por caixa única e não por fase.
+    """
+    order = sorted(rect_by_group, key=lambda g: len(groups[g]), reverse=True)
+    canon: list[int] = []
+    for gid in order:
+        match = next(
+            (c for c in canon if _same_box(rect_by_group[c], rect_by_group[gid])),
+            None,
+        )
+        if match is None:
+            canon.append(gid)
+        else:
+            rect_by_group[gid] = rect_by_group[match]
+    return rect_by_group
 
 
 def _same_box(a: FacecamRect, b: FacecamRect) -> bool:
@@ -544,7 +610,7 @@ def _cluster_observations(per_frame: list[list[_Obs]]) -> list[_Cluster]:
 
 def _cam_track(
     per_frame: list[list[_Obs]], n_frames: int
-) -> tuple[Optional[list[Optional[_Obs]]], float]:
+) -> tuple[Optional[list[Optional[_Obs]]], float, dict[int, list[int]]]:
     """
     Escolhe, em cada frame, qual rosto é a facecam — e devolve a trilha.
 
@@ -559,13 +625,18 @@ def _cam_track(
     de se mexer, e entram na trilha.
 
     Returns:
-        (trilha por frame — None onde não houve rosto da cam, confiança).
-        (None, 0.0) se nenhum aglomerado tem presença suficiente.
+        (trilha por frame, confiança, {aglomerado: frames dele}).
+        (None, 0.0, {}) se nenhum aglomerado tem presença suficiente.
+
+    O terceiro item é o que permite encaixar UMA caixa por cam: quem já sabe a
+    que aglomerado cada frame pertence é esta função, e redescobrir isso depois
+    por proximidade de posição criava vários grupos para a mesma cam (o rosto
+    oscila dentro dela), cada um com um encaixe ligeiramente diferente.
     """
     clusters = _cluster_observations(per_frame)
     if not clusters:
         logger.info("Facecam: no face detected in sampled frames")
-        return None, 0.0
+        return None, 0.0, {}
 
     clusters.sort(key=lambda c: (len(c.frames), c.median_area()), reverse=True)
     primary = clusters[0]
@@ -592,15 +663,22 @@ def _cam_track(
             f"Facecam: face cluster too unstable "
             f"({len(covered)}/{n_frames} frames = {confidence:.0%})"
         )
-        return None, 0.0
+        return None, 0.0, {}
 
     track: list[Optional[_Obs]] = [None] * n_frames
-    for cluster in accepted:
+    owner: list[Optional[int]] = [None] * n_frames
+    for gid, cluster in enumerate(accepted):
         for frame_idx, seen in cluster.by_frame.items():
             best = max(seen, key=lambda o: o.score)
             current = track[frame_idx]
             if current is None or best.score > current.score:
                 track[frame_idx] = best
+                owner[frame_idx] = gid
+
+    groups: dict[int, list[int]] = {}
+    for frame_idx, gid in enumerate(owner):
+        if gid is not None:
+            groups.setdefault(gid, []).append(frame_idx)
 
     if len(accepted) > 1:
         logger.info(
@@ -608,7 +686,7 @@ def _cam_track(
             f"(a cam se moveu); {len(clusters) - len(accepted)} rosto(s) concorrente(s) "
             f"descartado(s)"
         )
-    return track, confidence
+    return track, confidence, groups
 
 
 def _frame_overlap(a: "_Cluster", b: "_Cluster") -> float:
@@ -619,40 +697,49 @@ def _frame_overlap(a: "_Cluster", b: "_Cluster") -> float:
     return len(a.frames & b.frames) / smaller
 
 
-def _phase_spans(track: list[Optional[_Obs]]) -> list[tuple[int, int]]:
+def _group_spans(
+    track: list[Optional[_Obs]], groups: dict[int, list[int]]
+) -> list[tuple[int, int, int]]:
     """
-    Quebra a trilha em fases: trechos em que a cam fica parada na mesma caixa.
+    Trechos contíguos de mesmo grupo, cobrindo todos os frames.
 
-    A mudança precisa se CONFIRMAR em _PHASE_CONFIRM amostras seguidas — um
-    frame solto com o rosto deslocado é o streamer se mexendo na cadeira, não a
-    cam mudando de lugar. Frames sem rosto não quebram a fase (a cam continua
-    lá, o detector é que piscou).
+    A troca vale na primeira amostra do outro grupo, sem exigir confirmação.
+    Confirmação faz sentido quando o risco é ruído de detecção — mas o ruído já
+    foi filtrado em _cam_track, que só aceita aglomerados persistentes com
+    tamanho de cam. Dentro do que sobrou, um frame no outro enquadramento é uma
+    troca de plano de verdade.
+
+    Exigir duas amostras seguidas aqui, aliás, era o que mantinha o defeito: com
+    plano de ~4s e amostra a cada 1,7s, o POV alternativo aparece em 1 ou 2
+    amostras e qualquer frame sem detecção no meio zerava a contagem — o trecho
+    inteiro herdava o enquadramento do outro streamer.
+
+    Frame sem rosto não abre trecho novo: a cam continua onde estava e quem
+    piscou foi o detector.
 
     Returns:
-        [(primeiro índice, último índice)] cobrindo todos os frames.
+        [(primeiro índice, último índice, id do grupo)].
     """
-    spans: list[tuple[int, int]] = []
+    if not groups:
+        return []
+
+    gid_of: list[Optional[int]] = [None] * len(track)
+    for gid, indexes in groups.items():
+        for i in indexes:
+            gid_of[i] = gid
+
+    spans: list[tuple[int, int, int]] = []
+    current = next(g for g in gid_of if g is not None)
     start = 0
-    anchor: Optional[_Obs] = None
-    pending: list[int] = []
 
-    for i, obs in enumerate(track):
-        if obs is None:
+    for i, gid in enumerate(gid_of):
+        if gid is None or gid == current:
             continue
-        if anchor is None:
-            anchor = obs
-            continue
-        if _same_placement(obs, anchor):
-            pending.clear()
-            continue
-        pending.append(i)
-        if len(pending) >= _PHASE_CONFIRM:
-            cut = pending[0]
-            spans.append((start, cut - 1))
-            start, anchor, pending = cut, obs, []
+        spans.append((start, i - 1, current))
+        start, current = i, gid
 
-    spans.append((start, len(track) - 1))
-    return _merge_short_spans(spans)
+    spans.append((start, len(track) - 1, current))
+    return spans
 
 
 def _same_placement(obs: _Obs, anchor: _Obs) -> bool:
@@ -661,40 +748,6 @@ def _same_placement(obs: _Obs, anchor: _Obs) -> bool:
         return False
     ratio = (obs.w * obs.h) / max(anchor.w * anchor.h, 1e-9)
     return 1 / _PHASE_ZOOM <= ratio <= _PHASE_ZOOM
-
-
-def _merge_short_spans(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
-    """
-    Junta fases curtas demais ao vizinho e limita o total.
-
-    Fase curta não tem frames suficientes para o encaixe nas bordas funcionar, e
-    cada fase extra é mais um recorte no filtergraph — o teto protege o render
-    de um trecho com detecção instável virando dezenas de painéis.
-    """
-    def length(span: tuple[int, int]) -> int:
-        return span[1] - span[0] + 1
-
-    def absorb(index: int) -> None:
-        left = spans[index - 1] if index > 0 else None
-        right = spans[index + 1] if index + 1 < len(spans) else None
-        into = index - 1 if right is None or (left and length(left) >= length(right)) else index + 1
-        lo, hi = min(spans[index][0], spans[into][0]), max(spans[index][1], spans[into][1])
-        spans[min(index, into)] = (lo, hi)
-        spans.pop(max(index, into))
-
-    changed = True
-    while changed and len(spans) > 1:
-        changed = False
-        for i, span in enumerate(spans):
-            if length(span) < _MIN_PHASE_SAMPLES:
-                absorb(i)
-                changed = True
-                break
-
-    while len(spans) > _MAX_PHASES:
-        absorb(min(range(len(spans)), key=lambda i: length(spans[i])))
-
-    return spans
 
 
 def _fit_phase(

@@ -370,10 +370,22 @@ async def cut_and_stack(
     # `enable` do overlay. Mudar o crop no meio do stream (sendcmd com w/h
     # variáveis) seria o caminho óbvio, mas trava o FFmpeg: o filtro seguinte
     # teria que se reconfigurar a cada mudança de tamanho.
-    cam_labels = [f"cam{i}" for i in range(len(phases))]
+    # Um ramo por CAIXA ÚNICA, não por fase. Num vídeo editado a mesma cam
+    # reaparece a cada troca de POV, então 20 fases costumam ser 2 ou 3 caixas
+    # se repetindo — e um ramo por fase encheria o filtergraph de recortes
+    # idênticos. Agrupando, o custo do render passa a depender de quantos
+    # enquadramentos existem, não de quantas vezes a edição alterna entre eles.
+    unique_boxes: list[tuple] = []
+    box_of_phase: list[int] = []
+    for box in cam_boxes:
+        if box not in unique_boxes:
+            unique_boxes.append(box)
+        box_of_phase.append(unique_boxes.index(box))
+
+    cam_labels = [f"cam{i}" for i in range(len(unique_boxes))]
     parts = [
-        f"[0:v]split={len(phases) + 1}[gpsrc]"
-        + "".join(f"[fc{i}]" for i in range(len(phases)))
+        f"[0:v]split={len(unique_boxes) + 1}[gpsrc]"
+        + "".join(f"[fc{i}]" for i in range(len(unique_boxes)))
     ]
     # Só na luminância (croma zerado): realçar o croma levanta o ruído de cor
     # da webcam sem acrescentar nitidez percebida.
@@ -382,7 +394,7 @@ async def cut_and_stack(
         if settings.facecam_sharpen > 0
         else ""
     )
-    for i, (cam_x, cam_y, cam_w, cam_h) in enumerate(cam_boxes):
+    for i, (cam_x, cam_y, cam_w, cam_h) in enumerate(unique_boxes):
         # A caixa detectada raramente bate com a proporção do painel: amplia
         # até cobrir e recorta o excedente pelo centro (sem barras pretas).
         parts.append(
@@ -397,14 +409,35 @@ async def cut_and_stack(
         f"pad={geo.canvas_w}:{geo.canvas_h}:0:{geo.game_y}:black[base]"
     )
 
-    # A 1ª fase é a camada de baixo (sempre desenhada) e cada fase seguinte é
-    # sobreposta a partir do seu início. Assim vale sempre a última fase que já
-    # começou — sem intervalo descoberto entre uma fase e a próxima.
+    # Cada caixa é desenhada nos intervalos em que ela vale, somados num único
+    # `enable`. Com a cam voltando para o mesmo canto várias vezes, `gte(t,...)`
+    # empilhado não serve — ele só sabe "a partir de", então uma caixa que volta
+    # ficaria coberta pela última que começou. `between` marca começo E fim.
+    intervals: dict[int, list[tuple[float, float]]] = {}
+    for phase, box_index in zip(phases, box_of_phase):
+        intervals.setdefault(box_index, []).append((phase.start, phase.end))
+
+    # A caixa que cobre mais tempo é a camada de baixo, desenhada sempre: se
+    # algum instante escapar dos intervalos (arredondamento entre fases), ele
+    # cai no enquadramento mais provável em vez de ficar sem cam nenhuma.
+    base_box = max(
+        intervals, key=lambda i: sum(end - start for start, end in intervals[i])
+    )
     last_label = "base"
-    for i, phase in enumerate(phases):
-        out = f"withcam{i}"
-        enable = "" if i == 0 else f":enable='gte(t,{phase.start:.3f})'"
-        parts.append(f"[{last_label}][{cam_labels[i]}]overlay=0:0{enable}[{out}]")
+    order = [base_box] + [i for i in intervals if i != base_box]
+    for n, box_index in enumerate(order):
+        out = f"withcam{n}"
+        if box_index == base_box:
+            enable = ""
+        else:
+            spans = "+".join(
+                f"between(t,{start:.3f},{end:.3f})"
+                for start, end in intervals[box_index]
+            )
+            enable = f":enable='{spans}'"
+        parts.append(
+            f"[{last_label}][{cam_labels[box_index]}]overlay=0:0{enable}[{out}]"
+        )
         last_label = out
 
     parts.append(f"[{last_label}][1:v]overlay=0:{geo.facecam_h}[withbar]")
