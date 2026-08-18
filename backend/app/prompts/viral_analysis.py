@@ -22,6 +22,16 @@ The transcript below uses the format: [START_TIME - END_TIME] Text
 Times are in seconds (e.g., [12.4 - 15.1] Hello everyone).
 """
 
+# Legenda das anotações de buraco. Sem ela o modelo trata «((...))» como texto
+# transcrito e chega a citar a anotação dentro do trim_reason.
+GAP_LEGEND = """
+Linhas entre ((parênteses duplos)) não são fala: são trechos SEM palavra
+transcrita, com a medição do áudio naquele intervalo em relação ao nível normal
+de fala do vídeo. «ÁUDIO ALTO» = som bem acima da fala: gargalhada, grito,
+ação, reação — o momento em si. «áudio baixo» = silêncio de verdade, tempo
+morto. Sem rótulo = faixa intermediária, decida pelo contexto em volta.
+"""
+
 # ─── Critérios por tipo de fonte ───────────────────────────────────────────────
 # Injetados no core_prompt via {source_criteria}. O que prende alguém num corte
 # de podcast (frase-momento, arco de resolução) não é o que prende num corte de
@@ -31,19 +41,23 @@ PODCAST_CRITERIA = """## Critérios para PODCAST
 
 - Gancho verbal nos primeiros 3s: existe uma afirmação contra-intuitiva, uma revelação, uma pergunta em aberto, ou um sinal de autoridade/credibilidade logo de cara? Introduções ("então hoje eu vim falar sobre...") são fracas — penalize.
 - Arco de resolução: o trecho tem começo, meio e fim dentro de si mesmo (não depende de contexto anterior do podcast pra fazer sentido)?
-- Densidade de informação/emoção: há silêncios longos, hesitação, ou divagação que quebram o ritmo? Isso derruba completion rate.
+- Densidade de informação/emoção: há silêncios longos DE ÁUDIO BAIXO, hesitação, ou divagação que quebram o ritmo? Isso derruba completion rate. Atenção: trecho sem fala mas com áudio alto é o oposto disso — é risada da mesa ou reação a algo acontecendo, e costuma ser o melhor pedaço do corte.
 - Potencial de debate: a afirmação é polêmica ou opinativa o suficiente pra gerar comentários discordando ou concordando com força?
 - Frase-momento (soundbite): existe uma frase isolada que funcionaria como legenda de destaque ou citação compartilhável?"""
 
 GAMEPLAY_CRITERIA = """## Critérios para GAMEPLAY
 
 - Pico visual nos primeiros 3s: o clipe abre já em tensão (quase morrendo, prestes a uma jogada) ou precisa de "aquecimento" antes do momento bom? Aquecimento é fraco — penalize.
+
+  Aquecimento é tempo ocioso: caminhar, esperar, arrumar o inventário, conversa que não leva a nada. NÃO é aquecimento a tentativa que produz o desastre — o grupo combinando o plano, explicando um para o outro, executando com convicção. Isso é a montagem da piada, e sem ela a explosão é só barulho.
+
+  A diferença prática: se o trecho anterior ao pico fosse cortado, quem assiste ainda entenderia por que aquilo é engraçado? Se sim, era aquecimento, corte. Se não, era a construção, e ela entra — mesmo que dure um minuto e leve o corte para perto do teto de duração.
 - Reviravolta clara: há uma mudança de estado legível em poucos segundos (derrota virando vitória, erro virando acerto, reação de susto/comemoração)?
 - Legibilidade sem áudio: o momento é compreensível só pelo visual (muita gente assiste sem som)? Isso importa mais que em podcast.
 - Loop natural: a ação termina de um jeito que poderia reiniciar o clipe sem parecer cortado no meio?
 - Reação humana: há reação de voz/call do jogador (grito, xingamento, comemoração) que reforça o pico visual?
 
-Atenção: você recebe apenas a transcrição, então o pico visual é inferido pela reação falada (grito, silêncio súbito, "não acredito", xingamento, contagem regressiva). Quando não houver sinal falado do que aconteceu na tela, seja conservador na nota em vez de supor a jogada."""
+Atenção: você não vê a tela. O pico visual é inferido por dois sinais — a reação falada (grito, "não acredito", xingamento, contagem regressiva) e as anotações de trecho sem fala com ÁUDIO ALTO, que marcam onde a ação aconteceu sem ninguém narrar. Quando nenhum dos dois aparece, seja conservador na nota em vez de supor a jogada; quando o áudio alto aparece, ele é a jogada e o corte tem que contê-lo."""
 
 SIEGE_CRITERIA = """## Critérios para SIEGE (Rainbow Six Siege / Siege X)
 
@@ -64,7 +78,8 @@ Sinais que CONFIRMAM abate, e devem ser tratados como confirmação, não como s
 - "peguei", "matei", "pegou", "matou", "tá down", "caiu" — cada um é um abate.
 - Placar falado: "tá 3v2", "1v3", "somos 4 contra 5". A queda de um placar para o outro entre duas falas conta os abates que aconteceram no meio, mesmo sem ninguém narrar. É o sinal mais confiável em FPL.
 - Vários desses sinais concentrados numa janela curta = sequência de eliminações, mesmo sem ninguém dizer "double" ou "triple".
-- Reação súbita da call (grito, xingamento, "isso!", "boa!") logo após silêncio tenso normalmente marca o abate importante.
+- Reação súbita da call (grito, xingamento, "isso!", "boa!") logo após silêncio tenso normalmente marca o abate importante — e nesse caso o corte começa no silêncio tenso, não no grito.
+- Trecho sem fala anotado como ÁUDIO ALTO: é tiroteio, explosão ou grito. A jogada está ali dentro, não depois dela.
 
 Seja conservador só quando NENHUM desses sinais aparece — trecho de gameplay silencioso e sem reação não vira clipe. Mas não descarte um bom momento por falta de narração explícita: em Siege a jogada quase nunca é narrada, é confirmada por essas pistas.
 
@@ -132,11 +147,13 @@ USER_PROMPT_TEMPLATE = """Analise a transcrição abaixo e identifique todos os 
 - **Tipo de fonte**: {source_type}
 
 ## Transcrição (timestamps em segundos)
+{gap_legend}
 {transcript_with_timestamps}
 
 ## Tarefa
 Encontre TODOS os trechos que fecham {threshold_100}+ de final_score, aplicando os critérios de {source_type}.
 Prefira cortes enxutos de {preferred_min}-{preferred_max}s; passe disso (até {max_duration}s) só quando o momento realmente precisar da construção.
+Antes de fixar cada `start`, responda a si mesmo: o que está sendo dito aqui é o FATO ou é a REAÇÃO ao fato? Se for reação, o corte começa antes.
 Os campos `start` e `end` são o corte final, em segundos absolutos do vídeo.
 Retorne SOMENTE JSON válido — sem markdown, sem texto fora do JSON.
 
@@ -174,17 +191,76 @@ Se nenhum trecho atingir o limiar, retorne: {{"clips": [], "analysis_notes": "mo
 
 # ─── Helper functions ──────────────────────────────────────────────────────────
 
-def format_transcript_with_timestamps(words: list[dict]) -> str:
+# Buraco sem evento e curto é respiração entre frases: anotar todos eles
+# encheria a transcrição de linhas que não mudam decisão nenhuma e diluiria as
+# que mudam. Evento entra sempre, independentemente da duração.
+_MIN_ANNOTATED_QUIET = 5.0
+
+
+def worth_annotating(gap) -> bool:
+    """Se este buraco tem algo a dizer ao modelo sobre onde cortar."""
+    return gap.is_event or gap.duration >= _MIN_ANNOTATED_QUIET
+
+
+def format_gap(gap) -> str:
+    """
+    A linha que descreve um buraco da transcrição pelo que o áudio diz dele.
+
+    O buraco alto é o caso que existe para ser resolvido: sem esta linha ele
+    chega ao modelo como ausência de conteúdo, e a instrução de penalizar
+    silêncio longo faz o resto do estrago.
+    """
+    # Construção longa muda ONDE o corte começa, então ela vai junto do
+    # momento em vez de ficar implícita na transcrição. Sem este número o
+    # modelo lê 128s de conversa como enchimento e abre direto no barulho.
+    buildup = ""
+    if gap.is_event and getattr(gap, "has_long_buildup", False):
+        buildup = (
+            f" A fala vem sem pausa desde {gap.buildup_start:.1f}s, ou seja, "
+            f"{gap.buildup:.0f}s de construção antes deste momento — pode ser "
+            f"um payoff que levou tempo sendo montado. Isso NÃO é um ponto de "
+            f"corte pronto: quase sempre é longo demais para um clipe. Leia a "
+            f"construção e comece onde a tentativa que dá errado começa, "
+            f"respeitando o teto de duração."
+        )
+
+    head = f"[{gap.start:.1f} - {gap.end:.1f}] (({gap.duration:.0f}s sem fala"
+    if gap.is_event:
+        # Com descrição da imagem o modelo não precisa mais supor o que houve —
+        # e supor era exatamente o que fazia ele tratar o trecho como vazio.
+        scene = getattr(gap, "scene", None)
+        if scene:
+            return (
+                f"{head.replace('sem fala', 'SEM FALA')} — ÁUDIO ALTO, "
+                f"{gap.above_speech:+.0f} dB em relação à fala normal. "
+                f"NA IMAGEM: {scene}{buildup}))"
+            )
+        return (
+            f"{head.replace('sem fala', 'SEM FALA')} — ÁUDIO ALTO, "
+            f"{gap.above_speech:+.0f} dB em relação à fala normal: aconteceu "
+            f"ALGUMA COISA aqui — risada, grito, reação, ação na tela. "
+            f"É momento, não tempo morto.{buildup}))"
+        )
+    if gap.is_dead:
+        return f"{head} — áudio baixo, {gap.above_speech:+.0f} dB: silêncio, tempo morto.))"
+    return f"{head} — áudio {gap.above_speech:+.0f} dB em relação à fala.))"
+
+
+def format_transcript_with_timestamps(words: list[dict], gaps: list | None = None) -> str:
     """
     Agrupa palavras em frases com timestamps e formata para o prompt.
 
     Agrupa palavras em chunks de ~15 palavras ou até encontrar pontuação
     de fim de frase, mantendo timestamps do início e fim do grupo.
+
+    `gaps` são os intervalos sem fala já medidos por services.audio_events, e
+    entram na posição cronológica deles como anotação. É o que permite ao
+    modelo diferenciar o silêncio que mata retenção do silêncio que É o clipe.
     """
     if not words:
         return "(empty transcript)"
 
-    lines = []
+    lines: list[tuple[float, str]] = []
     chunk_words = []
     chunk_start = None
 
@@ -202,7 +278,7 @@ def format_transcript_with_timestamps(words: list[dict]) -> str:
         is_sentence_end = text.rstrip().endswith((".", "!", "?", "..."))
         if is_sentence_end or len(chunk_words) >= 15:
             line_text = " ".join(chunk_words)
-            lines.append(f"[{chunk_start:.1f} - {end:.1f}] {line_text}")
+            lines.append((chunk_start, f"[{chunk_start:.1f} - {end:.1f}] {line_text}"))
             chunk_words = []
             chunk_start = None
 
@@ -210,9 +286,14 @@ def format_transcript_with_timestamps(words: list[dict]) -> str:
     if chunk_words and chunk_start is not None:
         end = words[-1]["end"]
         line_text = " ".join(chunk_words)
-        lines.append(f"[{chunk_start:.1f} - {end:.1f}] {line_text}")
+        lines.append((chunk_start, f"[{chunk_start:.1f} - {end:.1f}] {line_text}"))
 
-    return "\n".join(lines)
+    for gap in gaps or []:
+        if worth_annotating(gap):
+            lines.append((gap.start, format_gap(gap)))
+
+    lines.sort(key=lambda item: item[0])
+    return "\n".join(line for _, line in lines)
 
 
 def format_duration(seconds: float) -> str:
@@ -238,6 +319,7 @@ def build_analysis_prompt(
     preferred_max: int = 40,
     source_type: str = DEFAULT_SOURCE_TYPE,
     max_segmented: int = 70,
+    gaps: list | None = None,
 ) -> str:
     """
     Constrói o prompt de usuário da análise de viralidade.
@@ -250,10 +332,11 @@ def build_analysis_prompt(
         threshold: Limiar na escala 0-10 do sistema; convertido para a escala
             0-100 do final_score que o modelo devolve.
     """
-    transcript_text = format_transcript_with_timestamps(words)
+    transcript_text = format_transcript_with_timestamps(words, gaps)
     source = (source_type or DEFAULT_SOURCE_TYPE).lower()
 
     return USER_PROMPT_TEMPLATE.format(
+        gap_legend=GAP_LEGEND.strip() if gaps else "",
         segments_rule=(
             SEGMENTS_RULE.format(max_segmented=max_segmented)
             if source == "siege"

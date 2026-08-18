@@ -23,6 +23,8 @@ from app.prompts.viral_analysis import (
     build_analysis_prompt,
     source_criteria,
 )
+from app.services import vision
+from app.services.audio_events import Gap, rescue_start
 from prompt_engine.prompt_builder import PromptBuilder
 
 logger = logging.getLogger(__name__)
@@ -233,6 +235,148 @@ def _clip_score(clip_data: dict, axes: dict) -> float:
         return 0.0
 
 
+def _rescue_event_starts(
+    job_id: str,
+    clips: List[dict],
+    gaps: List[Gap],
+    words: List[dict],
+    max_duration: int,
+) -> None:
+    """
+    Devolve ao corte o fato que a fala está comentando, quando ele ficou de fora.
+
+    Rede de segurança do que o prompt já pede. O modelo lê texto, e a tentação
+    de começar na primeira palavra depois de um buraco é forte demais para
+    depender só de instrução: um clipe que abre logo após um buraco barulhento
+    está, quase por definição, mostrando a reação sem a causa.
+
+    Só mexe no `start`, só o empurra para trás e só quando o áudio confirma que
+    havia um evento ali. Trecho costurado passa intacto — a lista de segmentos
+    já define a linha do tempo do clipe.
+    """
+    if not gaps:
+        return
+
+    for clip in clips:
+        if clip.get("_segments"):
+            continue
+
+        start = float(clip.get("start", 0))
+        end = float(clip.get("end", 0))
+        new_start, event = rescue_start(start, end, gaps, words, max_duration)
+        if event is None:
+            continue
+
+        clip["start"] = new_start
+        note = (
+            f"Início recuado de {start:.1f}s para {new_start:.1f}s: o corte "
+            f"começava depois de {event.duration:.0f}s de áudio alto "
+            f"({event.above_speech:+.0f} dB vs fala) em "
+            f"[{event.start:.1f}-{event.end:.1f}], ou seja, pegava a reação sem o fato."
+        )
+        clip["trim_reason"] = f"{clip.get('trim_reason', '').strip()} {note}".strip()
+        logger.info(f"[{job_id}] {note}")
+
+
+def _bounds_question(start: float, end: float) -> str:
+    """
+    A pergunta do refino, montada por concatenação.
+
+    Nada de `.format()` aqui: JSON_RULES contém um exemplo de JSON, e as chaves
+    dele seriam lidas como campos de substituição.
+    """
+    return (
+        f"Estes quadros cercam um corte que vai de {start:.1f}s a {end:.1f}s.\n"
+        "Diga onde, nesta linha do tempo, está o acontecimento visual — "
+        "e se há algum.\n" + vision.JSON_RULES
+    )
+
+
+def _snap_to_word(words: List[dict], time: float) -> float:
+    """
+    Recua até o começo da palavra que está sendo dita, se houver uma.
+
+    O keyframe cai onde o codificador quis, não onde a frase começa; sem isto
+    um corte pode abrir no meio de uma palavra.
+    """
+    for word in words:
+        if word["start"] <= time < word["end"]:
+            return word["start"]
+    return time
+
+
+async def _refine_bounds_with_vision(
+    job_id: str,
+    video_path: str,
+    clips: List[dict],
+    words: List[dict],
+    max_duration: int,
+) -> None:
+    """
+    Usa a imagem para esticar o corte até conter o acontecimento inteiro.
+
+    A regra que governa tudo aqui: esta função só AFROUXA. Ela empurra o início
+    para trás e o fim para frente, nunca o contrário — perder o fato custa o
+    clipe inteiro, sobrar meio segundo não custa nada.
+
+    E ela não vota no veredito. A versão anterior marcava `revisar_corte`
+    quando a visão dizia que nada acontecia; o campo devolveu respostas opostas
+    para a mesma janela em duas execuções seguidas, então saiu. O que fica é o
+    que se mostrou estável entre rodadas: a descrição do que está na tela e os
+    instantes do acontecimento.
+
+    A descrição é gravada no `trim_reason` mesmo quando o corte não muda — é
+    assim que, um mês depois, dá para saber o que havia naquele trecho sem
+    reabrir o vídeo.
+    """
+    targets = [c for c in clips if not c.get("_segments")][: settings.vision_max_windows]
+    if not targets:
+        return
+
+    margin = settings.vision_window
+    windows = [
+        (float(c["start"]) - margin, float(c["end"]) + margin) for c in targets
+    ]
+    questions = [
+        _bounds_question(float(c["start"]), float(c["end"])) for c in targets
+    ]
+
+    scenes = await vision.look_many(job_id, video_path, windows, questions)
+
+    for clip, scene in zip(targets, scenes):
+        if scene is None:
+            continue
+
+        start, end = float(clip["start"]), float(clip["end"])
+        notes: List[str] = []
+
+        new_start, new_end = start, end
+        if scene.event_start is not None and scene.event_start < start:
+            new_start = _snap_to_word(words, scene.event_start)
+        if scene.event_end is not None and scene.event_end > end:
+            new_end = scene.event_end
+
+        if new_end - new_start > max_duration:
+            # Não cabe tudo: sacrifica o começo, porque o fim é onde está a
+            # reação — mesma prioridade do resgate por áudio.
+            new_start = new_end - max_duration
+
+        if new_start < start or new_end > end:
+            notes.append(
+                f"Limites abertos pela imagem: [{start:.1f}-{end:.1f}] → "
+                f"[{new_start:.1f}-{new_end:.1f}]."
+            )
+            clip["start"], clip["end"] = new_start, new_end
+            logger.info(
+                f"[{job_id}] Corte [{start:.1f}-{end:.1f}] aberto para "
+                f"[{new_start:.1f}-{new_end:.1f}] pela imagem"
+            )
+
+        notes.append(f"Na imagem: {scene.summary()}")
+        note = " ".join(notes)
+        clip["trim_reason"] = f"{clip.get('trim_reason', '').strip()} {note}".strip()
+
+
 def _parse_claude_response(raw: str) -> dict:
     """
     Extrai e parseia o JSON da resposta do Claude.
@@ -257,6 +401,8 @@ async def analyze_virality(
     channel: str,
     duration_seconds: float,
     source_type: str = DEFAULT_SOURCE_TYPE,
+    gaps: Optional[List[Gap]] = None,
+    video_path: Optional[str] = None,
 ) -> AnalysisResult:
     """
     Analisa a transcrição completa e retorna segmentos com alto potencial viral.
@@ -271,6 +417,10 @@ async def analyze_virality(
         channel: Nome do canal.
         duration_seconds: Duração total do vídeo em segundos.
         source_type: 'podcast' ou 'gameplay' — troca a rubrica aplicada.
+        gaps: Buracos da transcrição medidos por services.audio_events. Anotam
+            o prompt e alimentam o resgate de cortes que começam depois do fato.
+        video_path: Vídeo em disco. Presente, a imagem entra na decisão dos
+            limites de cada corte (ver _refine_bounds_with_vision).
 
     Returns:
         AnalysisResult com lista de ViralClip filtrados e notas da análise.
@@ -296,6 +446,7 @@ async def analyze_virality(
         preferred_min=settings.preferred_clip_min,
         preferred_max=settings.preferred_clip_max,
         source_type=source_type,
+        gaps=gaps,
     )
 
     system_prompt = PromptBuilder().build(
@@ -336,13 +487,20 @@ async def analyze_virality(
 
     # Filtra por veredito, threshold e duração mínima
     segmented_allowed = (source_type or DEFAULT_SOURCE_TYPE).lower() == "siege"
+    for c in raw_clips:
+        c["_segments"] = parse_segments(c.get("segments")) if segmented_allowed else []
+
+    # Antes de filtrar: recuar o início alonga o clipe, então um corte que
+    # perdeu o fato e ficou curto demais precisa ser resgatado enquanto ainda
+    # está na lista.
+    _rescue_event_starts(job_id, raw_clips, gaps or [], words, max_dur)
+
     filtered: List[dict] = []
     for c in raw_clips:
         axes = _axis_scores(c)
         score = _clip_score(c, axes)
         c["_axes"] = axes
         c["_score"] = score
-        c["_segments"] = parse_segments(c.get("segments")) if segmented_allowed else []
         start = float(c.get("start", 0))
         end = float(c.get("end", 0))
         # Costurado: a duração real é a soma dos trechos, não a janela bruta —
@@ -366,6 +524,14 @@ async def analyze_virality(
         filtered.append(c)
 
     logger.info(f"[{job_id}] {len(filtered)} clips passed threshold filter")
+
+    # A imagem entra por último, depois do filtro e antes do split: refinar um
+    # candidato que seria descartado é desperdício, e refinar uma METADE de um
+    # clipe já dividido não faz sentido — o acontecimento é do clipe inteiro.
+    if video_path and settings.vision_enabled and filtered:
+        await _refine_bounds_with_vision(
+            job_id, video_path, filtered, words, max_dur
+        )
 
     # Divide clips longos — partes que ficarem abaixo da duração mínima são descartadas
     final_clips_data: List[dict] = []

@@ -16,6 +16,22 @@ class Settings(BaseSettings):
     claude_model: str = "claude-sonnet-4-6"
     claude_max_tokens: int = 8192
 
+    # ── Visão (services/vision.py) ────────────────────────────────────────────
+    # Modelo próprio, separado do da análise: ler uma cena de jogo e uma
+    # expressão de rosto é outro trabalho, e o Opus 5 tem visão de alta
+    # resolução. O custo por vídeo é de centavos, então não vale economizar aqui.
+    claude_vision_model: str = "claude-opus-5"
+    claude_vision_max_tokens: int = 2000
+    # Desligado, o pipeline volta a decidir os cortes só por texto e áudio.
+    vision_enabled: bool = True
+    # Quanto olhar antes e depois do corte ao refinar os limites. 20s foi
+    # medido contra o caso real: o buraco do evento que motivou isto tem 21,4s.
+    vision_window: float = 20.0
+    # Teto de quadros por janela. Com keyframe a cada ~6s, 10 cobrem um minuto.
+    vision_max_frames: int = 10
+    # Teto de janelas por vídeo — uma live de 6h não pode virar 80 chamadas.
+    vision_max_windows: int = 20
+
     # AssemblyAI
     # O antigo `best` (= universal-2) se perde em grito distorcido e fala
     # regional: num trecho de teste ele alucinou "TREADOR!" e travou repetindo

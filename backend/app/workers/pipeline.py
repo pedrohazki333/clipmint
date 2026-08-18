@@ -37,13 +37,14 @@ from app.models import Job, Transcript, Clip
 from app.services.downloader import VideoMetadata, download_video, ensure_media
 from app.services.transcriber import transcribe_audio
 from app.services.analyzer import analyze_virality
+from app.services.audio_events import detect_gaps
+from app.services.scene_events import describe_events
 from app.services.clipper import cut_and_crop, cut_and_stack
 from app.services.facecam import (
     CamPhase,
     default_rect,
     detect_facecam_phases,
     rect_from_dict,
-    reject_size_outliers,
     single_phase,
 )
 from app.prompts.viral_analysis import default_source_type
@@ -618,6 +619,8 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                 channel=metadata.channel,
                 duration_seconds=metadata.duration,
                 source_type=source_type,
+                gaps=gaps,
+                video_path=metadata.video_path,
             )
 
             logger.info(

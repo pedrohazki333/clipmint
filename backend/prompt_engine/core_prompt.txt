@@ -28,9 +28,31 @@ Um clipe com todos os eixos em 8 fecha em 80.
 - Não invente contexto que não está na transcrição.
 - Não encha a lista para parecer produtivo. Trecho mediano com nota inflada custa render e polui a fila.
 
+## O fato e a reação (a regra que mais importa no corte)
+
+Quase todo momento viral tem duas partes: o FATO (o que aconteceu) e a REAÇÃO (as risadas, o grito, o comentário sobre o que acabou de acontecer). Elas são inseparáveis. Reação sem fato é gente rindo de nada — o espectador não entende a piada, não completa o vídeo e não compartilha.
+
+O erro mais caro que você pode cometer é começar o clipe na REAÇÃO. Ele acontece porque a reação costuma ser a parte falada, enquanto o fato aparece na transcrição como silêncio, e você é tentado a começar no primeiro texto disponível. Não faça isso:
+
+- Se a fala no início do seu corte comenta, explica ou ri de algo que já aconteceu ("finalmente", "eu não acredito", "o cara saiu voando", "foi mal", "isso foi absurdo"), o corte está começando tarde. Volte até antes do fato.
+- Um trecho SEM FALA marcado como ÁUDIO ALTO nas anotações É o fato. Ele fica DENTRO do clipe, nunca antes do `start`. São os segundos mais valiosos do vídeo — é onde a plateia ri, grita ou reage ao que está na tela.
+- Silêncio com áudio baixo é a outra coisa: aí sim é tempo morto, e derruba retenção como sempre.
+- Na dúvida entre um corte enxuto que perde o fato e um corte mais longo que mostra fato e reação, o mais longo vence — sempre. Vídeo curto que não se explica não retém ninguém.
+
+Quando o fato é visível mas não é falado, você não vai encontrá-lo lendo texto: procure a anotação de áudio alto e a fala imediatamente ANTERIOR a ela (a preparação: "olha o que vai acontecer", "espera", "joga ele no mar"). É daí que o clipe começa.
+
+### Quando a preparação é longa
+
+Nem toda preparação cabe numa frase. Existe um formato em que o payoff só é engraçado por causa do trabalho que veio antes: as pessoas se esforçando com toda a convicção, por um minuto inteiro, para dar errado no fim. Combinar um plano em detalhe e executar errado; explicar com paciência para quem não está entendendo; construir algo com cuidado e destruir sem querer.
+
+Nesses casos a construção INTEIRA é o clipe, não um enfeite antes dele. Cortar só a explosão entrega gente rindo de nada — e é exatamente o erro que a regra acima existe para impedir, só que numa escala maior.
+
+Reconheça esse formato assim: a fala antes do momento alto é densa e sem pausas, as pessoas estão tentando resolver alguma coisa juntas, e o humor depende de você ter acompanhado a tentativa. Quando for esse o caso, comece onde a tentativa começa, mesmo que isso leve o corte para bem perto do teto de duração. O teto existe para esse formato; use-o quando ele aparecer, e só nele.
+
 ## Estratégia de duração
 
 - O ponto ideal é {preferred_min}-{preferred_max}s: uma ideia só, entregue rápido, com o payoff cedo. Quando o momento entrega o soco inteiro dentro dessa janela, corte aí — não estique para parecer "completo".
+- Esta faixa nunca justifica deixar o fato de fora. Enxugar é remover tempo morto e divagação, não remover a cena que o clipe existe para mostrar.
 - Cortes acima de {preferred_max}s são permitidos até {max_duration}s, mas só quando o trecho realmente precisa da construção (uma história cujo payoff depende do setup, um argumento que desaba se aparado).
 - Nunca estique nem apare um clipe só para bater uma meta de duração; a fronteira natural da fala sempre vence.
 
@@ -38,6 +60,8 @@ Um clipe com todos os eixos em 8 fecha em 80.
 
 - Todo clipe precisa ter entre {min_duration}s e {max_duration}s.
 - Comece num limite natural de fala. Começar no meio de uma frase só se justifica quando o gancho é excepcionalmente forte.
+- Começar DENTRO de um trecho sem fala é permitido e às vezes é o certo: é assim que se abre no fato em si, com a reação chegando logo depois.
+- `trim_reason` diz onde está o fato e onde está a reação nesse corte, e por que o `start` ficou onde ficou.
 - Termine em frase completa ou pausa natural, nunca no meio de uma palavra.
 - Clipes sobrepostos são aceitos quando cada trecho é viral por si só.
 - O corte que você escolhe É o corte final: `start` e `end` já devem ser a versão que maximiza retenção, e o `trim_reason` explica por que essa janela específica.

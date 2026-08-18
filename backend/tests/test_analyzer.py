@@ -356,3 +356,88 @@ def test_remap_words_follows_the_stitched_timeline():
     assert got[0]["start"] == pytest.approx(2.0)    # 10.0 - 8.0
     assert got[1]["start"] == pytest.approx(8.0)    # 6.0 (1º trecho) + 50.0-48.0
     assert total_duration(segments) == pytest.approx(12.0)
+
+
+# ─── O fato e a reação ─────────────────────────────────────────────────────────
+# Corte que começa depois do momento é o erro mais caro do sistema: entrega a
+# risada sem a piada. Ver services/audio_events.py.
+
+def test_rescue_move_o_inicio_para_antes_do_fato():
+    from app.services.analyzer import _rescue_event_starts
+    from app.services.audio_events import Gap
+
+    words = [
+        {"text": "Você", "start": 20.0, "end": 20.4},
+        {"text": "joga", "start": 20.5, "end": 21.0},
+        {"text": "no", "start": 22.5, "end": 22.8},
+        {"text": "mar.", "start": 24.3, "end": 26.0},
+        # buraco alto de 20s: o momento em si
+        {"text": "Finalmente!", "start": 46.0, "end": 47.0},
+    ]
+    gap = Gap(start=26.0, end=46.0, loudness=-14.0, speech_level=-27.0)
+    clips = [{"start": 46.0, "end": 90.0, "_segments": [], "trim_reason": "corte enxuto"}]
+
+    _rescue_event_starts("job", clips, [gap], words, max_duration=90)
+
+    assert clips[0]["start"] == 20.0            # volta para antes do fato
+    assert clips[0]["end"] == 90.0              # o fim não é tocado
+    assert "corte enxuto" in clips[0]["trim_reason"]
+    assert "reação sem o fato" in clips[0]["trim_reason"]
+
+
+def test_rescue_nao_toca_em_clipe_costurado():
+    """A lista de segmentos já define a linha do tempo — mexer no start a quebra."""
+    from app.services.analyzer import _rescue_event_starts
+    from app.services.audio_events import Gap
+
+    words = [{"text": "Finalmente!", "start": 46.0, "end": 47.0}]
+    gap = Gap(start=26.0, end=46.0, loudness=-14.0, speech_level=-27.0)
+    clips = [{"start": 46.0, "end": 90.0, "_segments": [(46.0, 60.0), (70.0, 90.0)]}]
+
+    _rescue_event_starts("job", clips, [gap], words, max_duration=90)
+
+    assert clips[0]["start"] == 46.0
+
+
+def test_rescue_sem_medicao_de_audio_e_no_op():
+    """Vídeo sem leitura de loudness segue analisado só pelo texto, como antes."""
+    from app.services.analyzer import _rescue_event_starts
+
+    clips = [{"start": 46.0, "end": 90.0, "_segments": []}]
+    _rescue_event_starts("job", clips, [], [], max_duration=90)
+    assert clips[0]["start"] == 46.0
+
+
+def test_prompt_anota_buraco_alto_para_o_modelo():
+    """O buraco barulhento chega ao Claude como momento, não como ausência."""
+    from app.services.audio_events import Gap
+
+    gap = Gap(start=3.6, end=30.0, loudness=-14.0, speech_level=-27.0)
+    user = build_analysis_prompt(
+        words=SAMPLE_WORDS, title="T", channel="C", duration_seconds=60,
+        threshold=7.0, min_duration=15, max_duration=90, gaps=[gap],
+    )
+
+    assert "ÁUDIO ALTO" in user
+    assert "parênteses duplos" in user       # a legenda explicando a anotação
+    assert "FATO" in user and "REAÇÃO" in user
+
+
+def test_prompt_sem_gaps_nao_menciona_anotacao():
+    user = build_analysis_prompt(
+        words=SAMPLE_WORDS, title="T", channel="C", duration_seconds=60,
+        threshold=7.0, min_duration=15, max_duration=90,
+    )
+    assert "parênteses duplos" not in user
+
+
+def test_core_prompt_manda_incluir_o_fato():
+    """A regra que evita o corte só-reação vive no system prompt."""
+    from prompt_engine.prompt_builder import PromptBuilder
+
+    system = PromptBuilder().build(min_duration=15, max_duration=90)
+
+    assert "O fato e a reação" in system
+    assert "ÁUDIO ALTO" in system
+    # E a estratégia de duração não pode mais justificar cortar o momento fora
+    assert "nunca justifica deixar o fato de fora" in system
