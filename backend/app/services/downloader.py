@@ -36,6 +36,39 @@ class VideoMetadata:
     audio_path: str
 
 
+# Erros que NUNCA passam por esperar: o vídeo não existe, é privado, exige
+# login, tem DRM. Retentar nesses casos só faz o job demorar minutos para
+# entregar a mesma resposta, e esconde do usuário qual é o problema de verdade.
+_PERMANENT_ERRORS = (
+    "video unavailable",
+    "private video",
+    "removed by the uploader",
+    "account associated with this video has been terminated",
+    "drm protected",
+    "sign in to confirm your age",
+    "join this channel",
+    "members-only",
+    "is not available in your country",
+    "requested format is not available",
+    "unsupported url",
+    "incomplete youtube id",
+)
+
+# Tentativas do download inteiro, cada uma re-extraindo a URL do zero. É isso
+# que cura o 403 do YouTube: a URL do googlevideo é assinada e a assinatura é
+# que caduca — baixar de novo com a MESMA URL não adianta, extrair outra sim.
+_DOWNLOAD_ATTEMPTS = 5
+# Espera antes de cada nova tentativa. Nos casos observados o bloqueio passou
+# em segundos ou poucos minutos, então a escada cobre bem sem pendurar o job.
+_DOWNLOAD_BACKOFF = (10, 30, 90, 240)
+
+
+def _is_permanent(message: str) -> bool:
+    """Se insistir neste erro é perda de tempo."""
+    lowered = message.lower()
+    return any(marker in lowered for marker in _PERMANENT_ERRORS)
+
+
 def _download_sync(youtube_url: str, video_path: str) -> dict:
     """Baixa o vídeo com yt-dlp (bloqueante — executar fora do event loop)."""
     # Até 4K: o crop 9:16 usa só ~56% da largura do vídeo — fonte 1080p vira
@@ -46,9 +79,59 @@ def _download_sync(youtube_url: str, video_path: str) -> dict:
         "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
+        # Retentativas DENTRO de uma tentativa, para o soluço curto não custar
+        # uma re-extração inteira. A camada de fora cuida do resto.
+        "retries": 10,
+        "fragment_retries": 10,
+        "extractor_retries": 3,
+        "file_access_retries": 5,
+        # Pedidos em pedaços: o YouTube corta transferência longa de uma vez só,
+        # e em pedaços o que falha é o pedaço, que o "retries" acima refaz.
+        "http_chunk_size": 10 * 1024 * 1024,
+        "continuedl": True,
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         return ydl.extract_info(youtube_url, download=True)
+
+
+async def _download_with_retry(job_id: str, youtube_url: str, video_path: str) -> dict:
+    """
+    Baixa o vídeo, insistindo enquanto o erro for do tipo que passa sozinho.
+
+    O YouTube derruba download com `HTTP Error 403: Forbidden` de tempos em
+    tempos, sem nada de errado no vídeo nem na ferramenta: em três casos
+    observados em 18/08/2026 o MESMO vídeo baixou inteiro minutos depois. Sem
+    esta camada cada um desses soluços marcava o job como erro e alguém tinha
+    que mandar rodar de novo à mão.
+
+    Cada tentativa re-extrai a URL do zero, que é o que realmente resolve — a
+    URL do googlevideo é assinada e o que caduca é a assinatura.
+
+    Erro permanente (vídeo privado, removido, com DRM) não é retentado: a
+    resposta seria a mesma e o usuário merece saber logo.
+    """
+    for attempt in range(1, _DOWNLOAD_ATTEMPTS + 1):
+        try:
+            return await asyncio.to_thread(_download_sync, youtube_url, video_path)
+        except yt_dlp.utils.DownloadError as exc:
+            message = str(exc)
+            if _is_permanent(message):
+                logger.error(f"[{job_id}] Download impossível: {message}")
+                raise
+            if attempt == _DOWNLOAD_ATTEMPTS:
+                logger.error(
+                    f"[{job_id}] Download falhou em {_DOWNLOAD_ATTEMPTS} tentativas"
+                )
+                raise
+            espera = _DOWNLOAD_BACKOFF[attempt - 1]
+            logger.warning(
+                f"[{job_id}] Download falhou (tentativa {attempt}/"
+                f"{_DOWNLOAD_ATTEMPTS}): {message.strip()[:160]} — "
+                f"nova tentativa em {espera}s"
+            )
+            await asyncio.sleep(espera)
+
+    raise RuntimeError("inalcançável")  # pragma: no cover
 
 
 async def _extract_audio(job_id: str, video_path: str, audio_path: str) -> None:
@@ -173,7 +256,7 @@ async def download_video(job_id: str, youtube_url: str) -> VideoMetadata:
         _clear_partial_merge(job_dir)
 
         logger.info(f"[{job_id}] Downloading video from: {youtube_url}")
-        info = await asyncio.to_thread(_download_sync, youtube_url, video_path)
+        info = await _download_with_retry(job_id, youtube_url, video_path)
 
         title = info.get("title", "Unknown Title")
         channel = info.get("uploader") or info.get("channel") or "Unknown Channel"

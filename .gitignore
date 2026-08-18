@@ -50,3 +50,6 @@ Thumbs.db
 
 # TypeScript incremental build info
 *.tsbuildinfo
+
+# Backups do SQLite (clipmint.db.bak-AAAAMMDD-HHMMSS)
+*.db.bak*

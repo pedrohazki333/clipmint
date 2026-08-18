@@ -1,4 +1,4 @@
-.PHONY: setup backend frontend dev backend-serve frontend-serve serve
+.PHONY: setup backend frontend dev backend-serve frontend-serve serve update-ytdlp
 
 # Porta do backend lida do .env da raiz — o mesmo arquivo que o next.config lê
 # para montar o proxy. Uma fonte só: o uvicorn e o proxy não têm como divergir.
@@ -33,3 +33,12 @@ frontend-serve:
 serve:
 	@echo "Modo desatendido (sem reload). Ctrl+C para parar."
 	@make -j2 backend-serve frontend-serve
+
+# ── Manutenção ────────────────────────────────────────────────────────────────
+# O YouTube muda a proteção de download de tempos em tempos e a versão estável
+# do yt-dlp no PyPI fica para trás — em 17/08/2026 ela parou de baixar QUALQUER
+# vídeo por dias. A correção sai antes na nightly, então é ela que o projeto
+# usa. Rodar quando um download falhar com 403 (é a primeira coisa a tentar).
+update-ytdlp:
+	cd backend && .venv/bin/pip install --upgrade --pre "yt-dlp[default]"
+	@cd backend && .venv/bin/python -c "import yt_dlp; print('yt-dlp agora:', yt_dlp.version.__version__)"

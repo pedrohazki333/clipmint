@@ -9,7 +9,17 @@ httpx==0.28.0
 anthropic==0.40.0
 assemblyai==0.64.33
 # 2026.3.17 e anteriores tomam HTTP 403 do YouTube (extração quebrada).
-yt-dlp>=2026.7.4
+# NIGHTLY, não a estável. Em 2026-08-17 o YouTube passou a exigir PO Token nos
+# clientes que o yt-dlp usa e a 2026.7.4 (última estável no PyPI) parou de
+# baixar QUALQUER vídeo: metadados vinham normalmente, os dados morriam com
+# "HTTP Error 403: Forbidden" depois dos primeiros 5-25MB. Testado: não era o
+# vídeo, não era cookies, não era limite de taxa, e todos os formatos falhavam.
+# A nightly do mesmo dia baixou na hora, na mesma qualidade.
+#
+# Bloqueio do YouTube é corrigido na nightly dias antes de virar release, então
+# é ela que precisa estar aqui. Instalar com:
+#   pip install --upgrade --pre "yt-dlp[default]"
+yt-dlp>=2026.8.17
 ffmpeg-python==0.2.0
 mediapipe==0.10.18
 opencv-python-headless==4.10.0.84
