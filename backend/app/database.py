@@ -49,6 +49,15 @@ _ADDED_COLUMNS = [
     ("clips", "weak_points_json", "TEXT"),
     ("clips", "trim_reason", "TEXT"),
     ("clips", "segments_json", "TEXT"),
+    # Desempenho real depois de postado. Sem DEFAULT de propósito: nulo
+    # significa "ainda não medido", que não é a mesma coisa que zero.
+    ("clips", "posted_at", "DATETIME"),
+    ("clips", "views", "INTEGER"),
+    ("clips", "completion_rate", "FLOAT"),
+    ("clips", "likes", "INTEGER"),
+    ("clips", "comments", "INTEGER"),
+    ("clips", "shares", "INTEGER"),
+    ("clips", "metrics_at", "DATETIME"),
 ]
 
 

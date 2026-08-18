@@ -11,7 +11,12 @@ from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.models import Clip, Job, Transcript
-from app.schemas import ClipResponse, ValidateClipRequest, ValidateClipResponse
+from app.schemas import (
+    ClipMetricsRequest,
+    ClipResponse,
+    ValidateClipRequest,
+    ValidateClipResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +148,48 @@ async def get_clip(
     clip = result.scalar_one_or_none()
     if not clip:
         raise HTTPException(status_code=404, detail="Clip not found")
+    return clip
+
+
+@router.put("/clips/{clip_id}/metrics", response_model=ClipResponse)
+async def set_clip_metrics(
+    clip_id: str,
+    payload: ClipMetricsRequest,
+    db: AsyncSession = Depends(get_db),
+) -> Clip:
+    """
+    Registra o desempenho real de um clipe já postado.
+
+    A nota de viralidade é uma previsão feita antes de o clipe existir; estes
+    números são o que aconteceu depois. Eles são a única forma de o sistema
+    descobrir que um clipe de nota alta rendeu mal — nenhuma análise de texto,
+    áudio ou imagem consegue saber isso sozinha.
+
+    A atualização é parcial: os campos ausentes ficam como estavam, então dá
+    para lançar as views hoje e a retenção quando ela aparecer no painel.
+    `metrics_at` é carimbado a cada chamada, porque views sem data de coleta
+    não são comparáveis entre clipes de idades diferentes.
+    """
+    result = await db.execute(select(Clip).where(Clip.id == clip_id))
+    clip = result.scalar_one_or_none()
+    if not clip:
+        raise HTTPException(status_code=404, detail="Clip not found")
+
+    changed = payload.model_dump(exclude_none=True)
+    if not changed:
+        raise HTTPException(
+            status_code=400,
+            detail="Informe ao menos uma métrica (views, completion_rate, likes, comments, shares ou posted_at).",
+        )
+
+    for field, value in changed.items():
+        setattr(clip, field, value)
+    clip.metrics_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    await db.refresh(clip)
+
+    logger.info(f"Clip {clip_id}: métricas registradas ({', '.join(changed)})")
     return clip
 
 

@@ -113,6 +113,31 @@ class ClipResponse(BaseModel):
     file_path: Optional[str]
     file_size_bytes: Optional[int]
     created_at: datetime
+    # Desempenho real depois de postado. Nulo = ainda não medido.
+    posted_at: Optional[datetime] = None
+    views: Optional[int] = None
+    completion_rate: Optional[float] = None
+    likes: Optional[int] = None
+    comments: Optional[int] = None
+    shares: Optional[int] = None
+    metrics_at: Optional[datetime] = None
+
+
+class ClipMetricsRequest(BaseModel):
+    """
+    Desempenho real de um clipe já postado.
+
+    Todos os campos são opcionais e aplicados um a um: dá para registrar só as
+    views hoje e a retenção amanhã sem apagar o que já estava lá. Passar um
+    campo com valor nulo não limpa nada — para isso existe o DELETE.
+    """
+
+    posted_at: Optional[datetime] = None
+    views: Optional[int] = Field(None, ge=0)
+    completion_rate: Optional[float] = Field(None, ge=0.0, le=1.0)
+    likes: Optional[int] = Field(None, ge=0)
+    comments: Optional[int] = Field(None, ge=0)
+    shares: Optional[int] = Field(None, ge=0)
 
     model_config = {"from_attributes": True}
 

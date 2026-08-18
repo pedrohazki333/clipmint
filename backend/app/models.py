@@ -178,4 +178,21 @@ class Clip(Base):
     file_size_bytes = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
+    # ── Desempenho real depois de postado ─────────────────────────────────────
+    # A nota é uma previsão; estes campos são o que aconteceu. Sem eles o
+    # sistema não tem como saber que um 8.4 rendeu mal, e o few-shot dinâmico
+    # (prompt_engine/) fica aprendendo só com rótulo manual. Nulo = ainda não
+    # medido, que é diferente de zero.
+    posted_at = Column(DateTime(timezone=True), nullable=True)
+    views = Column(Integer, nullable=True)
+    # Fração de quem chegou ao fim (0-1). É o sinal que o algoritmo mais pesa,
+    # e o único que distingue "muita gente viu" de "muita gente ficou".
+    completion_rate = Column(Float, nullable=True)
+    likes = Column(Integer, nullable=True)
+    comments = Column(Integer, nullable=True)
+    shares = Column(Integer, nullable=True)
+    # Quando os números acima foram coletados — views de um clipe de 3 dias e
+    # de um de 3 meses não são comparáveis sem isto.
+    metrics_at = Column(DateTime(timezone=True), nullable=True)
+
     job = relationship("Job", back_populates="clips")
