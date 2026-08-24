@@ -259,3 +259,4 @@ def test_anotacao_avisa_onde_a_construcao_comeca():
 def test_anotacao_de_evento_curto_nao_menciona_construcao():
     line = format_gap(LAUGHTER)
     assert "de construção" not in line
+

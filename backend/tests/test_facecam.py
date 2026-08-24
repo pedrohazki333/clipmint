@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from app.services.facecam import (
+    _absorb_floating_boxes,
     _absorb_size_outliers,
     _best_box,
     _merge_equivalent_phases,
@@ -18,6 +19,7 @@ from app.services.facecam import (
     _TILE_SPAN,
     _cam_track,
     _dedupe,
+    _edge_gap,
     _tiles,
     _group_spans,
     _box_from_face,
@@ -735,3 +737,64 @@ def test_todas_fora_de_escala_ficam_como_estao():
     ]
     out = _absorb_size_outliers(phases)
     assert all(p.rect.w > 0.4 for p in out)
+
+
+# ─── Ancoragem na borda do frame ──────────────────────────────────────────────
+
+def test_absorve_rosto_do_jogo_solto_no_meio_do_frame():
+    """
+    O caso do clipe e7fc97eb: os generais da cutscene de "Senhor presidente"
+    persistem tanto quanto o streamer e passam por "a cam se moveu para cá".
+    A caixa deles flutua no meio da tela — a da cam encosta no canto.
+    """
+    phases = [
+        _phase(0.0, 11.0, 0.006, 0.003, 0.247, 0.250),    # a cam de verdade
+        _phase(11.0, 13.2, 0.528, 0.173, 0.303, 0.283),   # os generais
+        _phase(13.2, 81.6, 0.006, 0.003, 0.247, 0.250),
+        _phase(81.6, 97.1, 0.528, 0.173, 0.303, 0.283),
+        _phase(97.1, 105.9, 0.006, 0.003, 0.247, 0.250),
+    ]
+    out = _absorb_floating_boxes(phases)
+
+    assert len(out) == 1, "sem caixa solta o clipe inteiro é uma fase só"
+    assert out[0].rect.x == 0.006 and out[0].rect.y == 0.003
+    assert (out[0].start, out[0].end) == (0.0, 105.9)
+
+
+def test_cam_em_outro_canto_passa_intacta():
+    """Troca de POV em vídeo editado: cada cam num canto, todas ancoradas."""
+    phases = [
+        _phase(0.0, 20.0, 0.01, 0.01, 0.20, 0.25),
+        _phase(20.0, 40.0, 0.79, 0.74, 0.20, 0.25),
+    ]
+    out = _absorb_floating_boxes(phases)
+
+    assert len(out) == 2
+    assert out[1].rect.x == 0.79
+    assert all(p.rect.method != "phase_fix" for p in out), "derrubou cam boa"
+
+
+def test_cam_dominante_solta_no_meio_nao_e_derrubada():
+    """
+    Layout esquisito, com a cam de verdade longe das bordas: a regra só sabe
+    derrubar deslocamento suspeito, nunca o enquadramento que domina o trecho.
+    """
+    phases = [
+        _phase(0.0, 40.0, 0.40, 0.30, 0.20, 0.25),
+        _phase(40.0, 50.0, 0.45, 0.35, 0.20, 0.25),
+    ]
+    out = _absorb_floating_boxes(phases)
+
+    assert len(out) == 2
+    assert all(p.rect.method != "phase_fix" for p in out)
+
+
+def test_uma_fase_so_nao_e_avaliada():
+    phases = [_phase(0.0, 30.0, 0.40, 0.30, 0.20, 0.25)]
+    assert _absorb_floating_boxes(phases) == phases
+
+
+def test_folga_medida_e_a_da_borda_mais_proxima():
+    """Encostar num canto basta — o lado oposto fica longe por construção."""
+    assert _edge_gap(FacecamRect(x=0.006, y=0.003, w=0.247, h=0.250)) == pytest.approx(0.003)
+    assert _edge_gap(FacecamRect(x=0.528, y=0.173, w=0.303, h=0.283)) == pytest.approx(0.169)

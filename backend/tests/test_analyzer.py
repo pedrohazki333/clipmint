@@ -334,6 +334,142 @@ def test_parse_segments_needs_at_least_two():
     assert parse_segments([["a", "b"], [1, 2]]) == []
 
 
+# ─── Compilado ────────────────────────────────────────────────────────────────
+
+# Os seis trechos do compilado real do alanzoka (Grain Rot), na ordem em que
+# aparecem no vídeo publicado. Vieram de 64min, 6min, 71min, 94min, 46min e
+# 51min da fonte: a ordem é editorial, abre pela risada mais forte.
+REAL_COMPILATION = [
+    [3843.4, 3851.5],
+    [388.8, 404.5],
+    [4291.8, 4313.8],
+    [5653.6, 5675.5],
+    [2780.6, 2800.6],
+    [3099.0, 3139.2],
+]
+
+
+def test_compilation_keeps_the_editorial_order():
+    """Compilado não é cronologia: a ordem entregue pelo modelo é preservada."""
+    from app.services.analyzer import parse_segments
+
+    got = parse_segments(REAL_COMPILATION, chronological=False, max_total=140.0)
+
+    assert got == [(a, b) for a, b in REAL_COMPILATION]
+
+
+def test_chronological_rule_would_gut_the_real_compilation():
+    """
+    Por que o modo precisa da flag.
+
+    Com a regra do Siege, tudo que "volta no tempo" é descartado — o compilado
+    real perderia quatro dos seis trechos e viraria outro vídeo.
+    """
+    from app.services.analyzer import parse_segments
+
+    got = parse_segments(REAL_COMPILATION, max_total=140.0)
+
+    assert got == [(3843.4, 3851.5), (4291.8, 4313.8), (5653.6, 5675.5)]
+
+
+def test_compilation_merges_halves_of_one_moment():
+    """
+    Caso real: o modelo fatiou um bloco contínuo e inverteu as metades.
+
+    [5575.3-5600.1] seguido de [5547.3-5575.3] é um vídeo tocando de trás para
+    frente. Encostados na fonte = mesmo acontecimento; sobra um trecho só, e um
+    trecho só não é costura — o clipe sai contínuo, que é o certo aqui.
+    """
+    from app.services.analyzer import parse_segments
+
+    assert parse_segments([[5575.3, 5600.1], [5547.3, 5575.3]], chronological=False) == []
+
+
+def test_compilation_merge_keeps_the_other_moments():
+    """Errar um par não pode derrubar o compilado inteiro."""
+    from app.services.analyzer import parse_segments
+
+    got = parse_segments(
+        [[5575.3, 5600.1], [5547.3, 5575.3], [388.8, 404.5]],
+        chronological=False,
+        max_total=140.0,
+    )
+
+    assert got == [(5547.3, 5600.1), (388.8, 404.5)]
+
+
+def test_siege_keeps_neighbouring_segments():
+    """Num ace os trechos são vizinhos de propósito — a caminhada entre abates."""
+    from app.services.analyzer import parse_segments
+
+    got = parse_segments([[1820.4, 1834.0], [1851.2, 1863.5], [1879.0, 1892.4]])
+
+    assert len(got) == 3
+
+
+def test_compilation_still_bars_overlapping_segments():
+    """Fora de ordem é editorial; sobreposto é o mesmo material duas vezes."""
+    from app.services.analyzer import parse_segments
+
+    got = parse_segments(
+        [[100.0, 130.0], [10.0, 40.0], [120.0, 150.0]], chronological=False
+    )
+
+    assert got == [(100.0, 130.0), (10.0, 40.0)]
+
+
+def test_compilation_rule_replaces_the_siege_rule_in_the_prompt():
+    """
+    As duas regras usam `segments`, mas pedem coisas opostas quanto à ordem.
+
+    Mandar as duas juntas deixaria o modelo escolher qual seguir.
+    """
+    from app.prompts.viral_analysis import _segments_rule
+
+    compilation = _segments_rule("siege", "compilation", 70)
+
+    assert "Compilado" in compilation
+    assert "ace" not in compilation
+    assert "ordem cronológica" not in _segments_rule("siege", "individual", 70).replace(
+        "Os trechos vêm em ordem cronológica e não se sobrepõem.", ""
+    )
+
+
+def test_compilation_mode_changes_the_task_itself():
+    """
+    Pedir compilado só na regra do campo não bastou.
+
+    No primeiro job em modo compilado o modelo devolveu seis clipes individuais
+    porque a TAREFA continuava mandando "encontre TODOS os trechos" e "prefira
+    cortes de 25-40s" — o oposto de montar um vídeo de 60s com vários pedaços.
+    """
+    from app.prompts.viral_analysis import _task_directive
+
+    task = _task_directive("gameplay", "compilation", 70, 25, 40, 90)
+
+    assert "COMPILADOS" in task
+    assert "TODOS os trechos" not in task
+    assert "25-40s" not in task
+
+
+def test_individual_mode_keeps_the_usual_task():
+    from app.prompts.viral_analysis import _task_directive
+
+    task = _task_directive("gameplay", "individual", 70, 25, 40, 90)
+
+    assert "TODOS os trechos" in task
+    assert "25-40s" in task
+    assert "COMPILADOS" not in task
+
+
+def test_individual_mode_asks_for_no_segments_outside_siege():
+    """Modo individual fora do Siege não fala de costura nenhuma."""
+    from app.prompts.viral_analysis import _segments_rule
+
+    assert _segments_rule("gameplay", "individual", 70) == ""
+    assert _segments_rule("podcast", "individual", 70) == ""
+
+
 def test_remap_words_follows_the_stitched_timeline():
     """
     A legenda tem que acompanhar a emenda.
@@ -441,3 +577,19 @@ def test_core_prompt_manda_incluir_o_fato():
     assert "ÁUDIO ALTO" in system
     # E a estratégia de duração não pode mais justificar cortar o momento fora
     assert "nunca justifica deixar o fato de fora" in system
+
+
+def test_split_de_janela_absurda_continua_absurdo():
+    """
+    Por que existe teto de duração POR PARTE, e não só a divisão.
+
+    O divisor corta em DUAS partes, só isso. Um compilado recusado virou um
+    intervalo bruto de 1950s; dividido, deu duas partes de 16 minutos, e sem
+    teto o render aceitou as duas.
+    """
+    from app.services.analyzer import _split_clip
+
+    parts = _split_clip({"start": 321.9, "end": 2272.0}, [], 120)
+
+    assert len(parts) == 2
+    assert all(part["end"] - part["start"] > 120 for part in parts)

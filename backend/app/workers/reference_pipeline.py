@@ -1,20 +1,34 @@
 """
-Orquestrador do pipeline de aprendizado por referência.
+Orquestradores do aprendizado por referência — os dois modos.
 
-Fluxo:
+MODO ALINHADO (`run_reference_pipeline`), quando se tem a URL do original:
   queued → downloading_source → transcribing → aligning → analyzing → done
-  (qualquer etapa pode ir para: error)
 
-Dado a URL do vídeo original + o arquivo do clipe viral, este worker:
   1. Baixa o vídeo original (yt-dlp) e extrai seu áudio.
   2. Extrai o áudio do clipe enviado.
   3. Transcreve os dois (AssemblyAI, word-level).
   4. Alinha o clipe dentro do original → intervalo [source_start, source_end].
   5. Pede ao Claude a análise reversa de por que aquele corte viralizou.
 
-O resultado NÃO é publicado como exemplo few-shot automaticamente — fica
-aguardando confirmação do usuário (que pode ajustar o intervalo e informar a
-performance real) via PATCH no router de referências.
+MODO SOLTO (`run_standalone_pipeline`), quando só existe o arquivo do clipe:
+  queued → extracting → transcribing → watching → analyzing → done
+
+  1. Mede a duração e extrai o áudio do clipe.
+  2. Transcreve (AssemblyAI, word-level).
+  3. Pericia o clipe: quadros lidos pela visão, curva de loudness e cortes de
+     cena (services/clip_forensics.py).
+  4. Pede ao Claude a síntese das quatro evidências.
+
+  Sem o original não há o que alinhar, então `source_start`/`source_end` são
+  preenchidos com 0 e a duração do clipe: o corte É o clipe inteiro. Isso não é
+  um remendo para o schema — é o fato do modo — e faz o confirm() publicar o
+  exemplo sem precisar saber de qual pipeline ele veio.
+
+Em nenhum dos dois o resultado vira exemplo few-shot sozinho: fica aguardando
+confirmação do usuário (que informa a performance real) via PATCH e POST
+/confirm no router de referências.
+
+Qualquer etapa dos dois pode ir para: error.
 """
 
 import json
@@ -29,9 +43,10 @@ from app.database import AsyncSessionLocal
 from app.models import ReferenceExample
 from app.services.aligner import align_clip_to_source
 from app.services.downloader import download_video
-from app.services.reference_analyzer import analyze_reference
+from app.services.clip_forensics import gather_evidence
+from app.services.reference_analyzer import analyze_reference, analyze_standalone_clip
 from app.services.transcriber import transcribe_audio
-from app.utils.ffmpeg import run_ffmpeg
+from app.utils.ffmpeg import get_duration, run_ffmpeg
 
 logger = logging.getLogger(__name__)
 
@@ -169,4 +184,77 @@ async def run_reference_pipeline(reference_id: str) -> None:
 
     except Exception as e:
         logger.error(f"[{reference_id}] Reference pipeline failed: {e}", exc_info=True)
+        await _update(reference_id, "error", error_message=str(e))
+
+
+async def run_standalone_pipeline(reference_id: str) -> None:
+    """Executa a perícia de um clipe viral que chegou sem o vídeo de origem."""
+    logger.info(f"[{reference_id}] Standalone reference pipeline started")
+
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(ReferenceExample).where(ReferenceExample.id == reference_id)
+            )
+            ref = result.scalar_one_or_none()
+            if not ref:
+                logger.error(f"[{reference_id}] Reference not found at pipeline start")
+                return
+            clip_path = ref.clip_path
+            title = ref.source_title or ""
+            channel = ref.source_channel or ""
+            source_type = ref.source_type or "podcast"
+            notas = ref.notas or ""
+
+        # ── 1. Duração e áudio ─────────────────────────────────────────────────
+        await _update(reference_id, "extracting")
+        duration = await get_duration(clip_path)
+        clip_audio = await _extract_clip_audio(reference_id, clip_path)
+
+        # ── 2. Transcrição ─────────────────────────────────────────────────────
+        await _update(reference_id, "transcribing", clip_duration=duration)
+        transcription = await transcribe_audio(f"{reference_id}_clip", clip_audio)
+        words = [asdict(w) for w in transcription.words]
+
+        # ── 3. Perícia: imagem, som e cortes ───────────────────────────────────
+        await _update(reference_id, "watching", language=transcription.language)
+        evidence = await gather_evidence(
+            reference_id=reference_id,
+            clip_path=clip_path,
+            audio_path=clip_audio,
+            words=words,
+            duration=duration,
+        )
+
+        # ── 4. Síntese ─────────────────────────────────────────────────────────
+        await _update(reference_id, "analyzing")
+        analysis, forensics = await analyze_standalone_clip(
+            reference_id=reference_id,
+            evidence=evidence,
+            title=title,
+            channel=channel,
+            source_type=source_type,
+            language=transcription.language or "",
+            notas=notas,
+        )
+
+        # ── 5. Finaliza ────────────────────────────────────────────────────────
+        # O corte é o clipe inteiro: não há original de onde ele tenha sido
+        # recortado, então o intervalo vai de 0 à duração.
+        await _update(
+            reference_id,
+            "done",
+            source_start=0.0,
+            source_end=duration,
+            analysis_json=json.dumps(asdict(analysis), ensure_ascii=False),
+            forensics_json=json.dumps(forensics, ensure_ascii=False),
+            opening_phrase=_opening_phrase(words, 0.0),
+            transcript_excerpt=" ".join(w["text"] for w in words[:60]),
+        )
+        logger.info(f"[{reference_id}] Standalone reference pipeline complete!")
+
+    except Exception as e:
+        logger.error(
+            f"[{reference_id}] Standalone reference pipeline failed: {e}", exc_info=True
+        )
         await _update(reference_id, "error", error_message=str(e))

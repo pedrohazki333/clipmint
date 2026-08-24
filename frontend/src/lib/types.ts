@@ -5,6 +5,18 @@ export type LayoutMode = "cover" | "streamer";
 /** Muda a rubrica da análise e define a conta no cronograma de postagem. */
 export type SourceType = "podcast" | "gameplay" | "siege";
 
+/**
+ * "compilation" PEDE um compilado (vários momentos costurados num vídeo só).
+ * Não achando material que se sustente, o backend entrega clipes individuais.
+ */
+export type ClipMode = "individual" | "compilation";
+
+/**
+ * O que fazer com os trechos que o usuário indicou à mão.
+ * "only" corta apenas eles; "plus" mantém a análise procurando outros além.
+ */
+export type ManualMode = "only" | "plus";
+
 /** Eixos da rubrica de viralidade, 0–10 cada. */
 export const SCORE_AXES = [
   { key: "hook_score", label: "Gancho", hint: "Força nos 3 primeiros segundos" },
@@ -45,6 +57,7 @@ export interface Job {
   subtitle_mode: SubtitleMode;
   layout_mode: LayoutMode;
   source_type: SourceType;
+  clip_mode: ClipMode;
   facecam_rect: FacecamRect | null;
   status: JobStatus;
   error_message: string | null;
@@ -94,17 +107,38 @@ export interface CreateJobPayload {
   layout_mode?: LayoutMode;
   /** Omitido = inferido do layout (streamer→gameplay, cover→podcast). */
   source_type?: SourceType;
+  /** Omitido = "individual" (um clipe por momento, como sempre). */
+  clip_mode?: ClipMode;
+  /** Trechos indicados à mão, como digitados ("3:24 - 4:10, 12:05 - 12:40"). */
+  manual_clips?: string;
+  /** Só faz sentido junto de manual_clips. Omitido = "only". */
+  manual_mode?: ManualMode;
   /** Só no modo streamer; omitido = detecção automática da webcam. */
   facecam_rect?: FacecamRect;
 }
 
 // ─── Referências (aprender com clipe viral de outro criador) ──────────────────
 
+/**
+ * Como a referência foi aprendida.
+ *
+ * "aligned"    — veio com a URL do vídeo original e o corte foi localizado
+ *                dentro dele. Sabe o que ficou de fora.
+ * "standalone" — só o arquivo do clipe (o caso do TikTok). O clipe é periciado
+ *                por si: fala, som, imagem e cortes.
+ */
+export type ReferenceKind = "aligned" | "standalone";
+
 export type ReferenceStatus =
   | "queued"
+  // modo alinhado
   | "downloading_source"
-  | "transcribing"
   | "aligning"
+  // modo standalone
+  | "extracting"
+  | "watching"
+  // comuns aos dois
+  | "transcribing"
   | "analyzing"
   | "done"
   | "error";
@@ -120,8 +154,45 @@ export interface ReferenceAnalysis {
   why_this_cut: string;
 }
 
+export interface ClipBeat {
+  start: number;
+  end: number;
+  role: string;
+  what: string;
+}
+
+export interface ClipHookBreakdown {
+  first_frame?: string | null;
+  first_line?: string | null;
+  on_screen_text?: string | null;
+  mechanism?: string | null;
+  seconds_to_promise?: number | null;
+}
+
+/** A perícia detalhada de um clipe standalone (backend: forensics_json). */
+export interface ClipForensics {
+  hook_breakdown?: ClipHookBreakdown | null;
+  beats?: ClipBeat[] | null;
+  audio_role?: string | null;
+  visual_style?: string | null;
+  text_strategy?: string | null;
+  edit_rhythm?: string | null;
+  retention_devices?: string[] | null;
+  share_trigger?: string | null;
+  comment_bait?: string | null;
+  ending?: string | null;
+  /** Regras de escolha de corte — o que entra no prompt do analisador. */
+  transferable_rules?: string[] | null;
+  /** Lições de montagem: verdadeiras sobre o clipe, mas fora do alcance de quem só corta. */
+  production_notes?: string[] | null;
+  do_not_copy?: string[] | null;
+  evidence_gaps?: string[] | null;
+}
+
 export interface Reference {
   id: string;
+  kind: ReferenceKind;
+  source_type: SourceType;
   source_url: string;
   source_title: string | null;
   source_channel: string | null;
@@ -132,6 +203,8 @@ export interface Reference {
   alignment_confidence: number | null;
   clip_duration: number | null;
   analysis: ReferenceAnalysis | null;
+  /** Só no modo standalone. */
+  forensics: ClipForensics | null;
   opening_phrase: string | null;
   transcript_excerpt: string | null;
   performance: Performance | null;

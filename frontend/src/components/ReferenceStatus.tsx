@@ -1,38 +1,56 @@
-import type { ReferenceStatus } from "@/lib/types";
+import type { ReferenceKind, ReferenceStatus } from "@/lib/types";
 
-const STEPS: { key: ReferenceStatus; label: string }[] = [
-  { key: "downloading_source", label: "Baixando" },
-  { key: "transcribing", label: "Transcrição" },
-  { key: "aligning", label: "Localizando" },
-  { key: "analyzing", label: "Análise IA" },
-  { key: "done", label: "Pronto" },
-];
+/**
+ * As etapas de cada modo (ver ReferenceKind em lib/types.ts).
+ *
+ * São listas separadas porque os dois pipelines não passam pelos mesmos
+ * lugares: o alinhado baixa o vídeo original e procura o corte dentro dele; o
+ * standalone não tem original nenhum e, em vez disso, olha o clipe — quadro a
+ * quadro, junto com a curva de som.
+ */
+const STEPS: Record<ReferenceKind, { key: ReferenceStatus; label: string }[]> = {
+  aligned: [
+    { key: "downloading_source", label: "Baixando" },
+    { key: "transcribing", label: "Transcrição" },
+    { key: "aligning", label: "Localizando" },
+    { key: "analyzing", label: "Análise IA" },
+    { key: "done", label: "Pronto" },
+  ],
+  standalone: [
+    { key: "extracting", label: "Preparando" },
+    { key: "transcribing", label: "Transcrição" },
+    { key: "watching", label: "Assistindo" },
+    { key: "analyzing", label: "Perícia" },
+    { key: "done", label: "Pronto" },
+  ],
+};
 
-const STEP_ORDER: ReferenceStatus[] = [
-  "queued",
-  "downloading_source",
-  "transcribing",
-  "aligning",
-  "analyzing",
-  "done",
-];
+const STEP_ORDER: Record<ReferenceKind, ReferenceStatus[]> = {
+  aligned: ["queued", "downloading_source", "transcribing", "aligning", "analyzing", "done"],
+  standalone: ["queued", "extracting", "transcribing", "watching", "analyzing", "done"],
+};
 
 const STAGE_PROGRESS: Record<ReferenceStatus, number> = {
   queued: 4,
   downloading_source: 15,
+  extracting: 12,
   transcribing: 45,
   aligning: 68,
-  analyzing: 82,
+  // Ler os quadros é a etapa mais longa do modo standalone: extração, uma
+  // chamada de visão e a detecção de cortes.
+  watching: 70,
+  analyzing: 86,
   done: 100,
   error: 0,
 };
 
 interface Props {
   status: ReferenceStatus;
+  kind?: ReferenceKind;
   errorMessage?: string | null;
 }
 
-export default function ReferenceStatus({ status, errorMessage }: Props) {
+export default function ReferenceStatus({ status, kind = "aligned", errorMessage }: Props) {
   if (status === "error") {
     return (
       <div className="rounded-lg bg-red-900/30 border border-red-800 p-4">
@@ -42,7 +60,9 @@ export default function ReferenceStatus({ status, errorMessage }: Props) {
     );
   }
 
-  const currentIdx = STEP_ORDER.indexOf(status);
+  const steps = STEPS[kind];
+  const order = STEP_ORDER[kind];
+  const currentIdx = order.indexOf(status);
   const progress = STAGE_PROGRESS[status] ?? 0;
   const isRunning = status !== "done";
 
@@ -51,7 +71,7 @@ export default function ReferenceStatus({ status, errorMessage }: Props) {
       <div>
         <div className="flex items-center justify-between mb-1.5">
           <span className="text-xs font-medium text-gray-400">
-            {STEPS.find((s) => s.key === status)?.label ?? "Na fila"}
+            {steps.find((s) => s.key === status)?.label ?? "Na fila"}
           </span>
           <span className="text-xs font-semibold text-emerald-400">{Math.round(progress)}%</span>
         </div>
@@ -66,8 +86,8 @@ export default function ReferenceStatus({ status, errorMessage }: Props) {
       </div>
 
       <div className="flex items-center gap-1">
-        {STEPS.map((step, i) => {
-          const stepIdx = STEP_ORDER.indexOf(step.key);
+        {steps.map((step, i) => {
+          const stepIdx = order.indexOf(step.key);
           const isCompleted = currentIdx > stepIdx;
           const isActive = currentIdx === stepIdx;
 
@@ -91,7 +111,7 @@ export default function ReferenceStatus({ status, errorMessage }: Props) {
                   {step.label}
                 </span>
               </div>
-              {i < STEPS.length - 1 && (
+              {i < steps.length - 1 && (
                 <div className={`w-8 h-0.5 mb-4 ${currentIdx > stepIdx ? "bg-emerald-700" : "bg-gray-800"}`} />
               )}
             </div>

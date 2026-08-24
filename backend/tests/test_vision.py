@@ -187,3 +187,74 @@ def test_scene_summary_sem_facecam():
 def test_keyframe_guarda_o_instante():
     f = Keyframe(time=3032.8, jpeg=b"\xff\xd8")
     assert f.time == 3032.8
+
+
+# ─── Quais janelas a visão olha ───────────────────────────────────────────────
+
+def _strong(start, above_speech):
+    """Evento forte o bastante para a visão (>= +6 dB e >= 4s)."""
+    return Gap(start=start, end=start + 6.0, loudness=-24.3 + above_speech,
+               speech_level=-24.3)
+
+
+def test_visao_escolhe_os_eventos_mais_fortes_do_video_inteiro(monkeypatch):
+    """
+    A seleção é por INTENSIDADE, não por ordem.
+
+    Com fatia cronológica, um vídeo de horas era olhado só no começo: medido no
+    do alanzoka (110 min, 74 eventos fortes), as 20 janelas paravam em 52:30 e
+    a metade de trás não era vista por ninguém.
+    """
+    from app.services import scene_events
+
+    gaps = [_strong(t, db) for t, db in
+            ((30.0, 6.5), (60.0, 7.0), (90.0, 6.2), (6000.0, 18.0), (6400.0, 15.0))]
+
+    seen = []
+
+    async def fake_look_many(job_id, video_path, windows, questions):
+        seen.extend(windows)
+        return [None] * len(windows)
+
+    monkeypatch.setattr(scene_events.vision, "look_many", fake_look_many)
+    monkeypatch.setattr(scene_events.settings, "vision_max_windows", 2)
+
+    asyncio.run(scene_events.describe_events("job", "/v.mp4", gaps))
+
+    starts = sorted(round(w[0] + scene_events._MARGIN) for w in seen)
+    assert starts == [6000, 6400]
+
+
+def test_visao_entrega_as_janelas_em_ordem_cronologica(monkeypatch):
+    """Escolher por intensidade não pode embaralhar a linha do tempo."""
+    from app.services import scene_events
+
+    gaps = [_strong(t, db) for t, db in ((100.0, 9.0), (50.0, 20.0), (200.0, 12.0))]
+    seen = []
+
+    async def fake_look_many(job_id, video_path, windows, questions):
+        seen.extend(windows)
+        return [None] * len(windows)
+
+    monkeypatch.setattr(scene_events.vision, "look_many", fake_look_many)
+    monkeypatch.setattr(scene_events.settings, "vision_max_windows", 3)
+
+    asyncio.run(scene_events.describe_events("job", "/v.mp4", gaps))
+
+    assert seen == sorted(seen)
+
+
+def test_pergunta_procura_o_que_muda_e_nao_o_cenario():
+    """
+    A pergunta é o que decide se o gag visual é achado.
+
+    Medido na janela [3840-3850] do vídeo do alanzoka, com os mesmos quadros:
+    "descreva o que se vê" devolveu "sem evento marcante visível", enquanto
+    perguntar o que MUDA achou o personagem de outro jogador atravessando a
+    tela — que era o clipe inteiro.
+    """
+    from app.services.scene_events import _QUESTION
+
+    assert "MUDA" in _QUESTION
+    assert "outros jogadores" in _QUESTION
+    assert "Descreva o que se vê" not in _QUESTION

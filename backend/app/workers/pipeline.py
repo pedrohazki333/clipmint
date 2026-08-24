@@ -36,7 +36,7 @@ from app.database import AsyncSessionLocal
 from app.models import Job, Transcript, Clip
 from app.services.downloader import VideoMetadata, download_video, ensure_media
 from app.services.transcriber import transcribe_audio
-from app.services.analyzer import analyze_virality
+from app.services.analyzer import AnalysisResult, ViralClip, analyze_virality
 from app.services.audio_events import detect_gaps
 from app.services.scene_events import describe_events
 from app.services.clipper import cut_and_crop, cut_and_stack
@@ -217,8 +217,51 @@ async def _drop_dead_candidates(job_id: str, video_path: str, clips: list) -> li
     return kept
 
 
+def _manual_clips(
+    ranges: list[tuple[float, float]], clip_mode: str
+) -> list[ViralClip]:
+    """
+    Os trechos que o usuário marcou, já no formato que o render consome.
+
+    Sem análise não há título nem hook, e o banner some sozinho quando o texto
+    é vazio (ver clipper) — melhor um clipe limpo que um banner inventado.
+
+    Em modo compilado os trechos viram UM clipe costurado, na ordem digitada:
+    quem escreveu "12:05-12:40, 3:24-4:10" está pedindo para abrir pelo trecho
+    dos 12 minutos. Fora dele, cada trecho é um clipe.
+    """
+    if not ranges:
+        return []
+
+    common = dict(
+        score=10.0,
+        hook="",
+        suggested_title="",
+        reason="Trecho indicado manualmente.",
+        tags=["manual"],
+        verdict="post",
+    )
+
+    if clip_mode == "compilation" and len(ranges) >= 2:
+        return [
+            ViralClip(
+                start=min(start for start, _ in ranges),
+                end=max(end for _, end in ranges),
+                segments=list(ranges),
+                trim_reason=f"Compilado de {len(ranges)} trecho(s) indicados à mão.",
+                **common,
+            )
+        ]
+
+    return [ViralClip(start=start, end=end, **common) for start, end in ranges]
+
+
 def _banner_text(hook: str | None, suggested_title: str | None) -> str:
-    """Texto da pílula vermelha do layout 'cover'."""
+    """
+    Texto do banner de título — a pílula do layout 'cover' e o retângulo do
+    'streamer'. O hook é escrito para ser lido de relance; o título sugerido é
+    a reserva para quando a análise não devolveu hook.
+    """
     return hook or suggested_title or ""
 
 
@@ -360,7 +403,15 @@ async def _create_clip_records(
                 job_id=job_id,
                 start_time=vc.start,
                 end_time=vc.end,
-                duration=vc.end - vc.start,
+                # Costurado: a duração do VÍDEO é a soma dos trechos, não a
+                # janela que eles atravessam. Num compilado a diferença é
+                # gritante — trechos de 6min e 94min do mesmo vídeo dariam
+                # "88 minutos" para um clipe de 60s na UI e no cronograma.
+                duration=(
+                    segments_service.total_duration(vc.segments)
+                    if vc.segments
+                    else vc.end - vc.start
+                ),
                 virality_score=vc.score,
                 hook_score=vc.hook_score,
                 retention_score=vc.retention_score,
@@ -527,6 +578,9 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
             subtitle_mode = job.subtitle_mode
             layout_mode = job.layout_mode or "cover"
             source_type = job.source_type or default_source_type(layout_mode)
+            clip_mode = job.clip_mode or "individual"
+            manual_ranges = _parse_segments_json(job.manual_clips)
+            manual_mode = job.manual_mode or "only"
             facecam_json = job.facecam_rect
             saved_media = {
                 "video_title": job.video_title,
@@ -603,16 +657,40 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
             # imagem diz o quê — e só olha as janelas que o áudio apontou.
             await describe_events(job_id, metadata.video_path, gaps)
 
-            analysis = await analyze_virality(
-                job_id=job_id,
-                words=words,
-                title=metadata.title,
-                channel=metadata.channel,
-                duration_seconds=metadata.duration,
-                source_type=source_type,
-                gaps=gaps,
-                video_path=metadata.video_path,
-            )
+            manual = _manual_clips(manual_ranges, clip_mode)
+            if manual and manual_mode == "only":
+                # O usuário disse exatamente o que quer: análise, varredura e
+                # visão não têm o que decidir, e pular as três economiza a
+                # parte cara do job.
+                logger.info(
+                    f"[{job_id}] {len(manual_ranges)} trecho(s) indicados à mão, "
+                    f"modo 'only' — análise pulada"
+                )
+                analysis = AnalysisResult(
+                    clips=manual, analysis_notes="Trechos indicados manualmente."
+                )
+            else:
+                analysis = await analyze_virality(
+                    job_id=job_id,
+                    words=words,
+                    title=metadata.title,
+                    channel=metadata.channel,
+                    duration_seconds=metadata.duration,
+                    source_type=source_type,
+                    gaps=gaps,
+                    video_path=metadata.video_path,
+                    clip_mode=clip_mode,
+                )
+                # Modo 'plus': o indicado à mão entra GARANTIDO, à frente do
+                # que a análise achou. Ele não passa pelo filtro de nota — foi
+                # escolhido por quem assistiu, que é evidência melhor que a
+                # rubrica.
+                if manual:
+                    logger.info(
+                        f"[{job_id}] {len(manual)} clipe(s) indicados à mão somados "
+                        f"aos {len(analysis.clips)} da análise"
+                    )
+                    analysis.clips = manual + analysis.clips
 
             logger.info(
                 f"[{job_id}] Analysis complete: {len(analysis.clips)} clips to generate"
@@ -716,6 +794,7 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                         facecam=facecam,
                         streamer_name=metadata.channel,
                         source_type=source_type,
+                        banner_text=task.banner_text,
                     )
                 else:
                     file_path, file_size = await cut_and_crop(

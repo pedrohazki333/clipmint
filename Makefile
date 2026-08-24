@@ -1,4 +1,4 @@
-.PHONY: setup backend frontend dev backend-serve frontend-serve serve update-ytdlp
+.PHONY: setup backend frontend dev backend-serve frontend-serve serve update-ytdlp emoji-font
 
 # Porta do backend lida do .env da raiz — o mesmo arquivo que o next.config lê
 # para montar o proxy. Uma fonte só: o uvicorn e o proxy não têm como divergir.
@@ -42,3 +42,12 @@ serve:
 update-ytdlp:
 	cd backend && .venv/bin/pip install --upgrade --pre "yt-dlp[default]"
 	@cd backend && .venv/bin/python -c "import yt_dlp; print('yt-dlp agora:', yt_dlp.version.__version__)"
+
+# A NotoColorEmoji é o que faz o emoji do hook aparecer colorido no banner dos
+# clips (ver services/layout.py). Sem ela o emoji é removido do título — o clip
+# sai certo, só sem ele. Não vai no git: são 10MB de binário.
+emoji-font:
+	@mkdir -p backend/storage/branding/fonts
+	@curl -fsSL -o backend/storage/branding/fonts/NotoColorEmoji.ttf \
+		https://raw.githubusercontent.com/googlefonts/noto-emoji/main/fonts/NotoColorEmoji.ttf
+	@cd backend && .venv/bin/python -c "from app.services.layout import emoji_font_path; print('fonte de emoji:', emoji_font_path() or 'NAO ENCONTRADA')"

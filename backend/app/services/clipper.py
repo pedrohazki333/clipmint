@@ -3,13 +3,15 @@ Serviço de corte e composição de clips usando FFmpeg.
 
 Layout final 1080x1920:
   - Capa estática no topo (print de expressão marcante — layout.generate_cover)
-  - Banner de título (pílula vermelha — layout.generate_banner) sobre a emenda
+  - Banner de título (retângulo vermelho — layout.generate_banner) sobre a emenda
+  - Faixa da conta logo abaixo do banner, com o @ repetido (só quando o nicho
+    tem um nome configurado — layout.generate_divider_bar, a mesma do streamer)
   - Vídeo rodando embaixo, com legendas. O crop 9:16 é dinâmico (face tracking)
     quando settings.face_tracking_enabled está ligado; caso contrário fica fixo
     no centro do frame.
 
 Filtergraph: [sendcmd →] crop → scale → pad(canvas) → overlay(capa)
-             → overlay(banner) → ass → setsar
+             → overlay(banner) → overlay(faixa) → ass → setsar
 Tudo em uma única passagem FFmpeg.
 
 O setsar=1 no fim de cada composição não é decorativo: o filtro `scale` do
@@ -22,7 +24,9 @@ preencher a tela 9:16 (barras pretas no TikTok). Fixar SAR 1:1 garante que o que
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 from app.config import settings
 from app.services.face_tracker import track_faces, static_tracking, SNAP_THRESHOLD
@@ -34,7 +38,10 @@ from app.services.facecam import (
 )
 from app.services.layout import (
     COVER_H,
+    load_bar_style,
     generate_banner,
+    generate_banner_collapse_frames,
+    generate_title_banner,
     generate_cover,
     generate_divider_bar,
     streamer_geometry,
@@ -58,6 +65,11 @@ VIDEO_H = CANVAS_H - COVER_H  # 1152
 
 # Centro vertical do banner fica exatamente na emenda capa/vídeo
 BANNER_CENTER_Y = COVER_H
+
+# Altura da faixa da conta, colada na borda de baixo do banner. É a mesma
+# proporção da faixa do streamer (streamer_bar_frac × altura do canvas), para
+# as duas contas terem a mesma espessura de faixa no feed.
+COVER_BAR_H = int(CANVAS_H * 0.029) // 2 * 2
 
 # Passo de interpolação dos comandos de crop (s) — 1/30s = atualização por frame
 TRACK_CMD_INTERVAL = 1 / 30
@@ -86,7 +98,7 @@ async def cut_and_crop(
         end_time: Fim do clip em segundos.
         words: Lista de palavras com timestamps para geração de legendas.
         subtitle_mode: 'word_highlight', 'traditional', ou 'none'.
-        banner_text: Título exibido na pílula vermelha (vazio = sem banner).
+        banner_text: Título exibido no retângulo vermelho (vazio = sem banner).
 
     Returns:
         Tupla (output_path, file_size_bytes).
@@ -208,12 +220,15 @@ async def cut_and_crop(
     parts.append(f"[base][{cover_idx}:v]overlay=0:0[withcover]")
     last_label = "withcover"
 
+    bar_bottom = COVER_H  # onde a faixa da conta encosta, se não houver banner
+
     if banner_text.strip():
         banner_path = str(clip_dir / f"{clip_id}_banner.png")
         _, banner_h = await asyncio.to_thread(
-            generate_banner, banner_text, banner_path, None, None, source_type
+            generate_banner, banner_text, banner_path, None, None, None, source_type
         )
         banner_y = BANNER_CENTER_Y - banner_h // 2
+        bar_bottom = banner_y + banner_h
         banner_idx = n_inputs
         inputs += ["-i", banner_path]
         n_inputs += 1
@@ -222,6 +237,27 @@ async def cut_and_crop(
             f"overlay=(main_w-overlay_w)/2:{banner_y}[withbanner]"
         )
         last_label = "withbanner"
+
+    # Faixa da conta, colada na borda de baixo do banner. Só sai quando o nicho
+    # tem um nome configurado: sem isso a faixa escreveria o nome do canal do
+    # vídeo de origem — o dono do podcast, não a conta que publica o clipe.
+    bar_name = load_bar_style(source_type).name
+    if bar_name:
+        bar_path = str(clip_dir / f"{clip_id}_bar.png")
+        await asyncio.to_thread(
+            generate_divider_bar,
+            CANVAS_W, COVER_BAR_H, bar_path, None,
+            bar_name, None, None, None, source_type,
+        )
+        bar_idx = n_inputs
+        inputs += ["-i", bar_path]
+        n_inputs += 1
+        parts.append(f"[{last_label}][{bar_idx}:v]overlay=0:{bar_bottom}[withbar]")
+        last_label = "withbar"
+        logger.info(
+            f"[{job_id}] Faixa da conta {CANVAS_W}x{COVER_BAR_H} em "
+            f"y={bar_bottom} ({bar_name!r})"
+        )
 
     if subtitle_mode != "none":
         ass_path = str(clip_dir / f"{clip_id}.ass")
@@ -291,6 +327,7 @@ async def cut_and_stack(
     facecam: FacecamRect | list[CamPhase],
     streamer_name: str = "",
     source_type: str | None = None,
+    banner_text: str = "",
 ) -> tuple[str, int]:
     """
     Monta o clip no layout de live de streamer: facecam em cima, faixa com a
@@ -299,6 +336,8 @@ async def cut_and_stack(
 
       ┌──────────────┐
       │   FACECAM    │  crop da caixa da cam, preenchendo o painel
+      │ ┌──────────┐ │
+      │ │  TÍTULO  │ │  encostado na faixa, sai aos 4s encolhendo dentro dela
       ├── faixa ─────┤  barra escura com o nome do streamer repetido
       │   GAMEPLAY   │  fatia vertical central, desviando da cam
       └──────────────┘
@@ -314,6 +353,8 @@ async def cut_and_stack(
         facecam: caixa da cam em frações da fonte (detectada ou manual), ou a
             lista de fases devolvida por facecam.detect_facecam_phases.
         streamer_name: nome repetido na faixa divisória (vazio = logo do usuário).
+        banner_text: título fixo nos primeiros segundos, encostado acima da
+            faixa (vazio = sem banner).
 
     Returns:
         Tupla (output_path, file_size_bytes).
@@ -355,13 +396,27 @@ async def cut_and_stack(
             f"{bw}x{bh}+{bx}+{by} ({phase.rect.method}, {phase.rect.confidence:.0%})"
         )
 
-    # Faixa divisória com o nome do streamer repetido
+    # Faixa divisória com o nome repetido. O nome configurado no nicho ganha do
+    # canal do vídeo: quem quer a própria conta na faixa (e não a do streamer
+    # que gravou) escreve o @ nos presets.
     bar_path = str(clip_dir / f"{clip_id}_bar.png")
+    bar_name = load_bar_style(source_type).name or streamer_name
     await asyncio.to_thread(
         generate_divider_bar,
         geo.canvas_w, geo.bar_h, bar_path, user_watermark_path(source_type),
-        streamer_name, None, None, None, source_type,
+        bar_name, None, None, None, source_type,
     )
+
+    # Banner de título: PNG estático + os quadros da saída. Só faz sentido se
+    # couber no clip — um banner que segura 4s num corte de 3s nunca sairia.
+    banner = await _prepare_title_banner(
+        clip_dir, clip_id, banner_text, geo, duration, source_type
+    )
+    if banner:
+        logger.info(
+            f"[{job_id}] Banner de título {geo.canvas_w}x{banner.height} em "
+            f"y={banner.y}, some aos {banner.hold:.1f}s em {banner.exit:.2f}s"
+        )
 
     # ── Filter_complex ────────────────────────────────────────────────────────
     # A fonte alimenta o gameplay e um recorte por fase da cam, daí o split.
@@ -443,21 +498,54 @@ async def cut_and_stack(
     parts.append(f"[{last_label}][1:v]overlay=0:{geo.facecam_h}[withbar]")
     last_label = "withbar"
 
+    # Os índices dos inputs seguintes dependem de o banner existir ou não, então
+    # são contados aqui em vez de escritos à mão. 0 = vídeo fonte, 1 = faixa.
+    extra_inputs: list[str] = []
+    next_input = 2
+
+    if banner:
+        # Duas camadas do mesmo banner, disjuntas no tempo: o PNG parado
+        # enquanto ele segura, e a sequência de quadros na saída. Separar assim
+        # evita gerar (e decodificar) 4 segundos de quadros idênticos.
+        static_idx = next_input
+        anim_idx = next_input + 1
+        next_input += 2
+        extra_inputs += [
+            "-i", banner.static_path,
+            "-framerate", str(banner.fps), "-i", banner.frames_pattern,
+        ]
+        parts.append(
+            f"[{last_label}][{static_idx}:v]"
+            f"overlay=0:{banner.y}:enable='lt(t,{banner.hold:.3f})'[withbanner]"
+        )
+        # A sequência começa no seu próprio zero; o PTS é empurrado para o
+        # instante da saída. Sem isso a animação rodaria no início do clip,
+        # por baixo do PNG estático, e o banner simplesmente sumiria aos 4s.
+        parts.append(
+            f"[{anim_idx}:v]setpts=PTS+{banner.hold:.3f}/TB[bannerout]"
+        )
+        parts.append(
+            f"[withbanner][bannerout]overlay=0:{banner.y}"
+            f":enable='between(t,{banner.hold:.3f},{banner.hold + banner.exit:.3f})'"
+            f"[withbanneranim]"
+        )
+        last_label = "withbanneranim"
+
     # A marca da conta entra depois da faixa e ANTES da legenda: se as duas se
     # encontrarem, quem tem que continuar legível é a legenda.
-    extra_inputs: list[str] = []
     watermark_art = clip_watermark_path(source_type)
     if watermark_art:
         extra_inputs += ["-i", watermark_art]
         parts.extend(
             _clip_watermark_filters(
-                input_idx=2,  # 0 = vídeo fonte, 1 = faixa
+                input_idx=next_input,
                 base_label=last_label,
                 out_label="withwm",
                 canvas_w=geo.canvas_w,
                 canvas_h=geo.canvas_h,
             )
         )
+        next_input += 1
         last_label = "withwm"
 
     if subtitle_mode != "none":
@@ -516,6 +604,81 @@ async def cut_and_stack(
     await _log_clip_quality(job_id, clip_id, final_path, file_size)
 
     return final_path, file_size
+
+
+@dataclass
+class TitleBanner:
+    """Os arquivos e a geometria do banner de título já prontos para o overlay."""
+
+    static_path: str
+    frames_pattern: str
+    fps: int
+    height: int
+    y: int
+    hold: float
+    exit: float
+
+
+async def _prepare_title_banner(
+    clip_dir: Path,
+    clip_id: str,
+    banner_text: str,
+    geo,
+    duration: float,
+    source_type: str | None,
+) -> Optional[TitleBanner]:
+    """
+    Gera o banner de título e os quadros da saída, ou None se ele não couber.
+
+    None nos três casos em que o banner não faria sentido:
+
+    - sem texto, ou com o tempo de exibição zerado na configuração;
+    - num clip curto demais para a animação de saída caber depois do tempo de
+      exibição — um banner que nunca sai é um banner que tapa a facecam até o
+      fim do clip;
+    - se o título não puder ser desenhado. Aqui a falha é engolida de propósito:
+      o clip inteiro já foi cortado, e perder o render por causa do adorno seria
+      trocar um vídeo bom por nenhum vídeo.
+    """
+    text = banner_text.strip()
+    hold = settings.streamer_banner_hold
+    exit_dur = settings.streamer_banner_exit
+
+    if not text or hold <= 0:
+        return None
+    if duration < hold + exit_dur:
+        logger.info(
+            f"Clip de {duration:.1f}s é curto demais para o banner "
+            f"({hold:.1f}s + {exit_dur:.2f}s de saída) — clip sai sem ele"
+        )
+        return None
+
+    static_path = str(clip_dir / f"{clip_id}_title.png")
+    frames_dir = clip_dir / f"{clip_id}_title_frames"
+
+    try:
+        _, height = await asyncio.to_thread(
+            generate_title_banner, text, static_path, geo.canvas_w, None, None,
+            None, source_type,
+        )
+        n_frames = max(2, round(exit_dur * settings.streamer_banner_exit_fps))
+        await asyncio.to_thread(
+            generate_banner_collapse_frames, static_path, str(frames_dir), n_frames
+        )
+    except (OSError, ValueError) as exc:
+        logger.warning(f"Banner de título não pôde ser gerado ({exc}) — clip sai sem ele")
+        return None
+
+    return TitleBanner(
+        static_path=static_path,
+        frames_pattern=str(frames_dir / "collapse_%03d.png"),
+        fps=settings.streamer_banner_exit_fps,
+        height=height,
+        # Encostado na faixa: a borda de baixo do banner é a de cima da faixa.
+        y=geo.facecam_h - height,
+        hold=hold,
+        exit=exit_dur,
+    )
 
 
 def _cam_phases(

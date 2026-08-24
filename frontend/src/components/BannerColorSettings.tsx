@@ -9,6 +9,7 @@ import {
   saveBannerColors,
 } from "@/lib/api";
 import ColorField, { HEX_RE, toFullHex } from "@/components/ColorField";
+import FontField, { DEFAULT_FONT, fontStack } from "@/components/FontField";
 
 const DEFAULT_BG = "#ED2828";
 const DEFAULT_TEXT = "#FFFFFF";
@@ -21,6 +22,8 @@ interface Props {
 export default function BannerColorSettings({ source }: Props) {
   const [bgColor, setBgColor] = useState(DEFAULT_BG);
   const [textColor, setTextColor] = useState(DEFAULT_TEXT);
+  const [font, setFont] = useState(DEFAULT_FONT);
+  const [fonts, setFonts] = useState<{ key: string; label: string }[]>([]);
   const [customized, setCustomized] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -32,6 +35,8 @@ export default function BannerColorSettings({ source }: Props) {
       .then((c) => {
         setBgColor(c.bg_color);
         setTextColor(c.text_color);
+        setFont(c.font);
+        setFonts(c.available_fonts);
         setCustomized(c.customized);
       })
       .catch(() => {
@@ -39,8 +44,8 @@ export default function BannerColorSettings({ source }: Props) {
       });
   }, [source]);
 
-  function update(setter: (v: string) => void) {
-    return (v: string) => {
+  function update<T>(setter: (v: T) => void) {
+    return (v: T) => {
       setter(v);
       setDirty(true);
       setSaved(false);
@@ -53,14 +58,15 @@ export default function BannerColorSettings({ source }: Props) {
     setBusy(true);
     setError("");
     try {
-      const c = await saveBannerColors(source, bgColor, textColor);
+      const c = await saveBannerColors(source, bgColor, textColor, font);
       setBgColor(c.bg_color);
       setTextColor(c.text_color);
+      setFont(c.font);
       setCustomized(true);
       setDirty(false);
       setSaved(true);
     } catch (err) {
-      setError(getApiErrorMessage(err, "Não foi possível salvar as cores."));
+      setError(getApiErrorMessage(err, "Não foi possível salvar o estilo do banner."));
     } finally {
       setBusy(false);
     }
@@ -73,6 +79,7 @@ export default function BannerColorSettings({ source }: Props) {
       await resetBannerColors(source);
       setBgColor(DEFAULT_BG);
       setTextColor(DEFAULT_TEXT);
+      setFont(DEFAULT_FONT);
       setCustomized(false);
       setDirty(false);
       setSaved(false);
@@ -85,21 +92,29 @@ export default function BannerColorSettings({ source }: Props) {
 
   const previewBg = toFullHex(bgColor, DEFAULT_BG);
   const previewText = toFullHex(textColor, DEFAULT_TEXT);
+  const stack = fontStack(font);
 
   return (
     <div className="rounded-2xl bg-gray-900 border border-gray-800 p-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h2 className="text-base font-semibold text-gray-100">Cores do banner</h2>
-          <p className="text-sm text-gray-500 mt-1">
-            Cor da pílula de título e da fonte nos próximos clips gerados.
-          </p>
-        </div>
+      <div>
+        <h2 className="text-base font-semibold text-gray-100">Banner de título</h2>
+        <p className="text-sm text-gray-500 mt-1">
+          Cores e fonte da faixa de título nos próximos clips gerados.
+        </p>
+      </div>
 
-        {/* Preview da pílula */}
+      {/* Preview do banner: retângulo de ponta a ponta, como sai no clip */}
+      <div
+        className="mt-4 rounded overflow-hidden px-5 py-3 text-center select-none"
+        style={{ backgroundColor: previewBg }}
+      >
         <span
-          className="rounded-full px-5 py-2 text-sm font-bold tracking-wide select-none"
-          style={{ backgroundColor: previewBg, color: previewText }}
+          className="text-sm"
+          style={{
+            color: previewText,
+            fontFamily: stack.family,
+            fontWeight: stack.weight,
+          }}
         >
           TÍTULO DO CLIP
         </span>
@@ -114,11 +129,17 @@ export default function BannerColorSettings({ source }: Props) {
           fallback={DEFAULT_BG}
         />
         <ColorField
-          label="Fonte"
+          label="Texto"
           value={textColor}
           onChange={update(setTextColor)}
           disabled={busy}
           fallback={DEFAULT_TEXT}
+        />
+        <FontField
+          value={font}
+          onChange={update<string>(setFont)}
+          disabled={busy}
+          fonts={fonts}
         />
 
         <div className="flex items-center gap-3 ml-auto">

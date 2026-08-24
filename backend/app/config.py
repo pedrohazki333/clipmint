@@ -31,6 +31,32 @@ class Settings(BaseSettings):
     vision_max_frames: int = 10
     # Teto de janelas por vídeo — uma live de 6h não pode virar 80 chamadas.
     vision_max_windows: int = 20
+    # Quantos instantes a passada 1 do compilado aponta para a visão olhar. É
+    # uma origem de janela independente dos buracos de áudio: medido nos seis
+    # trechos do compilado real do alanzoka, dois eram fala contínua e nunca
+    # viravam janela pelo caminho antigo (services/candidates.py).
+    compilation_candidates: int = 18
+
+    # ── Perícia de clipe pronto (services/clip_forensics.py) ──────────────────
+    # Aqui o objeto de estudo é um clipe de 30-60s, não uma janela dentro de um
+    # vídeo de uma hora: dá para olhar quadro a quadro e ainda sobra contexto
+    # para o modelo cruzar imagem, som e fala numa resposta só.
+    claude_forensics_model: str = "claude-opus-5"
+    # 16000 e não 8000: a perícia devolve treze campos de prosa mais a lista de
+    # batidas, em português (que gasta mais token que inglês). No primeiro clipe
+    # real a resposta bateu no teto de 8000 e voltou JSON pela metade. Este é o
+    # padrão recomendado para chamada sem streaming — acima dele o SDK pede
+    # streaming para não estourar o timeout de HTTP.
+    claude_forensics_max_tokens: int = 16000
+    # Quadros enviados à visão. 14 num clipe de 40s dá um a cada ~3s depois do
+    # gancho, o suficiente para ver troca de plano, legenda e overlay.
+    forensics_frame_count: int = 14
+    # Os primeiros segundos decidem o clipe, então são amostrados denso e fora
+    # da grade uniforme (ver frame_times em clip_forensics.py).
+    forensics_hook_seconds: float = 3.0
+    # Sensibilidade do detector de corte de cena do FFmpeg (0-1). 0.35 pega
+    # corte duro sem disparar em movimento rápido de câmera.
+    forensics_scene_threshold: float = 0.35
 
     # AssemblyAI
     # O antigo `best` (= universal-2) se perde em grito distorcido e fala
@@ -106,6 +132,19 @@ class Settings(BaseSettings):
     # fatia é menor (imagem mais fechada) e sobra espaço para ela desviar da
     # facecam sem chegar perto da moldura.
     streamer_game_zoom: float = 1.06
+    # ── Banner de título do modo streamer ─────────────────────────────────────
+    # Um título parado nos primeiros segundos: a legenda passa palavra a palavra
+    # e muitas vezes não chega a ser lida, então ele é a única coisa na tela que
+    # diz do que se trata o clipe antes de a fala chegar lá.
+    # 0 desliga o banner sem mexer no resto do layout.
+    streamer_banner_hold: float = 4.0
+    # Duração da saída (o banner encolhe para dentro da faixa). Medida no
+    # exemplo aprovado: ~0,16s. Abaixo de ~0,1s vira um corte seco.
+    streamer_banner_exit: float = 0.18
+    # Quadros por segundo da animação de saída. 30 já é fluido para um
+    # movimento de 0,18s (5 a 6 quadros) e mantém a sequência pequena.
+    streamer_banner_exit_fps: int = 30
+
     # A facecam da fonte é pequena (numa live 1080p pode ser 486x257) e sobe
     # ~1.4x a 2.2x para preencher o painel. O lanczos amplia sem inventar
     # detalhe, e o resultado sai macio; um unsharp leve depois da ampliação

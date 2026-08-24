@@ -15,6 +15,8 @@ PromptBuilder, que injeta exemplos validados). Aqui ficam os critérios que
 mudam por tipo de fonte e o prompt de usuário com o formato de saída.
 """
 
+from app.services.moderation_terms import prompt_rule
+
 # ─── Formato do transcript com timestamps ─────────────────────────────────────
 
 TRANSCRIPT_FORMAT_NOTE = """
@@ -31,6 +33,21 @@ de fala do vídeo. «ÁUDIO ALTO» = som bem acima da fala: gargalhada, grito,
 ação, reação — o momento em si. «áudio baixo» = silêncio de verdade, tempo
 morto. Sem rótulo = faixa intermediária, decida pelo contexto em volta.
 """
+
+INDIVIDUAL_TASK = """Encontre TODOS os trechos que fecham {threshold_100}+ de final_score, aplicando os critérios de {source_type}.
+Prefira cortes enxutos de {preferred_min}-{preferred_max}s; passe disso (até {max_duration}s) só quando o momento realmente precisar da construção."""
+
+# O enunciado da TAREFA é o que o modelo obedece. Pedir compilado só na seção
+# de regras do campo `segments` não funcionou: no primeiro job em modo
+# compilado (alanzoka, Grain Rot) o modelo devolveu seis clipes individuais e
+# nenhum `segments`, porque a tarefa continuava mandando "encontre TODOS os
+# trechos" e "prefira cortes de 25-40s" — o oposto de montar um vídeo de 60s
+# com seis pedaços. Ele seguiu a tarefa, que é o comportamento correto.
+COMPILATION_TASK = """Este job pede COMPILADOS, não clipes soltos. Monte DOIS compilados, aplicando os critérios de {source_type} — um só não aproveita um vídeo longo, e dois de um minuto rendem mais que um de dois.
+Cada compilado é UMA entrada de `clips` com o campo `segments` preenchido: vários momentos separados do vídeo, emendados num vídeo só. A seção "Compilado" no fim manda na ordem e no tamanho — leia antes de escolher.
+O alvo é {compilation_target}s SOMADOS entre os trechos. `start` e `end` descrevem só o intervalo bruto que o compilado atravessa e NÃO são a duração do vídeo final, então não os use para julgar tamanho.
+Um momento excelente que não conversa com nenhum compilado fica de fora. Só devolva clipe individual (sem `segments`) se NENHUM compilado se sustentar — e explique o motivo em `analysis_notes`."""
+
 
 # ─── Critérios por tipo de fonte ───────────────────────────────────────────────
 # Injetados no core_prompt via {source_criteria}. O que prende alguém num corte
@@ -107,6 +124,42 @@ Regras:
 """
 
 
+
+# Alvo de duração somada do compilado. O exemplo real que motivou o modo tinha
+# 130s em 6 trechos e o dono do canal achou que renderia mais partido em dois de
+# um minuto — o teto aqui é o que força o modelo a escolher em vez de empilhar.
+COMPILATION_TARGET = "55-65"
+
+COMPILATION_RULE = """
+## Compilado (`segments`)
+
+Este job pede um COMPILADO: um vídeo único feito de vários momentos separados da fonte, emendados com corte seco. Devolva-o em `segments`.
+
+```
+"segments": [[3843.4, 3851.5], [388.8, 404.5], [4291.8, 4313.8]]
+```
+
+O compilado não é "os melhores clipes em fila". Ele é um vídeo só, com abertura, meio e fim:
+
+- **Abre pela reação, não pela cronologia.** O primeiro trecho é o de reação mais forte que você achar — gargalhada, grito, cara de choque — mesmo que ele aconteça no fim do vídeo. Os trechos NÃO precisam estar em ordem cronológica, e quase nunca é bom que estejam.
+- **Primeiro trecho curto**, 8-15s: é gancho, não contexto. Ele funciona sem explicação.
+- **Trechos seguintes de 15-25s**, cada um com um acontecimento inteiro (a treta começa e termina dentro do trecho).
+- **3 a 6 trechos, somando {compilation_target}s.** Compilado de dois minutos cansa: dois compilados de um minuto rendem mais que um de dois.
+- **Um fio comum.** Os trechos são da mesma sessão e da mesma turma, e juntos contam "como foi jogar isso com essa gente". Momento excelente que não conversa com os outros fica de fora — ou vira clipe individual.
+- **O que escolher, medido num compilado real deste nicho.** Nos seis trechos que um editor humano escolheu, cinco tinham o PERSONAGEM DE UM COMPANHEIRO visível na tela fazendo alguma coisa (com a tag do nome à vista), e em todos os seis o rosto do streamer VIRAVA dentro do trecho: de concentrado para gargalhada, susto ou grito. A graça é o que o amigo faz; a cara é a prova de que funcionou. Prefira momentos com esses dois sinais às custas de momentos que só têm áudio alto.
+- **Não julgue cada trecho como se fosse um clipe sozinho.** Um trecho de 8s que não se explica isolado pode ser a melhor abertura do compilado. Quem precisa se sustentar é o compilado inteiro, não cada pedaço.
+- **As anotações ((NA IMAGEM: ...)) valem tanto quanto a fala.** Elas descrevem o que aparece na tela em momentos que a transcrição não conta — é onde estão as piadas visuais, e um trecho pode ser escolhido só por elas.
+- **Alterne o tipo.** Reação pura (só a cara, sem gameplay que importe) e caos de jogo (correria, grito, morte) se revezam. Dois trechos seguidos do mesmo tipo achatam o vídeo.
+- Cada trecho tem no mínimo 3s e os trechos não se sobrepõem.
+- **Cada trecho é um acontecimento DIFERENTE, de uma parte diferente do vídeo** — minutos de distância entre eles. Nunca fatie um momento contínuo em dois pedaços: se dois trechos seus se encostam na linha do tempo, eles são um só e devem ser entregues como um só.
+- **A ordem livre serve para escolher qual MOMENTO vem primeiro, jamais para inverter as metades de um mesmo momento.** Entregar a segunda metade antes da primeira produz um vídeo tocando de trás para frente.
+- `start`/`end` continuam obrigatórios: o começo do PRIMEIRO trecho e o fim do ÚLTIMO, na ordem em que você os devolveu.
+- Explique em `trim_reason` qual é o fio comum e por que essa ordem.
+
+**Se o vídeo não tiver material para um compilado que se sustente**, não force: devolva os clipes individuais normalmente, sem `segments`. Um compilado ruim é pior que três clipes bons.
+"""
+
+
 SOURCE_CRITERIA = {
     "podcast": PODCAST_CRITERIA,
     "gameplay": GAMEPLAY_CRITERIA,
@@ -126,6 +179,45 @@ def default_source_type(layout_mode: str | None) -> str:
     criação do job, porque o tipo decide em qual conta o clipe é postado.
     """
     return "gameplay" if (layout_mode or "").lower() == "streamer" else "podcast"
+
+
+def _task_directive(
+    source: str,
+    clip_mode: str,
+    threshold_100: int,
+    preferred_min: int,
+    preferred_max: int,
+    max_duration: int,
+) -> str:
+    """O enunciado da tarefa — é ele que decide o formato da saída."""
+    if clip_mode == "compilation":
+        return COMPILATION_TASK.format(
+            source_type=source, compilation_target=COMPILATION_TARGET
+        )
+    return INDIVIDUAL_TASK.format(
+        threshold_100=threshold_100,
+        source_type=source,
+        preferred_min=preferred_min,
+        preferred_max=preferred_max,
+        max_duration=max_duration,
+    )
+
+
+def _segments_rule(source: str, clip_mode: str, max_segmented: int) -> str:
+    """
+    Qual regra de costura entra no prompt.
+
+    As duas usam o mesmo campo `segments`, mas pedem coisas diferentes: o Siege
+    costura UM acontecimento espalhado (o ace com caminhada no meio), sempre em
+    ordem; o compilado junta acontecimentos DISTINTOS e a ordem cronológica
+    atrapalha. Pedir as duas ao mesmo tempo confunde — compilado ganha, porque
+    foi escolhido explicitamente no job.
+    """
+    if clip_mode == "compilation":
+        return COMPILATION_RULE.format(compilation_target=COMPILATION_TARGET)
+    if source == "siege":
+        return SEGMENTS_RULE.format(max_segmented=max_segmented)
+    return ""
 
 
 def source_criteria(source_type: str | None) -> str:
@@ -151,8 +243,7 @@ USER_PROMPT_TEMPLATE = """Analise a transcrição abaixo e identifique todos os 
 {transcript_with_timestamps}
 
 ## Tarefa
-Encontre TODOS os trechos que fecham {threshold_100}+ de final_score, aplicando os critérios de {source_type}.
-Prefira cortes enxutos de {preferred_min}-{preferred_max}s; passe disso (até {max_duration}s) só quando o momento realmente precisar da construção.
+{task_directive}
 Antes de fixar cada `start`, responda a si mesmo: o que está sendo dito aqui é o FATO ou é a REAÇÃO ao fato? Se for reação, o corte começa antes.
 Os campos `start` e `end` são o corte final, em segundos absolutos do vídeo.
 Retorne SOMENTE JSON válido — sem markdown, sem texto fora do JSON.
@@ -185,6 +276,7 @@ Regras do JSON:
 - `verdict` é "post" quando o trecho está pronto para publicar, ou "revisar_corte" quando vale a pena mas o corte precisa de ajuste humano. Trechos que você descartaria simplesmente não entram na lista.
 - `weak_points` lista os pontos que derrubam retenção; use lista vazia quando não houver.
 - `final_score` é a média ponderada dos cinco eixos (retention 30%, hook 25%, shareability 20%, comment_bait 15%, loopability 10%), numa escala de 0 a 100.
+{moderation_rule}
 
 Se nenhum trecho atingir o limiar, retorne: {{"clips": [], "analysis_notes": "motivo"}}
 {segments_rule}"""
@@ -246,7 +338,25 @@ def format_gap(gap) -> str:
     return f"{head} — áudio {gap.above_speech:+.0f} dB em relação à fala.))"
 
 
-def format_transcript_with_timestamps(words: list[dict], gaps: list | None = None) -> str:
+def format_observation(obs) -> str:
+    """
+    A linha de um instante que a passada 1 mandou olhar e a visão descreveu.
+
+    Diferente da anotação de buraco, esta não fala de silêncio nenhum: ela
+    existe justamente para os momentos em que ninguém para de falar e a imagem
+    é a única fonte do que está acontecendo.
+    """
+    head = f"[{obs.start:.1f} - {obs.end:.1f}] (("
+    if obs.scene:
+        return f"{head}NA IMAGEM: {obs.scene}))"
+    if obs.why:
+        return f"{head}momento apontado na varredura: {obs.why}))"
+    return ""
+
+
+def format_transcript_with_timestamps(
+    words: list[dict], gaps: list | None = None, observations: list | None = None
+) -> str:
     """
     Agrupa palavras em frases com timestamps e formata para o prompt.
 
@@ -292,6 +402,11 @@ def format_transcript_with_timestamps(words: list[dict], gaps: list | None = Non
         if worth_annotating(gap):
             lines.append((gap.start, format_gap(gap)))
 
+    for obs in observations or []:
+        line = format_observation(obs)
+        if line:
+            lines.append((obs.start, line))
+
     lines.sort(key=lambda item: item[0])
     return "\n".join(line for _, line in lines)
 
@@ -320,6 +435,8 @@ def build_analysis_prompt(
     source_type: str = DEFAULT_SOURCE_TYPE,
     max_segmented: int = 70,
     gaps: list | None = None,
+    clip_mode: str = "individual",
+    observations: list | None = None,
 ) -> str:
     """
     Constrói o prompt de usuário da análise de viralidade.
@@ -332,15 +449,20 @@ def build_analysis_prompt(
         threshold: Limiar na escala 0-10 do sistema; convertido para a escala
             0-100 do final_score que o modelo devolve.
     """
-    transcript_text = format_transcript_with_timestamps(words, gaps)
+    transcript_text = format_transcript_with_timestamps(words, gaps, observations)
     source = (source_type or DEFAULT_SOURCE_TYPE).lower()
 
     return USER_PROMPT_TEMPLATE.format(
         gap_legend=GAP_LEGEND.strip() if gaps else "",
-        segments_rule=(
-            SEGMENTS_RULE.format(max_segmented=max_segmented)
-            if source == "siege"
-            else ""
+        moderation_rule=prompt_rule(),
+        segments_rule=_segments_rule(source, clip_mode, max_segmented),
+        task_directive=_task_directive(
+            source,
+            clip_mode,
+            round(threshold * 10),
+            preferred_min,
+            preferred_max,
+            max_duration,
         ),
         title=title,
         channel=channel,

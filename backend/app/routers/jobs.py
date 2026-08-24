@@ -13,6 +13,7 @@ from app.database import get_db
 from app.models import Clip, Job, Transcript
 from app.prompts.viral_analysis import default_source_type
 from app.schemas import JobCreate, JobResponse, JobDetailResponse
+from app.utils.timecodes import parse_ranges
 from app.workers import joblock
 from app.workers.pipeline import RUNNING_STATUSES, run_pipeline
 
@@ -35,6 +36,15 @@ async def create_job(
         # Omitido pelo cliente: infere pelo layout, que é o palpite certo na
         # maioria dos casos (streamer→gameplay, cover→podcast).
         source_type=payload.source_type or default_source_type(payload.layout_mode),
+        clip_mode=payload.clip_mode,
+        # Guardado já em segundos: a anotação "3:24" é conveniência de quem
+        # digita, não formato de trabalho. A ORDEM digitada é preservada.
+        manual_clips=(
+            json.dumps([list(r) for r in parse_ranges(payload.manual_clips)])
+            if payload.manual_clips
+            else None
+        ),
+        manual_mode=payload.manual_mode,
         # Sem caixa informada, o pipeline detecta a facecam clip a clip
         facecam_rect=(
             payload.facecam_rect.model_dump_json() if payload.facecam_rect else None

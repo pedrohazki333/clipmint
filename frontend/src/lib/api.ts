@@ -141,7 +141,11 @@ export function getClipWatermarkUrl(source: SourceType, version?: number): strin
 export interface BannerColors {
   bg_color: string;
   text_color: string;
+  /** Família da fonte do banner (chave da lista de available_fonts). */
+  font: string;
   customized: boolean;
+  /** Famílias instaladas na máquina do backend — a lista vem de lá. */
+  available_fonts: { key: string; label: string }[];
 }
 
 export async function getBannerColors(source: SourceType): Promise<BannerColors> {
@@ -154,11 +158,12 @@ export async function getBannerColors(source: SourceType): Promise<BannerColors>
 export async function saveBannerColors(
   source: SourceType,
   bg_color: string,
-  text_color: string
+  text_color: string,
+  font: string
 ): Promise<BannerColors> {
   const { data } = await api.put<BannerColors>(
     "/settings/banner-colors",
-    { bg_color, text_color },
+    { bg_color, text_color, font },
     { params: { source } }
   );
   return data;
@@ -168,11 +173,14 @@ export async function resetBannerColors(source: SourceType): Promise<void> {
   await api.delete("/settings/banner-colors", { params: { source } });
 }
 
-/** Faixa divisória do modo streamer (onde o nome do streamer se repete). */
+/** Faixa com o nome repetido: divide os painéis no streamer, encosta no banner
+ *  no layout do podcast. */
 export interface BarStyle {
   bg_color: string;
   text_color: string;
   font: string;
+  /** Nome escrito na faixa. Vazio: o canal do vídeo no streamer, nada no podcast. */
+  name: string;
   customized: boolean;
   /** Famílias instaladas na máquina do backend — a lista vem de lá. */
   available_fonts: { key: string; label: string }[];
@@ -189,11 +197,12 @@ export async function saveBarStyle(
   source: SourceType,
   bg_color: string,
   text_color: string,
-  font: string
+  font: string,
+  name: string
 ): Promise<BarStyle> {
   const { data } = await api.put<BarStyle>(
     "/settings/bar-style",
-    { bg_color, text_color, font },
+    { bg_color, text_color, font, name },
     { params: { source } }
   );
   return data;
@@ -255,11 +264,44 @@ export async function validateClip(
 
 // ─── Referências (aprender com clipe viral de outro criador) ──────────────────
 
-export async function createReference(sourceUrl: string, clip: File): Promise<Reference> {
+export async function createReference(
+  sourceUrl: string,
+  clip: File,
+  sourceType: SourceType = "podcast"
+): Promise<Reference> {
   const form = new FormData();
   form.append("source_url", sourceUrl);
   form.append("clip", clip);
+  form.append("source_type", sourceType);
   const { data } = await api.post<Reference>("/references", form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return data;
+}
+
+/**
+ * Aprende com um clipe viral sem ter o vídeo de origem (o caso do TikTok).
+ *
+ * Só o arquivo é obrigatório: o resto é contexto que entra na análise quando o
+ * usuário souber. Exigir qualquer outra coisa anularia o motivo deste caminho
+ * existir.
+ */
+export async function createStandaloneReference(payload: {
+  clip: File;
+  title?: string;
+  channel?: string;
+  postUrl?: string;
+  sourceType?: SourceType;
+  notas?: string;
+}): Promise<Reference> {
+  const form = new FormData();
+  form.append("clip", payload.clip);
+  form.append("title", payload.title ?? "");
+  form.append("channel", payload.channel ?? "");
+  form.append("post_url", payload.postUrl ?? "");
+  form.append("source_type", payload.sourceType ?? "podcast");
+  form.append("notas", payload.notas ?? "");
+  const { data } = await api.post<Reference>("/references/standalone", form, {
     headers: { "Content-Type": "multipart/form-data" },
   });
   return data;

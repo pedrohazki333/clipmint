@@ -9,25 +9,11 @@ import {
   saveBarStyle,
 } from "@/lib/api";
 import ColorField, { HEX_RE, toFullHex } from "@/components/ColorField";
+import FontField, { DEFAULT_FONT, fontStack } from "@/components/FontField";
 
 const DEFAULT_BG = "#101014";
 const DEFAULT_TEXT = "#9D9D9F";
-const DEFAULT_FONT = "condensed";
-
-/**
- * Aproximação em CSS das fontes que o backend usa no render. O preview serve
- * para julgar peso e proporção; a fonte final é a instalada no servidor.
- */
-const FONT_STACKS: Record<string, { family: string; weight: number }> = {
-  condensed: { family: "'DejaVu Sans Condensed', 'Arial Narrow', sans-serif", weight: 700 },
-  sans: { family: "'DejaVu Sans', Arial, sans-serif", weight: 700 },
-  inter: { family: "Inter, system-ui, sans-serif", weight: 700 },
-  inter_black: { family: "Inter, system-ui, sans-serif", weight: 900 },
-  montserrat: { family: "Montserrat, system-ui, sans-serif", weight: 700 },
-  montserrat_black: { family: "Montserrat, system-ui, sans-serif", weight: 900 },
-  serif: { family: "'DejaVu Serif', Georgia, serif", weight: 700 },
-  mono: { family: "'DejaVu Sans Mono', monospace", weight: 700 },
-};
+const MAX_NAME = 40;
 
 /** Mistura duas cores hex (amount = quanto de fg). Espelha _mix() do backend. */
 function mix(fg: string, bg: string, amount: number): string {
@@ -48,6 +34,7 @@ export default function BarStyleSettings({ source }: Props) {
   const [bgColor, setBgColor] = useState(DEFAULT_BG);
   const [textColor, setTextColor] = useState(DEFAULT_TEXT);
   const [font, setFont] = useState(DEFAULT_FONT);
+  const [name, setName] = useState("");
   const [fonts, setFonts] = useState<{ key: string; label: string }[]>([]);
   const [customized, setCustomized] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -61,6 +48,7 @@ export default function BarStyleSettings({ source }: Props) {
         setBgColor(s.bg_color);
         setTextColor(s.text_color);
         setFont(s.font);
+        setName(s.name);
         setFonts(s.available_fonts);
         setCustomized(s.customized);
       })
@@ -83,10 +71,11 @@ export default function BarStyleSettings({ source }: Props) {
     setBusy(true);
     setError("");
     try {
-      const s = await saveBarStyle(source, bgColor, textColor, font);
+      const s = await saveBarStyle(source, bgColor, textColor, font, name);
       setBgColor(s.bg_color);
       setTextColor(s.text_color);
       setFont(s.font);
+      setName(s.name);
       setCustomized(true);
       setDirty(false);
       setSaved(true);
@@ -105,6 +94,7 @@ export default function BarStyleSettings({ source }: Props) {
       setBgColor(DEFAULT_BG);
       setTextColor(DEFAULT_TEXT);
       setFont(DEFAULT_FONT);
+      setName("");
       setCustomized(false);
       setDirty(false);
       setSaved(false);
@@ -119,14 +109,19 @@ export default function BarStyleSettings({ source }: Props) {
   const previewText = toFullHex(textColor, DEFAULT_TEXT);
   const previewDot = mix(previewText, previewBg, 0.45);
   const previewHairline = mix(previewText, previewBg, 0.18);
-  const stack = FONT_STACKS[font] ?? FONT_STACKS[DEFAULT_FONT];
+  const stack = fontStack(font);
+  // Sem nome salvo, a faixa escreve o canal do vídeo (streamer). O exemplo no
+  // preview deixa isso visível em vez de mostrar uma faixa vazia.
+  const previewName = (name || "ALANZOKA").toUpperCase();
 
   return (
     <div className="rounded-2xl bg-gray-900 border border-gray-800 p-6">
       <div>
-        <h2 className="text-base font-semibold text-gray-100">Faixa do modo streamer</h2>
+        <h2 className="text-base font-semibold text-gray-100">Faixa com o nome</h2>
         <p className="text-sm text-gray-500 mt-1">
-          A linha entre a facecam e a gameplay, onde o nome do streamer se repete.
+          No streamer ela divide a facecam da gameplay; no podcast fica colada na
+          borda de baixo do banner. Sem nome preenchido ela só aparece no
+          streamer, com o nome do canal do vídeo.
         </p>
       </div>
 
@@ -150,7 +145,7 @@ export default function BarStyleSettings({ source }: Props) {
         >
           {Array.from({ length: 5 }).map((_, i) => (
             <span key={i} className="flex items-center gap-6">
-              ALANZOKA
+              {previewName}
               {i < 4 && <span style={{ color: previewDot }}>•</span>}
             </span>
           ))}
@@ -173,20 +168,24 @@ export default function BarStyleSettings({ source }: Props) {
           fallback={DEFAULT_TEXT}
         />
 
+        <FontField
+          value={font}
+          onChange={touch<string>(setFont)}
+          disabled={busy}
+          fonts={fonts}
+        />
+
         <div className="flex items-center gap-2">
-          <span className="text-xs text-gray-500">Família</span>
-          <select
-            value={font}
-            disabled={busy || fonts.length === 0}
-            onChange={(e) => touch(setFont)(e.target.value)}
-            className="rounded-lg bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm text-gray-200 outline-none focus:border-gray-500 disabled:opacity-50"
-          >
-            {(fonts.length ? fonts : [{ key: DEFAULT_FONT, label: "Padrão" }]).map((f) => (
-              <option key={f.key} value={f.key}>
-                {f.label}
-              </option>
-            ))}
-          </select>
+          <span className="text-xs text-gray-500">Nome</span>
+          <input
+            type="text"
+            value={name}
+            disabled={busy}
+            maxLength={MAX_NAME}
+            onChange={(e) => touch<string>(setName)(e.target.value)}
+            placeholder="@suaconta"
+            className="w-40 rounded-lg bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm text-gray-200 outline-none focus:border-gray-500 disabled:opacity-50"
+          />
         </div>
 
         <div className="flex items-center gap-3 ml-auto">

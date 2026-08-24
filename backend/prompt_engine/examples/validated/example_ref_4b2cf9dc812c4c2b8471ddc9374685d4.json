@@ -1,0 +1,38 @@
+{
+ "clip_id": "4b2cf9dc812c4c2b8471ddc9374685d4",
+ "source": "external_reference",
+ "validated_at": "2026-08-24T17:11:28.195659+00:00",
+ "video": {
+  "url": "https://www.youtube.com/watch?v=csUeexUoiG0",
+  "title": "UM NOVO R.E.P.O? - GRAIN ROT COM OS AMIGOS",
+  "channel": "alanzoka",
+  "language": "pt",
+  "duration": 6593.0
+ },
+ "clip": {
+  "start": 4291.8,
+  "end": 4313.8,
+  "duration": 22.0,
+  "opening_phrase": "Cadê? Que isso? Quem que é esse daí?",
+  "virality_score": 8.4,
+  "hook": "Todo mundo junto e ninguém sobreviveu",
+  "suggested_title": "Quando o time inteiro vira alvo ao mesmo tempo",
+  "reason": "Cena de combate corpo a corpo dentro de uma cabana de madeira: no primeiro quadro uma criatura verde (tipo goblin) avança perto do jogador chamado CAP; em seguida o quadro se enche de vários personagens/inimigos e uma fogueira no chão, e o jogador dá golpes de espada perto dos companheiros identificados como SANGRAS e DINO, com um deles caído/abaixado no chão. Depois a câmera roda de forma descontrolada e borrada duas vezes (giro brusco/empurrão), passando pela bancada de trabalho e terminando em movimento escuro e ilegível. Os contadores mudam: vida 100→99 e o ícone verde sobe de 3 para 6.",
+  "tags": [
+   "chaos",
+   "gameplay",
+   "amigos"
+  ]
+ },
+ "compilation": {
+  "of": "compilado publicado no TikTok (@alanzoka)",
+  "position": "3º",
+  "total_parts": 6,
+  "total_duration": 127.9
+ },
+ "validation": {
+  "performance": "muito_bom",
+  "aprendizado": "Briga corpo a corpo com os companheiros identificados na tela (SANGRAS, DINO, CAP). O rosto vai de olhos arregalados para risada dentro do próprio trecho. É o primeiro pico de energia do compilado — os dois anteriores eram baixos.\n\nPadrão dos seis trechos deste compilado, medido: em CINCO deles o personagem de um companheiro está visível na tela fazendo alguma coisa (com a tag do nome à vista), e em TODOS os seis o rosto do streamer vira dentro do trecho — de concentrado para gargalhada, susto ou grito. A graça é o que o amigo faz; a cara é a prova de que funcionou. Áudio alto sozinho não seleciona: a janela com mais risadas do vídeo ficou de fora do compilado.",
+  "provenance": "Compilado publicado pelo dono da conta e entregue como alvo. Sem métricas medidas — a nota reflete a escolha editorial, não desempenho verificado."
+ }
+}

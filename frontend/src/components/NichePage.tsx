@@ -3,7 +3,14 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import type { Job, LayoutMode, SourceType, SubtitleMode } from "@/lib/types";
+import type {
+  ClipMode,
+  Job,
+  LayoutMode,
+  ManualMode,
+  SourceType,
+  SubtitleMode,
+} from "@/lib/types";
 import { createJob, listJobs, getApiErrorMessage } from "@/lib/api";
 import UrlInput from "@/components/UrlInput";
 import JobCard from "@/components/JobCard";
@@ -74,6 +81,9 @@ export default function NichePage({ source }: Props) {
     subtitleMode: SubtitleMode,
     layoutMode: LayoutMode,
     _sourceType: SourceType,
+    clipMode: ClipMode,
+    manualClips: string,
+    manualMode: ManualMode,
   ) {
     setIsSubmitting(true);
     setSubmitError("");
@@ -85,6 +95,9 @@ export default function NichePage({ source }: Props) {
         subtitle_mode: subtitleMode,
         layout_mode: layoutMode,
         source_type: source,
+        clip_mode: clipMode,
+        manual_clips: manualClips.trim() || undefined,
+        manual_mode: manualMode,
       });
       router.push(`/jobs/${job.id}`);
     } catch (err: unknown) {

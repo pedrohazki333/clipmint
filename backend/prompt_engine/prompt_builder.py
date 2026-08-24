@@ -89,6 +89,31 @@ class PromptBuilder:
         logger.info(f"Injecting {len(selected)} validated example(s) into system prompt.")
         return prompt + "\n\n" + self._format_section(selected)
 
+    def examples_section(
+        self, max_examples: int = 6, max_per_category: int = 2
+    ) -> str:
+        """
+        Só a calibração — exemplos validados e padrões aprendidos, sem o
+        core_prompt.
+
+        A montagem do compilado (services/candidates.py) precisa do GOSTO mas
+        não da tarefa: o core_prompt manda achar clipes numa transcrição, que é
+        exatamente o enquadramento que fazia o modelo fatiar um momento só em
+        vez de juntar momentos distantes. String vazia quando não há nada
+        validado.
+        """
+        parts: list[str] = []
+        learned = self._load_learned_patterns()
+        if learned:
+            parts.append(learned)
+
+        selected = self._select_examples(
+            self._load_examples(), max_examples, max_per_category
+        )
+        if selected:
+            parts.append(self._format_section(selected))
+        return "\n\n".join(parts)
+
     def _load_learned_patterns(self) -> Optional[str]:
         """Retorna a seção de padrões aprendidos (learned_patterns.json), se existir."""
         try:
@@ -205,6 +230,50 @@ class PromptBuilder:
             if aprendizado:
                 lines.append(f"- Why it worked: {aprendizado}")
 
+            lines += self._forensics_lines(ex.get("forensics") or {})
             lines.append("")
 
         return "\n".join(lines).rstrip()
+
+    def _forensics_lines(self, forensics: dict) -> list[str]:
+        """
+        As linhas da perícia de um clipe standalone, quando houver.
+
+        Só três coisas entram, e a escolha é deliberada: o mecanismo do gancho, o
+        que segura até o fim e as regras de corte. O resto da perícia (estilo
+        visual, ritmo de edição, notas de montagem) é verdadeiro sobre o clipe e
+        inútil aqui — quem lê este prompt escolhe INTERVALOS num vídeo longo, não
+        monta nada. Despejar tudo faria o bloco de exemplos dobrar de tamanho
+        para diluir o few-shot com ordens que ninguém pode cumprir.
+        """
+        if not isinstance(forensics, dict) or not forensics:
+            return []
+
+        lines: list[str] = []
+
+        hook = forensics.get("hook_breakdown")
+        if isinstance(hook, dict):
+            mechanism = str(hook.get("mechanism") or "").strip()
+            if mechanism:
+                lines.append(f"- Hook mechanism: {mechanism}")
+            on_screen = str(hook.get("on_screen_text") or "").strip()
+            if on_screen:
+                lines.append(f'- On-screen text at the open: "{on_screen}"')
+
+        devices = [
+            str(d).strip()
+            for d in (forensics.get("retention_devices") or [])
+            if str(d).strip()
+        ]
+        if devices:
+            lines.append(f"- Retention: {'; '.join(devices[:3])}")
+
+        rules = [
+            str(r).strip()
+            for r in (forensics.get("transferable_rules") or [])
+            if str(r).strip()
+        ]
+        for rule in rules[:3]:
+            lines.append(f"- Cut rule learned: {rule}")
+
+        return lines

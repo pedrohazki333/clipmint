@@ -1,0 +1,38 @@
+{
+ "clip_id": "ddc2b0ce98b7454e8060955ce91bf56b",
+ "source": "external_reference",
+ "validated_at": "2026-08-24T17:11:28.200569+00:00",
+ "video": {
+  "url": "https://www.youtube.com/watch?v=csUeexUoiG0",
+  "title": "UM NOVO R.E.P.O? - GRAIN ROT COM OS AMIGOS",
+  "channel": "alanzoka",
+  "language": "pt",
+  "duration": 6593.0
+ },
+ "clip": {
+  "start": 3099.0,
+  "end": 3139.2,
+  "duration": 40.2,
+  "opening_phrase": "sou, né, sou muito lindo, mano. Mano, o",
+  "virality_score": 8.3,
+  "hook": "O maior perseguindo os dois menores",
+  "suggested_title": "A perseguição que fechou a sessão",
+  "reason": "Começa num corredor escuro e apertado com um pequeno inimigo tipo aranha no chão; ao virar, aparece de frente um grande boneco/robô com nome 'SANGRAS' em cima (outro jogador ou NPC aliado), que passa a se mover e lutar junto. Em seguida vem uma sequência caótica: número de dano '3' num inimigo, uma explosão amarelo-esverdeada que toma a tela, um flash escuro com aberração cromática, um clarão branco/rosa borrado com o valor '68', e por fim uma sala iluminada de roxo e vermelho com raios de eletricidade, uma máquina com botão 'E', o SANGRAS e um enorme robô/mecha andando em cima da grade metálica; termina com a visão atrás de canos/grades e a legenda 'CAP'.",
+  "tags": [
+   "teamplay",
+   "gameplay",
+   "amigos"
+  ]
+ },
+ "compilation": {
+  "of": "compilado publicado no TikTok (@alanzoka)",
+  "position": "fechamento",
+  "total_parts": 6,
+  "total_duration": 127.9
+ },
+ "validation": {
+  "performance": "muito_bom",
+  "aprendizado": "FECHAMENTO e o trecho mais longo (40s), quase um terço do compilado. O personagem do SANGRAS aparece de frente e passa a lutar junto; sequência caótica com explosão. Também não tem buraco de transcrição. Trecho longo funciona no fim, quando o espectador já está dentro — nunca na abertura.\n\nPadrão dos seis trechos deste compilado, medido: em CINCO deles o personagem de um companheiro está visível na tela fazendo alguma coisa (com a tag do nome à vista), e em TODOS os seis o rosto do streamer vira dentro do trecho — de concentrado para gargalhada, susto ou grito. A graça é o que o amigo faz; a cara é a prova de que funcionou. Áudio alto sozinho não seleciona: a janela com mais risadas do vídeo ficou de fora do compilado.",
+  "provenance": "Compilado publicado pelo dono da conta e entregue como alvo. Sem métricas medidas — a nota reflete a escolha editorial, não desempenho verificado."
+ }
+}

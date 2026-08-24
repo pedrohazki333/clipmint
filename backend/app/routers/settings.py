@@ -19,14 +19,26 @@ from app.services.branding import (
     preset_path,
 )
 from app.services.layout import (
+    BANNER_DEFAULT_FONT,
     BAR_DEFAULT_BG_HEX,
     BAR_DEFAULT_FONT,
     BAR_DEFAULT_TEXT_HEX,
     BAR_FONTS,
     available_bar_fonts,
-    load_banner_colors,
+    load_banner_style,
     load_bar_style,
 )
+
+# O nome escrito na faixa é um @ de conta, não um texto livre: um parágrafo ali
+# viraria uma linha ilegível repetida na tela.
+_MAX_BAR_NAME = 40
+
+
+def _known_font(v: str) -> str:
+    v = v.strip()
+    if v not in BAR_FONTS:
+        raise ValueError(f"Fonte desconhecida: escolha uma de {', '.join(BAR_FONTS)}")
+    return v
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +171,9 @@ def _normalize_hex(value: str) -> str:
 class BannerColors(BaseModel):
     bg_color: str
     text_color: str
+    # Opcional para não quebrar quem já chama a rota só com as cores: sem ela,
+    # o banner fica na família padrão.
+    font: str = BANNER_DEFAULT_FONT
 
     @field_validator("bg_color", "text_color")
     @classmethod
@@ -168,25 +183,48 @@ class BannerColors(BaseModel):
             raise ValueError("Cor inválida: use hexadecimal no formato #RRGGBB (ex: #ED2828)")
         return _normalize_hex(v)
 
+    @field_validator("font")
+    @classmethod
+    def _valid_font(cls, v: str) -> str:
+        return _known_font(v)
+
+
+def _banner_payload(bg: str, text: str, font: str, customized: bool) -> dict:
+    return {
+        "bg_color": bg,
+        "text_color": text,
+        "font": font,
+        "customized": customized,
+        # Como na faixa: quais famílias existem depende da máquina do backend.
+        "available_fonts": available_bar_fonts(),
+    }
+
 
 @router.get("/settings/banner-colors")
 async def get_banner_colors(source: SourceType = _SOURCE_QUERY) -> dict:
-    """Cores atuais do banner (padrões se nada foi customizado)."""
-    bg, text, customized = load_banner_colors(source)
-    return {"bg_color": bg, "text_color": text, "customized": customized}
+    """Cores e fonte atuais do banner (padrões se nada foi customizado)."""
+    style = load_banner_style(source)
+    return _banner_payload(style.bg_color, style.text_color, style.font, style.customized)
 
 
 @router.put("/settings/banner-colors")
 async def set_banner_colors(
     colors: BannerColors, source: SourceType = _SOURCE_QUERY
 ) -> dict:
-    """Define as cores do banner (fundo da pílula e fonte) em hexadecimal."""
+    """Define as cores do banner (fundo e texto) e a família da fonte."""
     _banner_colors_file(source).write_text(
-        json.dumps({"bg_color": colors.bg_color, "text_color": colors.text_color}),
+        json.dumps({
+            "bg_color": colors.bg_color,
+            "text_color": colors.text_color,
+            "font": colors.font,
+        }),
         encoding="utf-8",
     )
-    logger.info(f"Banner colors saved [{source}]: bg={colors.bg_color} text={colors.text_color}")
-    return {"bg_color": colors.bg_color, "text_color": colors.text_color, "customized": True}
+    logger.info(
+        f"Banner style saved [{source}]: bg={colors.bg_color} "
+        f"text={colors.text_color} font={colors.font}"
+    )
+    return _banner_payload(colors.bg_color, colors.text_color, colors.font, True)
 
 
 @router.delete("/settings/banner-colors", status_code=204)
@@ -209,6 +247,9 @@ class BarStyle(BaseModel):
     bg_color: str
     text_color: str
     font: str
+    # Vazio = a faixa usa o nome do canal do vídeo (modo streamer) ou não
+    # aparece (layout do podcast).
+    name: str = ""
 
     @field_validator("bg_color", "text_color")
     @classmethod
@@ -220,18 +261,26 @@ class BarStyle(BaseModel):
 
     @field_validator("font")
     @classmethod
-    def _known_font(cls, v: str) -> str:
+    def _valid_font(cls, v: str) -> str:
+        return _known_font(v)
+
+    @field_validator("name")
+    @classmethod
+    def _short_name(cls, v: str) -> str:
         v = v.strip()
-        if v not in BAR_FONTS:
-            raise ValueError(f"Fonte desconhecida: escolha uma de {', '.join(BAR_FONTS)}")
+        if len(v) > _MAX_BAR_NAME:
+            raise ValueError(f"Nome muito longo (máx. {_MAX_BAR_NAME} caracteres)")
         return v
 
 
-def _bar_style_payload(bg: str, text: str, font: str, customized: bool) -> dict:
+def _bar_style_payload(
+    bg: str, text: str, font: str, name: str, customized: bool
+) -> dict:
     return {
         "bg_color": bg,
         "text_color": text,
         "font": font,
+        "name": name,
         "customized": customized,
         # A lista vai junto porque depende das fontes instaladas na máquina —
         # o frontend não tem como saber quais existem.
@@ -241,28 +290,32 @@ def _bar_style_payload(bg: str, text: str, font: str, customized: bool) -> dict:
 
 @router.get("/settings/bar-style")
 async def get_bar_style(source: SourceType = _SOURCE_QUERY) -> dict:
-    """Cor de fundo, cor do texto e fonte da faixa com o nome do streamer."""
-    bg, text, font, customized = load_bar_style(source)
-    return _bar_style_payload(bg, text, font, customized)
+    """Cor de fundo, cor do texto, fonte e nome escrito na faixa."""
+    style = load_bar_style(source)
+    return _bar_style_payload(*style)
 
 
 @router.put("/settings/bar-style")
 async def set_bar_style(
     style: BarStyle, source: SourceType = _SOURCE_QUERY
 ) -> dict:
-    """Define fundo, cor do texto e família da fonte da faixa divisória."""
+    """Define fundo, cor do texto, família da fonte e nome da faixa divisória."""
     _bar_style_file(source).write_text(
         json.dumps({
             "bg_color": style.bg_color,
             "text_color": style.text_color,
             "font": style.font,
+            "name": style.name,
         }),
         encoding="utf-8",
     )
     logger.info(
-        f"Bar style saved [{source}]: bg={style.bg_color} text={style.text_color} font={style.font}"
+        f"Bar style saved [{source}]: bg={style.bg_color} text={style.text_color} "
+        f"font={style.font} name={style.name!r}"
     )
-    return _bar_style_payload(style.bg_color, style.text_color, style.font, True)
+    return _bar_style_payload(
+        style.bg_color, style.text_color, style.font, style.name, True
+    )
 
 
 @router.delete("/settings/bar-style", status_code=204)

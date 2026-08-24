@@ -18,22 +18,40 @@ from typing import List, Optional
 import anthropic
 
 from app.config import settings
+from app.services.candidates import (
+    assemble_compilations,
+    describe_candidates,
+    propose_candidates,
+)
 from app.prompts.viral_analysis import (
+    COMPILATION_TARGET,
     DEFAULT_SOURCE_TYPE,
+    GAP_LEGEND,
     build_analysis_prompt,
+    format_transcript_with_timestamps,
     source_criteria,
 )
 from app.services import vision
 from app.services.audio_events import Gap, rescue_start
+from app.services.moderation_terms import find_risky_terms
 from prompt_engine.prompt_builder import PromptBuilder
 
 logger = logging.getLogger(__name__)
 
 
-# Clipe costurado (só Siege): trecho menor que isto vira piscada, e a soma
-# precisa manter o vídeo perto de um minuto em vez do round inteiro.
+# Clipe costurado (Siege e compilado): trecho menor que isto vira piscada, e a
+# soma precisa manter o vídeo perto de um minuto em vez do round inteiro.
 MIN_SEGMENT = 3.0
 MAX_SEGMENTED_TOTAL = 70.0
+
+# Distância mínima entre dois trechos de um COMPILADO para eles serem momentos
+# diferentes. Sem isso, "a ordem não precisa ser cronológica" degenera: no
+# primeiro job com duas passadas o modelo devolveu [5575.3-5600.1] seguido de
+# [5547.3-5575.3] — um bloco contínuo de 53s fatiado ao meio e tocado de trás
+# para frente, o que sai visivelmente quebrado. Trechos que se encostam são o
+# MESMO acontecimento e voltam a ser um só. 30s é folgado: os trechos do
+# compilado real do alanzoka distavam minutos uns dos outros.
+COMPILATION_MIN_GAP = 30.0
 
 # Peso de cada eixo no final_score, seguindo a ordem de importância dos sinais
 # do algoritmo (completion rate primeiro, loop por último). Soma 1.0.
@@ -149,20 +167,56 @@ def _split_clip(clip_data: dict, words: List[dict], max_duration: int) -> List[d
     return [part1, part2]
 
 
+def _merge_adjacent(
+    segments: list[tuple[float, float]], min_gap: float
+) -> list[tuple[float, float]]:
+    """
+    Funde trechos vizinhos na FONTE, preservando a ordem editorial.
+
+    Dois trechos que se encostam são um acontecimento só, fatiado. Fundir em
+    vez de descartar é o que salva o resto do compilado: o modelo costuma errar
+    isso em um par e acertar nos outros.
+    """
+    indexed = list(enumerate(segments))
+    merged: list[list] = []
+    for index, (start, end) in sorted(indexed, key=lambda pair: pair[1][0]):
+        if merged and start - merged[-1][2] <= min_gap:
+            merged[-1][0] = min(merged[-1][0], index)
+            merged[-1][2] = max(merged[-1][2], end)
+            continue
+        merged.append([index, start, end])
+
+    # De volta à ordem em que o modelo entregou — ela é a montagem.
+    merged.sort(key=lambda item: item[0])
+    return [(start, end) for _, start, end in merged]
+
+
 def parse_segments(
-    raw, min_segment: float = MIN_SEGMENT, max_total: float = MAX_SEGMENTED_TOTAL
+    raw,
+    min_segment: float = MIN_SEGMENT,
+    max_total: float = MAX_SEGMENTED_TOTAL,
+    chronological: bool = True,
+    min_gap: float = COMPILATION_MIN_GAP,
 ) -> list[tuple[float, float]]:
     """
     Trechos válidos para costurar num clipe só, ou lista vazia.
 
-    Lista vazia significa "clipe contínuo normal" — é o caminho de todos os
-    nichos menos Siege, e também a rede de segurança quando o modelo devolve
-    algo estranho: na dúvida o sistema volta ao corte simples em vez de montar
-    um vídeo picotado.
+    Lista vazia significa "clipe contínuo normal" — é o caminho de todo job em
+    modo individual fora do Siege, e também a rede de segurança quando o modelo
+    devolve algo estranho: na dúvida o sistema volta ao corte simples em vez de
+    montar um vídeo picotado.
 
-    Descarta trecho curto demais (vira piscada), fora de ordem ou sobreposto, e
-    corta a lista quando a soma passa do teto — o clipe precisa ficar perto de
-    um minuto, não do round inteiro.
+    Descarta trecho curto demais (vira piscada) ou sobreposto, e corta a lista
+    quando a soma passa do teto — o clipe precisa ficar perto de um minuto, não
+    do round inteiro.
+
+    `chronological=False` (compilado) aceita trechos fora de ordem. Num ace de
+    Siege a ordem é a do acontecimento e inverter seria mentir sobre a jogada;
+    num compilado a ordem é EDITORIAL — medido no compilado real do alanzoka,
+    os 6 trechos vinham de 64min, 6min, 71min, 94min, 46min e 51min, nessa
+    ordem, abrindo pela risada mais forte. Com a regra cronológica, tudo depois
+    do primeiro trecho era descartado e o compilado virava um clipe de 8s.
+    Sobreposição continua barrada nos dois modos: é o mesmo material duas vezes.
     """
     if not isinstance(raw, list) or len(raw) < 2:
         return []
@@ -177,12 +231,22 @@ def parse_segments(
             continue
         if end - start < min_segment:
             continue
-        if parsed and start < parsed[-1][1]:  # fora de ordem ou sobreposto
+        if chronological:
+            if parsed and start < parsed[-1][1]:  # fora de ordem ou sobreposto
+                continue
+        elif any(start < prev_end and prev_start < end for prev_start, prev_end in parsed):
             continue
         parsed.append((start, end))
 
     if len(parsed) < 2:
         return []
+
+    # Só no compilado: em Siege os trechos de um ace são vizinhos de propósito
+    # (a caminhada entre os abates), e fundi-los desmancharia a feature.
+    if not chronological:
+        parsed = _merge_adjacent(parsed, min_gap)
+        if len(parsed) < 2:
+            return []
 
     kept: list[tuple[float, float]] = []
     total = 0.0
@@ -193,6 +257,58 @@ def parse_segments(
         total += end - start
 
     return kept if len(kept) >= 2 else []
+
+
+async def _scan_for_compilation(
+    job_id: str,
+    words: List[dict],
+    gaps,
+    title: str,
+    channel: str,
+    duration_seconds: float,
+    video_path: Optional[str],
+) -> list:
+    """
+    Passada 1 do compilado: aponta instantes e manda a visão descrevê-los.
+
+    Sem vídeo em disco a varredura ainda vale — as justificativas de texto vão
+    para a anotação mesmo sem imagem —, mas é a descrição visual que carrega o
+    peso, então é ela que o log reporta.
+    """
+    transcript_text = format_transcript_with_timestamps(words, gaps)
+    observations = await propose_candidates(
+        job_id=job_id,
+        transcript_text=transcript_text,
+        title=title,
+        channel=channel,
+        duration_seconds=duration_seconds,
+        gap_legend=GAP_LEGEND.strip() if gaps else "",
+    )
+    if observations and video_path:
+        await describe_candidates(job_id, video_path, observations)
+    return observations
+
+
+def _log_segment_decision(job_id: str, clip: dict, raw_segments, allowed: bool) -> None:
+    """Por que este clipe saiu costurado ou contínuo."""
+    window = f"[{clip.get('start')}-{clip.get('end')}]"
+    accepted = clip["_segments"]
+    if accepted:
+        total = sum(end - start for start, end in accepted)
+        logger.info(
+            f"[{job_id}] Clip {window}: {len(accepted)} trecho(s) costurado(s), "
+            f"{total:.1f}s somados"
+        )
+        return
+    if raw_segments and allowed:
+        count = len(raw_segments) if isinstance(raw_segments, list) else "?"
+        logger.warning(
+            f"[{job_id}] Clip {window}: os {count} trecho(s) devolvidos pelo modelo "
+            f"foram RECUSADOS (menos de 2 válidos, curtos demais, sobrepostos, ou "
+            f"acima do teto de {MAX_SEGMENTED_TOTAL:.0f}s somados) — sai contínuo"
+        )
+    elif raw_segments and not allowed:
+        logger.info(f"[{job_id}] Clip {window}: trechos ignorados (modo não permite costura)")
 
 
 def _axis_scores(clip_data: dict) -> dict:
@@ -394,6 +510,27 @@ def _parse_claude_response(raw: str) -> dict:
     return json.loads(raw)
 
 
+def _warn_risky_wording(job_id: str, clips: List[ViralClip]) -> None:
+    """
+    Avisa quando o banner ou o título saem com vocabulário de violência.
+
+    Aviso, e não reescrita: o hook é uma frase, e trocar palavra por palavra
+    dentro dela devolve português torto. Quem decide é quem posta — o log diz
+    qual clipe e qual palavra, e o texto está a um clique de ser editado antes
+    do render. Ver `app.services.moderation_terms` para o que é documentado e
+    o que é precaução.
+    """
+    for clip in clips:
+        for field, text in (("banner", clip.hook), ("título", clip.suggested_title)):
+            terms = find_risky_terms(text)
+            if terms:
+                logger.warning(
+                    f"[{job_id}] Clip [{clip.start:.1f}-{clip.end:.1f}] com "
+                    f"{', '.join(terms)!r} no {field} — vocabulário que pode "
+                    f"custar alcance no TikTok: {text!r}"
+                )
+
+
 async def analyze_virality(
     job_id: str,
     words: List[dict],
@@ -403,6 +540,7 @@ async def analyze_virality(
     source_type: str = DEFAULT_SOURCE_TYPE,
     gaps: Optional[List[Gap]] = None,
     video_path: Optional[str] = None,
+    clip_mode: str = "individual",
 ) -> AnalysisResult:
     """
     Analisa a transcrição completa e retorna segmentos com alto potencial viral.
@@ -417,6 +555,9 @@ async def analyze_virality(
         channel: Nome do canal.
         duration_seconds: Duração total do vídeo em segundos.
         source_type: 'podcast' ou 'gameplay' — troca a rubrica aplicada.
+        clip_mode: 'compilation' PEDE um compilado (vários momentos costurados
+            num vídeo só). Não é garantia: sem material que se sustente, o
+            modelo devolve clipes individuais e o pipeline segue normal.
         gaps: Buracos da transcrição medidos por services.audio_events. Anotam
             o prompt e alimentam o resgate de cortes que começam depois do fato.
         video_path: Vídeo em disco. Presente, a imagem entra na decisão dos
@@ -435,60 +576,119 @@ async def analyze_virality(
         f"Source: {source_type}"
     )
 
-    user_prompt = build_analysis_prompt(
-        words=words,
-        title=title,
-        channel=channel,
-        duration_seconds=duration_seconds,
-        threshold=threshold,
-        min_duration=min_dur,
-        max_duration=max_dur,
-        preferred_min=settings.preferred_clip_min,
-        preferred_max=settings.preferred_clip_max,
-        source_type=source_type,
-        gaps=gaps,
-    )
-
-    system_prompt = PromptBuilder().build(
-        min_duration=min_dur,
-        max_duration=max_dur,
-        preferred_min=settings.preferred_clip_min,
-        preferred_max=settings.preferred_clip_max,
-        source_criteria=source_criteria(source_type),
-    )
-
-    client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-
-    message = await client.messages.create(
-        model=settings.claude_model,
-        max_tokens=settings.claude_max_tokens,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_prompt}],
-    )
-
-    text_blocks = [b.text for b in message.content if b.type == "text"]
-    if not text_blocks:
-        raise RuntimeError(
-            f"Claude returned no text content (stop_reason={message.stop_reason})"
+    # Compilado: antes de escolher, descobrir onde olhar. A origem de janela
+    # dos buracos de áudio é cega para o momento que acontece com todo mundo
+    # falando junto — e num compilado isso é metade do material bom.
+    observations = []
+    assembled: List[dict] = []
+    assembly_notes = ""
+    if clip_mode == "compilation":
+        observations = await _scan_for_compilation(
+            job_id, words, gaps, title, channel, duration_seconds, video_path
         )
-    raw_response = text_blocks[0]
-    logger.info(f"[{job_id}] Claude response received ({len(raw_response)} chars)")
+        assembled, assembly_notes = await assemble_compilations(
+            job_id=job_id,
+            observations=observations,
+            words=words,
+            title=title,
+            channel=channel,
+            target=COMPILATION_TARGET,
+        )
 
-    try:
-        parsed = _parse_claude_response(raw_response)
-    except json.JSONDecodeError as e:
-        logger.error(f"[{job_id}] Failed to parse Claude response: {e}\nRaw: {raw_response[:500]}")
-        raise RuntimeError(f"Claude returned invalid JSON: {e}")
+    if assembled:
+        # A montagem já escolheu, a partir de um cardápio de momentos inteiros.
+        # Pedir a mesma coisa de novo pela transcrição não acrescenta nada e
+        # traz de volta o enquadramento que faz o modelo fatiar um momento só.
+        raw_clips = assembled
+        analysis_notes = assembly_notes
+        logger.info(f"[{job_id}] {len(raw_clips)} compilado(s) montados do cardápio")
+    else:
+        user_prompt = build_analysis_prompt(
+            words=words,
+            title=title,
+            channel=channel,
+            duration_seconds=duration_seconds,
+            threshold=threshold,
+            min_duration=min_dur,
+            max_duration=max_dur,
+            preferred_min=settings.preferred_clip_min,
+            preferred_max=settings.preferred_clip_max,
+            source_type=source_type,
+            gaps=gaps,
+            clip_mode=clip_mode,
+            observations=observations,
+        )
 
-    raw_clips = parsed.get("clips", [])
-    analysis_notes = parsed.get("analysis_notes", "")
+        system_prompt = PromptBuilder().build(
+            min_duration=min_dur,
+            max_duration=max_dur,
+            preferred_min=settings.preferred_clip_min,
+            preferred_max=settings.preferred_clip_max,
+            source_criteria=source_criteria(source_type),
+        )
+
+        client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+
+        message = await client.messages.create(
+            model=settings.claude_model,
+            max_tokens=settings.claude_max_tokens,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+
+        text_blocks = [b.text for b in message.content if b.type == "text"]
+        if not text_blocks:
+            raise RuntimeError(
+                f"Claude returned no text content (stop_reason={message.stop_reason})"
+            )
+        raw_response = text_blocks[0]
+        logger.info(f"[{job_id}] Claude response received ({len(raw_response)} chars)")
+
+        try:
+            parsed = _parse_claude_response(raw_response)
+        except json.JSONDecodeError as e:
+            logger.error(f"[{job_id}] Failed to parse Claude response: {e}\nRaw: {raw_response[:500]}")
+            raise RuntimeError(f"Claude returned invalid JSON: {e}")
+
+        raw_clips = parsed.get("clips", [])
+        analysis_notes = parsed.get("analysis_notes", "")
 
     logger.info(f"[{job_id}] Claude identified {len(raw_clips)} clips before filtering")
 
     # Filtra por veredito, threshold e duração mínima
-    segmented_allowed = (source_type or DEFAULT_SOURCE_TYPE).lower() == "siege"
+    compilation = clip_mode == "compilation"
+    segmented_allowed = compilation or (source_type or DEFAULT_SOURCE_TYPE).lower() == "siege"
     for c in raw_clips:
-        c["_segments"] = parse_segments(c.get("segments")) if segmented_allowed else []
+        raw_segments = c.get("segments")
+        c["_segments"] = (
+            parse_segments(raw_segments, chronological=not compilation)
+            if segmented_allowed
+            else []
+        )
+        # Cair no corte contínuo é a rede de segurança certa, mas em silêncio
+        # ela vira "o modo compilado não funciona" sem nenhuma pista de por quê:
+        # o modelo pode não ter devolvido trecho nenhum, ou ter devolvido
+        # trechos que o parse recusou. São problemas opostos e o log tem que
+        # separar os dois.
+        _log_segment_decision(job_id, c, raw_segments, segmented_allowed)
+
+    # Compilado montado que perdeu os trechos não vira clipe contínuo: o
+    # intervalo bruto dele vai do primeiro ao último momento e pode cobrir meia
+    # hora de vídeo. Medido: um compilado recusado virou um "clipe" de 1950s,
+    # que o divisor partiu em duas metades de 16 minutos e o render aceitou.
+    dropped = [c for c in raw_clips if c.get("_assembled") and not c["_segments"]]
+    for c in dropped:
+        logger.warning(
+            f"[{job_id}] Compilado [{c.get('start'):.0f}-{c.get('end'):.0f}] descartado: "
+            f"sem trechos válidos não existe versão contínua dele"
+        )
+    raw_clips = [c for c in raw_clips if not (c.get("_assembled") and not c["_segments"])]
+
+    if compilation and not any(c["_segments"] for c in raw_clips):
+        logger.warning(
+            f"[{job_id}] Modo COMPILADO pedido, mas nenhum clipe saiu costurado — "
+            f"a entrega vira {len(raw_clips)} clipe(s) individual(is)"
+        )
 
     # Antes de filtrar: recuar o início alonga o clipe, então um corte que
     # perdeu o fato e ficou curto demais precisa ser resgatado enquanto ainda
@@ -549,6 +749,15 @@ async def analyze_virality(
                     f"skipped: duration {part_dur:.1f}s < min {min_dur}s"
                 )
                 continue
+            # Rede de segurança: o divisor corta em DUAS partes, então uma
+            # janela absurda ainda sai absurda depois dele. Sem este teto um
+            # engano de montagem virou render de 16 minutos.
+            if part_dur > max_dur:
+                logger.warning(
+                    f"[{job_id}] Split part [{part['start']:.1f}-{part['end']:.1f}] "
+                    f"descartada: {part_dur:.0f}s continua acima do teto de {max_dur}s"
+                )
+                continue
             final_clips_data.append(part)
 
     # Converte para dataclasses
@@ -577,6 +786,8 @@ async def analyze_virality(
             part_number=c.get("part_number"),
             parent_start=c.get("parent_start"),
         ))
+
+    _warn_risky_wording(job_id, viral_clips)
 
     logger.info(f"[{job_id}] Final clips after split: {len(viral_clips)}")
 

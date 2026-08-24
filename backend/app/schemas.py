@@ -4,6 +4,8 @@ from datetime import datetime
 from typing import Optional, List, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.utils.timecodes import TimecodeError, parse_ranges
+
 _YOUTUBE_URL_RE = re.compile(
     r"^https?://(www\.|m\.)?(youtube\.com/(watch\?|shorts/|live/)|youtu\.be/)"
 )
@@ -33,8 +35,34 @@ class JobCreate(BaseModel):
     # Muda a rubrica da análise e define a conta no cronograma de postagem.
     # Omitido = inferido do layout_mode (streamer→gameplay, cover→podcast).
     source_type: Optional[Literal["podcast", "gameplay", "siege"]] = None
+    # "compilation" pede um compilado; sem material que se sustente como
+    # compilado, o pipeline entrega clipes individuais do jeito de sempre.
+    clip_mode: Literal["individual", "compilation"] = "individual"
+    # Trechos marcados à mão, como digitados ("3:24 - 4:10, 12:05 - 12:40").
+    manual_clips: Optional[str] = None
+    # Só tem efeito junto de manual_clips.
+    manual_mode: Literal["only", "plus"] = "only"
     # Só no modo streamer: posição da facecam. Omitido = detecção automática.
     facecam_rect: Optional[FacecamRectPayload] = None
+
+    @field_validator("manual_clips")
+    @classmethod
+    def validate_manual_clips(cls, v: Optional[str]) -> Optional[str]:
+        """
+        Recusa a lista aqui, e não no pipeline.
+
+        Erro de digitação num trecho é do usuário e tem conserto imediato: a
+        mensagem do parser diz QUAL pedaço está errado. Deixar passar faria o
+        job baixar 7 GB e falhar depois, ou pior, cortar o trecho errado em
+        silêncio.
+        """
+        if v is None or not v.strip():
+            return None
+        try:
+            parse_ranges(v)
+        except TimecodeError as exc:
+            raise ValueError(str(exc)) from exc
+        return v
 
     @field_validator("youtube_url")
     @classmethod
@@ -55,6 +83,9 @@ class JobResponse(BaseModel):
     subtitle_mode: str
     layout_mode: str = "cover"
     source_type: str = "podcast"
+    clip_mode: str = "individual"
+    manual_clips: Optional[list] = None
+    manual_mode: str = "only"
     facecam_rect: Optional[dict] = None
     status: str
     error_message: Optional[str]
@@ -68,6 +99,19 @@ class JobResponse(BaseModel):
     def default_layout_mode(cls, v: Optional[str]) -> str:
         # Jobs criados antes da coluna existir vêm sem valor
         return v or "cover"
+
+    @field_validator("manual_clips", mode="before")
+    @classmethod
+    def parse_manual_clips(cls, v):
+        """A coluna guarda JSON serializado; a API entrega a lista."""
+        if not v:
+            return None
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                return None
+        return v
 
     @field_validator("facecam_rect", mode="before")
     @classmethod
@@ -167,6 +211,11 @@ class ValidateClipResponse(BaseModel):
 
 class ReferenceResponse(BaseModel):
     id: str
+    # 'aligned' = veio com o vídeo original e foi localizado dentro dele.
+    # 'standalone' = só o arquivo do clipe, periciado por si (ver models.py).
+    kind: Literal["aligned", "standalone"] = "aligned"
+    source_type: str = "podcast"
+    # No modo standalone pode ser o link do post, ou vazio quando nem isso se sabe.
     source_url: str
     source_title: Optional[str]
     source_channel: Optional[str]
@@ -177,6 +226,9 @@ class ReferenceResponse(BaseModel):
     alignment_confidence: Optional[float]
     clip_duration: Optional[float]
     analysis: Optional[dict] = None       # analysis_json parseado
+    # Só no modo standalone: a perícia detalhada (gancho, batidas, som, estilo
+    # visual, regras transferíveis). forensics_json parseado.
+    forensics: Optional[dict] = None
     opening_phrase: Optional[str]
     transcript_excerpt: Optional[str]
     performance: Optional[str]

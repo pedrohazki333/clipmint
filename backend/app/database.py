@@ -40,6 +40,9 @@ _ADDED_COLUMNS = [
     ("jobs", "layout_mode", "VARCHAR DEFAULT 'cover'"),
     ("jobs", "facecam_rect", "TEXT"),
     ("jobs", "source_type", "VARCHAR DEFAULT 'podcast'"),
+    ("jobs", "clip_mode", "VARCHAR DEFAULT 'individual'"),
+    ("jobs", "manual_clips", "TEXT"),
+    ("jobs", "manual_mode", "VARCHAR DEFAULT 'only'"),
     ("clips", "hook_score", "FLOAT"),
     ("clips", "retention_score", "FLOAT"),
     ("clips", "shareability_score", "FLOAT"),
@@ -58,6 +61,12 @@ _ADDED_COLUMNS = [
     ("clips", "comments", "INTEGER"),
     ("clips", "shares", "INTEGER"),
     ("clips", "metrics_at", "DATETIME"),
+    # Aprendizado por clipe solto, sem o vídeo de origem (ver models.py).
+    # DEFAULT 'aligned' descreve corretamente as referências antigas: todas
+    # foram criadas quando esse era o único modo que existia.
+    ("reference_examples", "kind", "VARCHAR DEFAULT 'aligned'"),
+    ("reference_examples", "source_type", "VARCHAR DEFAULT 'podcast'"),
+    ("reference_examples", "forensics_json", "TEXT"),
 ]
 
 

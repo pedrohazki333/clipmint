@@ -1,10 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import type { LayoutMode, SourceType, SubtitleMode } from "@/lib/types";
+import type { ClipMode, LayoutMode, ManualMode, SourceType, SubtitleMode } from "@/lib/types";
 import SubtitleModeSelector from "./SubtitleModeSelector";
 import LayoutModeSelector from "./LayoutModeSelector";
 import SourceTypeSelector from "./SourceTypeSelector";
+import ClipModeSelector from "./ClipModeSelector";
+import ManualClipsField from "./ManualClipsField";
 
 interface Props {
   onSubmit: (
@@ -12,6 +14,9 @@ interface Props {
     subtitleMode: SubtitleMode,
     layoutMode: LayoutMode,
     sourceType: SourceType,
+    clipMode: ClipMode,
+    manualClips: string,
+    manualMode: ManualMode,
   ) => Promise<void>;
   isLoading: boolean;
   /** Fixa o nicho (páginas de conta): o seletor some e o valor não muda. */
@@ -37,6 +42,9 @@ export default function UrlInput({
   const [sourceType, setSourceType] = useState<SourceType>(lockedSource ?? "podcast");
   // Enquanto o usuário não escolher à mão, o tipo acompanha o layout.
   const [sourceTouched, setSourceTouched] = useState(false);
+  const [clipMode, setClipMode] = useState<ClipMode>("individual");
+  const [manualClips, setManualClips] = useState("");
+  const [manualMode, setManualMode] = useState<ManualMode>("only");
   const [error, setError] = useState("");
 
   function handleLayoutChange(mode: LayoutMode) {
@@ -67,7 +75,15 @@ export default function UrlInput({
       return;
     }
 
-    await onSubmit(url.trim(), subtitleMode, layoutMode, sourceType);
+    await onSubmit(
+      url.trim(),
+      subtitleMode,
+      layoutMode,
+      sourceType,
+      clipMode,
+      manualClips,
+      manualMode,
+    );
     setUrl("");
   }
 
@@ -99,6 +115,16 @@ export default function UrlInput({
         />
       )}
 
+      <ClipModeSelector value={clipMode} onChange={setClipMode} />
+
+      <ManualClipsField
+        value={manualClips}
+        onChange={setManualClips}
+        mode={manualMode}
+        onModeChange={setManualMode}
+        isCompilation={clipMode === "compilation"}
+      />
+
       <SubtitleModeSelector value={subtitleMode} onChange={setSubtitleMode} />
 
       <button
@@ -106,7 +132,11 @@ export default function UrlInput({
         disabled={isLoading}
         className="w-full rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:bg-gray-700 disabled:cursor-not-allowed px-6 py-3 font-semibold text-white transition-colors"
       >
-        {isLoading ? "Processando..." : "Gerar Clips"}
+        {isLoading
+          ? "Processando..."
+          : clipMode === "compilation"
+            ? "Gerar Compilado"
+            : "Gerar Clips"}
       </button>
     </form>
   );

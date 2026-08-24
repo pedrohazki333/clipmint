@@ -12,6 +12,7 @@ import {
   updateReference,
 } from "@/lib/api";
 import ReferenceStatus from "@/components/ReferenceStatus";
+import ClipForensicsPanel from "@/components/ClipForensicsPanel";
 
 const POLLING_INTERVAL = 3000;
 const TERMINAL = new Set(["done", "error"]);
@@ -154,6 +155,7 @@ export default function ReferencePage() {
   }
 
   const a = ref.analysis;
+  const isStandalone = ref.kind === "standalone";
   const conf = ref.alignment_confidence != null ? confidenceStyle(ref.alignment_confidence) : null;
 
   return (
@@ -166,20 +168,34 @@ export default function ReferencePage() {
       <div className="rounded-2xl bg-gray-900 border border-gray-800 p-6 flex flex-col gap-4">
         <div>
           <h1 className="text-xl font-bold text-gray-100 leading-tight">
-            {ref.source_title ?? "Processando referência..."}
+            {ref.source_title || "Processando referência..."}
           </h1>
-          {ref.source_channel && <p className="text-sm text-gray-500 mt-1">{ref.source_channel}</p>}
-          <a
-            href={ref.source_url}
-            target="_blank"
-            rel="noreferrer"
-            className="text-xs text-gray-600 hover:text-gray-400 break-all"
-          >
-            {ref.source_url}
-          </a>
+          <p className="text-sm text-gray-500 mt-1">
+            {[
+              ref.source_channel,
+              isStandalone ? "clipe sem vídeo de origem" : "clipe + vídeo original",
+              ref.source_type,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </p>
+          {ref.source_url && (
+            <a
+              href={ref.source_url}
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs text-gray-600 hover:text-gray-400 break-all"
+            >
+              {ref.source_url}
+            </a>
+          )}
         </div>
         <div className="pt-1">
-          <ReferenceStatus status={ref.status} errorMessage={ref.error_message} />
+          <ReferenceStatus
+            status={ref.status}
+            kind={ref.kind}
+            errorMessage={ref.error_message}
+          />
         </div>
       </div>
 
@@ -192,7 +208,26 @@ export default function ReferencePage() {
 
       {ref.status === "done" && (
         <>
+          {/* Sem vídeo de origem não há intervalo a ajustar: o clipe já é o corte. */}
+          {isStandalone && (
+            <div className="rounded-2xl bg-gray-900 border border-gray-800 p-6 flex flex-wrap items-baseline gap-x-6 gap-y-2">
+              <div>
+                <p className="text-xs text-gray-500 mb-1">Duração</p>
+                <p className="text-sm text-gray-300">
+                  {ref.clip_duration != null ? `${ref.clip_duration.toFixed(1)}s` : "—"}
+                </p>
+              </div>
+              {ref.opening_phrase && (
+                <div className="min-w-0">
+                  <p className="text-xs text-gray-500 mb-1">Frase de abertura</p>
+                  <p className="text-sm text-gray-300 italic">“{ref.opening_phrase}”</p>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Corte localizado */}
+          {!isStandalone && (
           <div className="rounded-2xl bg-gray-900 border border-gray-800 p-6 flex flex-col gap-4">
             <div className="flex items-center justify-between">
               <h2 className="text-base font-semibold text-gray-100">Corte localizado no original</h2>
@@ -254,12 +289,15 @@ export default function ReferencePage() {
               </div>
             )}
           </div>
+          )}
 
           {/* Análise da IA */}
           {a && (
             <div className="rounded-2xl bg-gray-900 border border-gray-800 p-6 flex flex-col gap-4">
               <div className="flex items-center justify-between">
-                <h2 className="text-base font-semibold text-gray-100">Por que este corte funciona</h2>
+                <h2 className="text-base font-semibold text-gray-100">
+                  {isStandalone ? "Por que este clipe funciona" : "Por que este corte funciona"}
+                </h2>
                 <span className="rounded-full bg-emerald-900/40 border border-emerald-800 px-3 py-1 text-sm font-semibold text-emerald-300">
                   {a.virality_score.toFixed(1)}
                 </span>
@@ -285,7 +323,11 @@ export default function ReferencePage() {
               )}
               {a.why_this_cut && (
                 <div>
-                  <p className="text-xs text-gray-500 mb-1">Por que começa e termina onde termina</p>
+                  <p className="text-xs text-gray-500 mb-1">
+                    {isStandalone
+                      ? "Onde ele começa e termina"
+                      : "Por que começa e termina onde termina"}
+                  </p>
                   <p className="text-sm text-gray-300 leading-relaxed">{a.why_this_cut}</p>
                 </div>
               )}
@@ -303,6 +345,9 @@ export default function ReferencePage() {
               )}
             </div>
           )}
+
+          {/* Perícia — só existe no modo standalone */}
+          {ref.forensics && <ClipForensicsPanel forensics={ref.forensics} />}
 
           {/* Confirmar e ensinar */}
           {!ref.published && (

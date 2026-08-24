@@ -1,9 +1,16 @@
 """
 Router de referências — aprender a cortar a partir de um clipe viral de outro criador.
 
-Fluxo de uso:
-  1. POST /references  (URL do vídeo original + upload do clipe viral)
-       → cria a referência e dispara o pipeline em background.
+Há duas portas de entrada, e a diferença entre elas é o que se tem em mãos:
+
+  POST /references             URL do vídeo ORIGINAL + o clipe viral. O pipeline
+                               localiza o corte dentro do original e explica por
+                               que foi ali.
+  POST /references/standalone  Só o clipe (o caso do TikTok, em que o original é
+                               desconhecido). O clipe é periciado por si: fala,
+                               som, imagem e cortes.
+
+Daí em diante o fluxo é o mesmo para os dois:
   2. GET /references/{id}  → acompanha status e vê a análise gerada.
   3. PATCH /references/{id}  → ajusta o intervalo localizado / performance / notas
        (opcionalmente re-roda a análise reversa com o novo intervalo).
@@ -19,6 +26,7 @@ import anthropic
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select
@@ -29,7 +37,11 @@ from app.database import get_db
 from app.models import ReferenceExample
 from app.schemas import ReferenceConfirmResponse, ReferenceResponse, ReferenceUpdateRequest
 from app.services.reference_analyzer import analyze_reference
-from app.workers.reference_pipeline import _opening_phrase, run_reference_pipeline
+from app.workers.reference_pipeline import (
+    _opening_phrase,
+    run_reference_pipeline,
+    run_standalone_pipeline,
+)
 from app.schemas import _YOUTUBE_URL_RE  # reutiliza o validador de URL do YouTube
 from prompt_engine.pattern_miner import (
     clear_learned,
@@ -47,17 +59,31 @@ _ALLOWED_CLIP_EXT = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 _MAX_CLIP_BYTES = 500 * 1024 * 1024  # 500MB
 
 
-def _to_response(ref: ReferenceExample) -> ReferenceResponse:
-    """Monta o ReferenceResponse parseando o analysis_json."""
-    analysis = None
-    if ref.analysis_json:
-        try:
-            analysis = json.loads(ref.analysis_json)
-        except json.JSONDecodeError:
-            analysis = None
+_SOURCE_TYPES = {"podcast", "gameplay", "siege"}
 
+
+def _valid_source_type(value: str) -> str:
+    """Nicho informado, ou 'podcast' quando vier algo que não existe."""
+    value = (value or "").strip().lower()
+    return value if value in _SOURCE_TYPES else "podcast"
+
+
+def _load_json(raw: Optional[str]) -> Optional[dict]:
+    """Parseia uma coluna JSON, devolvendo None quando ela não é aproveitável."""
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
+def _to_response(ref: ReferenceExample) -> ReferenceResponse:
+    """Monta o ReferenceResponse parseando as colunas JSON."""
     return ReferenceResponse(
         id=ref.id,
+        kind=ref.kind or "aligned",
+        source_type=ref.source_type or "podcast",
         source_url=ref.source_url,
         source_title=ref.source_title,
         source_channel=ref.source_channel,
@@ -67,7 +93,8 @@ def _to_response(ref: ReferenceExample) -> ReferenceResponse:
         source_end=ref.source_end,
         alignment_confidence=ref.alignment_confidence,
         clip_duration=ref.clip_duration,
-        analysis=analysis,
+        analysis=_load_json(ref.analysis_json),
+        forensics=_load_json(ref.forensics_json),
         opening_phrase=ref.opening_phrase,
         transcript_excerpt=ref.transcript_excerpt,
         performance=ref.performance,
@@ -92,21 +119,8 @@ async def _get_or_404(reference_id: str, db: AsyncSession) -> ReferenceExample:
     return ref
 
 
-@router.post("/references", response_model=ReferenceResponse, status_code=201)
-async def create_reference(
-    background_tasks: BackgroundTasks,
-    source_url: str = Form(...),
-    clip: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
-) -> ReferenceResponse:
-    """Cria uma referência (URL do original + clipe viral) e inicia o pipeline."""
-    source_url = source_url.strip()
-    if not _YOUTUBE_URL_RE.match(source_url):
-        raise HTTPException(
-            status_code=422,
-            detail="URL inválida: forneça o link do YouTube do vídeo ORIGINAL (youtube.com ou youtu.be)",
-        )
-
+async def _read_clip(clip: UploadFile) -> tuple[bytes, str]:
+    """Valida formato e tamanho do upload e devolve (bytes, extensão)."""
     ext = Path(clip.filename or "").suffix.lower()
     if ext not in _ALLOWED_CLIP_EXT:
         raise HTTPException(
@@ -119,9 +133,17 @@ async def create_reference(
         raise HTTPException(status_code=413, detail="Clipe muito grande (máx. 500MB)")
     if not data:
         raise HTTPException(status_code=422, detail="Arquivo de clipe vazio")
+    return data, ext
 
-    # Cria o registro primeiro para ter o ID e nomear o arquivo do clipe
-    ref = ReferenceExample(source_url=source_url, clip_path="", status="queued")
+
+async def _persist_clip(db: AsyncSession, ref: ReferenceExample, data: bytes, ext: str) -> None:
+    """
+    Grava a linha e o arquivo do clipe.
+
+    O registro é criado antes do arquivo porque é o ID dele que nomeia o
+    arquivo — e é esse mesmo ID que o DELETE usa depois para achar tudo que
+    ficou no storage.
+    """
     db.add(ref)
     await db.commit()
     await db.refresh(ref)
@@ -134,8 +156,79 @@ async def create_reference(
     await db.commit()
     await db.refresh(ref)
 
-    logger.info(f"Reference {ref.id} created (source={source_url}, clip={clip_path.name})")
+
+@router.post("/references", response_model=ReferenceResponse, status_code=201)
+async def create_reference(
+    background_tasks: BackgroundTasks,
+    source_url: str = Form(...),
+    clip: UploadFile = File(...),
+    source_type: str = Form("podcast"),
+    db: AsyncSession = Depends(get_db),
+) -> ReferenceResponse:
+    """Cria uma referência (URL do original + clipe viral) e inicia o pipeline."""
+    source_url = source_url.strip()
+    if not _YOUTUBE_URL_RE.match(source_url):
+        raise HTTPException(
+            status_code=422,
+            detail="URL inválida: forneça o link do YouTube do vídeo ORIGINAL (youtube.com ou youtu.be)",
+        )
+
+    data, ext = await _read_clip(clip)
+
+    ref = ReferenceExample(
+        kind="aligned",
+        source_url=source_url,
+        source_type=_valid_source_type(source_type),
+        clip_path="",
+        status="queued",
+    )
+    await _persist_clip(db, ref, data, ext)
+
+    logger.info(f"Reference {ref.id} created (source={source_url}, clip={ref.clip_path})")
     background_tasks.add_task(run_reference_pipeline, ref.id)
+
+    return _to_response(ref)
+
+
+@router.post("/references/standalone", response_model=ReferenceResponse, status_code=201)
+async def create_standalone_reference(
+    background_tasks: BackgroundTasks,
+    clip: UploadFile = File(...),
+    title: str = Form(""),
+    channel: str = Form(""),
+    post_url: str = Form(""),
+    source_type: str = Form("podcast"),
+    notas: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+) -> ReferenceResponse:
+    """
+    Cria uma referência a partir SÓ do arquivo do clipe e inicia a perícia.
+
+    É o caminho para um clipe salvo do TikTok, que não diz de onde saiu. Nada
+    além do arquivo é obrigatório: título, criador e link do post entram na
+    análise como contexto quando o usuário souber, e a ausência deles não impede
+    nada — a perícia se sustenta no que está dentro do arquivo.
+
+    `notas` vale a pena preencher: o que o usuário já percebeu sobre o clipe vai
+    junto no prompt da síntese, e vira o "aprendizado" do exemplo few-shot.
+    """
+    data, ext = await _read_clip(clip)
+
+    ref = ReferenceExample(
+        kind="standalone",
+        # Sem original: a coluna guarda o link do post, quando houver.
+        source_url=post_url.strip(),
+        source_title=title.strip() or (clip.filename or "").strip() or None,
+        source_channel=channel.strip() or None,
+        source_type=_valid_source_type(source_type),
+        notas=notas.strip() or None,
+        clip_path="",
+        status="queued",
+    )
+    await _persist_clip(db, ref, data, ext)
+
+    logger.info(f"Standalone reference {ref.id} created (clip={ref.clip_path})")
+    background_tasks.add_task(run_standalone_pipeline, ref.id)
 
     return _to_response(ref)
 
@@ -171,6 +264,22 @@ async def update_reference(
     com o novo trecho (recarrega as palavras do original do disco).
     """
     ref = await _get_or_404(reference_id, db)
+
+    # No modo standalone o clipe É o corte: não existe original dentro do qual
+    # relocalizá-lo, e mexer no intervalo só corromperia o exemplo publicado
+    # (que grava start/end como os limites do clipe).
+    if ref.kind == "standalone" and (
+        payload.source_start is not None
+        or payload.source_end is not None
+        or payload.reanalyze
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Esta referência não tem vídeo de origem: o clipe inteiro já é o corte. "
+                "Não há intervalo a ajustar nem reanálise por intervalo."
+            ),
+        )
 
     span_changed = False
     if payload.source_start is not None and payload.source_start != ref.source_start:
@@ -257,13 +366,23 @@ async def confirm_reference(
 
     example = {
         "clip_id": ref.id,
-        "source": "external_reference",
+        # Rótulos distintos porque as duas fontes ensinam coisas diferentes: uma
+        # sabe o que foi deixado de fora, a outra não. O pattern_miner conta as
+        # fontes separadamente por isso.
+        "source": "external_clip" if ref.kind == "standalone" else "external_reference",
+        "source_type": ref.source_type or "podcast",
         "validated_at": datetime.now(timezone.utc).isoformat(),
         "video": {
             "url": ref.source_url,
             "title": ref.source_title or "",
             "channel": ref.source_channel or "",
             "language": ref.language or "",
+            # No standalone fica 0 de propósito: `source_duration` é a duração
+            # do vídeo ORIGINAL, e aqui não há original. O pattern_miner ignora
+            # duração 0 ao calcular a posição do corte no vídeo — se em vez
+            # disso puséssemos a duração do clipe, todo exemplo standalone
+            # entraria como "corte no início do vídeo", que é uma estatística
+            # inventada sobre um vídeo que ninguém viu.
             "duration": ref.source_duration or 0,
         },
         "clip": {
@@ -284,8 +403,15 @@ async def confirm_reference(
         },
     }
 
+    # A perícia entra no exemplo para o PromptBuilder poder mostrar COMO o clipe
+    # funciona, não só que ele funcionou.
+    forensics = _load_json(ref.forensics_json)
+    if forensics:
+        example["forensics"] = forensics
+
     _VALIDATED_DIR.mkdir(parents=True, exist_ok=True)
-    output_path = _VALIDATED_DIR / f"example_ref_{ref.id}.json"
+    prefix = "example_clip" if ref.kind == "standalone" else "example_ref"
+    output_path = _VALIDATED_DIR / f"{prefix}_{ref.id}.json"
     output_path.write_text(json.dumps(example, ensure_ascii=False, indent=2), encoding="utf-8")
 
     ref.published = 1

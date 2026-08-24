@@ -4,14 +4,14 @@ Layout dos clips — capa estática + banner de título.
 Formato final (1080x1920):
   ┌──────────────────┐
   │  CAPA (estática) │  ← print de uma expressão marcante do vídeo (0–768px)
-  │   ╭─ BANNER ─╮   │  ← pílula vermelha com o título, sobre a emenda
+  ├───── BANNER ─────┤  ← faixa vermelha com o título, sobre a emenda
   │  VÍDEO (rodando) │  ← crop com face tracking + legendas (768–1920px)
   └──────────────────┘
 
 - Capa: MediaPipe escolhe o frame com a expressão mais forte (boca aberta =
   risada/espanto), com desempate por tamanho/confiança do rosto. Crop
   centralizado no rosto.
-- Banner: pílula vermelha com "lábio" inferior escuro (efeito 3D), texto
+- Banner: faixa vermelha de largura cheia, cantos vivos, sem sombra, texto
   branco em caixa alta, quebra de linha e tamanho de fonte automáticos.
 """
 
@@ -23,7 +23,7 @@ import os
 import re
 import subprocess
 import tempfile
-from typing import Optional
+from typing import Callable, NamedTuple, Optional
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -58,6 +58,10 @@ BAR_DEFAULT_BG_HEX = "#101014"
 # escondido, quem escolhe #FFFFFF recebe branco.
 BAR_DEFAULT_TEXT_HEX = "#9D9D9F"
 BAR_DEFAULT_FONT = "condensed"
+# Nome escrito na faixa. Vazio = o layout decide: no streamer entra o nome do
+# canal do vídeo; no 'cover' (podcast) não há faixa nenhuma, porque o que ela
+# escreveria seria o canal alheio, e não a conta que publica o clipe.
+BAR_DEFAULT_NAME = ""
 
 # Famílias oferecidas para o nome na faixa: chave → (rótulo, arquivos em ordem
 # de preferência). Só as que existem na máquina são oferecidas pela API.
@@ -162,9 +166,19 @@ def available_bar_fonts() -> list[dict]:
     ]
 
 
-def load_bar_style(source_type: Optional[str] = None) -> tuple[str, str, str, bool]:
+class BarStyle(NamedTuple):
+    """Estilo configurado da faixa. `name` é o texto repetido nela."""
+
+    bg_color: str
+    text_color: str
+    font: str
+    name: str
+    customized: bool
+
+
+def load_bar_style(source_type: Optional[str] = None) -> BarStyle:
     """
-    Estilo configurado da faixa: (bg_hex, text_hex, font_key, customized).
+    Estilo configurado da faixa.
 
     Lê storage/branding/<nicho>/bar_style.json; sem arquivo (ou inválido),
     padrões. Cada conta guarda o seu estilo.
@@ -173,15 +187,19 @@ def load_bar_style(source_type: Optional[str] = None) -> tuple[str, str, str, bo
     if path.exists():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            return (
+            return BarStyle(
                 data.get("bg_color") or BAR_DEFAULT_BG_HEX,
                 data.get("text_color") or BAR_DEFAULT_TEXT_HEX,
                 data.get("font") or BAR_DEFAULT_FONT,
+                (data.get("name") or BAR_DEFAULT_NAME).strip(),
                 True,
             )
         except (OSError, json.JSONDecodeError):
             logger.warning(f"Could not read {path}, using default bar style")
-    return BAR_DEFAULT_BG_HEX, BAR_DEFAULT_TEXT_HEX, BAR_DEFAULT_FONT, False
+    return BarStyle(
+        BAR_DEFAULT_BG_HEX, BAR_DEFAULT_TEXT_HEX, BAR_DEFAULT_FONT,
+        BAR_DEFAULT_NAME, False,
+    )
 
 
 def _load_bar_font(font_key: str, size: int) -> ImageFont.FreeTypeFont:
@@ -277,10 +295,10 @@ def generate_divider_bar(
     faixa continua legível tanto clara quanto escura.
     """
     if bg_color is None or text_color is None or font is None:
-        stored_bg, stored_text, stored_font, _ = load_bar_style(source_type)
-        bg_color = bg_color or stored_bg
-        text_color = text_color or stored_text
-        font = font or stored_font
+        stored = load_bar_style(source_type)
+        bg_color = bg_color or stored.bg_color
+        text_color = text_color or stored.text_color
+        font = font or stored.font
 
     bg_rgba = parse_hex_color(bg_color, _BAR_BG)
     text_rgba = parse_hex_color(text_color, (255, 255, 255, 255))
@@ -332,14 +350,15 @@ _FONT_CANDIDATES = [
 ]
 
 _BANNER_RED = (237, 40, 40, 255)
-_BANNER_RED_DARK = (163, 18, 18, 255)
 _BANNER_TEXT_WHITE = (255, 255, 255, 255)
 BANNER_DEFAULT_BG_HEX = "#ED2828"
 BANNER_DEFAULT_TEXT_HEX = "#FFFFFF"
+# A condensed é a que o banner sempre usou (DejaVuSansCondensed-Bold): mantê-la
+# como padrão faz a fonte configurável não mudar nada em quem não escolheu.
+BANNER_DEFAULT_FONT = "condensed"
 _BANNER_MAX_TEXT_W = 840   # largura máxima de uma linha de texto
 _BANNER_PAD_X = 60
 _BANNER_PAD_Y = 34
-_BANNER_LIP = 10           # deslocamento do "lábio" 3D inferior
 _LINE_SPACING = 1.08
 
 # Remove emojis/símbolos que a fonte não renderiza
@@ -363,28 +382,37 @@ def parse_hex_color(value: Optional[str], fallback: tuple[int, int, int, int]) -
     return (int(v[0:2], 16), int(v[2:4], 16), int(v[4:6], 16), 255)
 
 
-def _darken(color: tuple[int, int, int, int], factor: float = 0.6) -> tuple[int, int, int, int]:
-    r, g, b, a = color
-    return (int(r * factor), int(g * factor), int(b * factor), a)
+class BannerStyle(NamedTuple):
+    """Estilo configurado do banner de título."""
+
+    bg_color: str
+    text_color: str
+    font: str
+    customized: bool
 
 
-def load_banner_colors(source_type: Optional[str] = None) -> tuple[str, str, bool]:
+def load_banner_style(source_type: Optional[str] = None) -> BannerStyle:
     """
-    Cores configuradas do banner: (bg_hex, text_hex, customized).
+    Estilo configurado do banner (cores + família da fonte).
 
     Lê storage/branding/<nicho>/banner_colors.json; sem arquivo (ou inválido),
-    padrões. Cada conta guarda as suas cores.
+    padrões. Cada conta guarda o seu estilo.
     """
     path = preset_path(source_type, BANNER_COLORS_FILE)
     if path.exists():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            bg = data.get("bg_color") or BANNER_DEFAULT_BG_HEX
-            text = data.get("text_color") or BANNER_DEFAULT_TEXT_HEX
-            return bg, text, True
+            return BannerStyle(
+                data.get("bg_color") or BANNER_DEFAULT_BG_HEX,
+                data.get("text_color") or BANNER_DEFAULT_TEXT_HEX,
+                data.get("font") or BANNER_DEFAULT_FONT,
+                True,
+            )
         except (OSError, json.JSONDecodeError):
-            logger.warning(f"Could not read {path}, using default banner colors")
-    return BANNER_DEFAULT_BG_HEX, BANNER_DEFAULT_TEXT_HEX, False
+            logger.warning(f"Could not read {path}, using default banner style")
+    return BannerStyle(
+        BANNER_DEFAULT_BG_HEX, BANNER_DEFAULT_TEXT_HEX, BANNER_DEFAULT_FONT, False,
+    )
 
 
 def _load_font(size: int) -> ImageFont.FreeTypeFont:
@@ -395,18 +423,28 @@ def _load_font(size: int) -> ImageFont.FreeTypeFont:
 
 
 def _balanced_wrap(
-    words: list[str], font: ImageFont.FreeTypeFont, max_w: int, n_lines: int
+    words: list[str],
+    font: ImageFont.FreeTypeFont,
+    max_w: int,
+    n_lines: int,
+    measure: Optional[Callable[[str], float]] = None,
 ) -> Optional[list[str]]:
     """
     Divide as palavras em exatamente n_lines com larguras equilibradas
-    (minimiza a linha mais larga — visual de pílula simétrica, sem linha órfã).
+    (minimiza a linha mais larga — bloco simétrico, sem linha órfã).
     None se não couber em max_w.
+
+    `measure` existe para o texto que mistura fonte: um emoji não tem largura
+    na fonte do texto, e medir a linha com `font.getlength` faria o banner com
+    emoji parecer mais estreito do que é — e vazar da caixa.
     """
     from itertools import combinations
 
+    measure = measure or font.getlength
+
     if n_lines == 1:
         line = " ".join(words)
-        return [line] if font.getlength(line) <= max_w else None
+        return [line] if measure(line) <= max_w else None
 
     if len(words) < n_lines:
         return None
@@ -416,7 +454,7 @@ def _balanced_wrap(
     for splits in combinations(range(1, len(words)), n_lines - 1):
         bounds = [0, *splits, len(words)]
         lines = [" ".join(words[a:b]) for a, b in zip(bounds, bounds[1:])]
-        widest = max(font.getlength(l) for l in lines)
+        widest = max(measure(l) for l in lines)
         if widest <= max_w and widest < best_width:
             best, best_width = lines, widest
     return best
@@ -427,26 +465,27 @@ def generate_banner(
     output_path: str,
     bg_color: Optional[str] = None,
     text_color: Optional[str] = None,
+    font_key: Optional[str] = None,
     source_type: Optional[str] = None,
 ) -> tuple[int, int]:
     """
-    Gera o PNG da pílula com o título.
+    Gera o PNG do retângulo com o título — largura cheia do canvas (1080px),
+    cantos vivos, sem sombra.
 
-    Cores em hex (#RGB/#RRGGBB); None usa a configuração salva do nicho
-    (storage/branding/<nicho>/banner_colors.json) ou os padrões.
+    Cores em hex (#RGB/#RRGGBB) e família da fonte (chave de BAR_FONTS); None
+    usa a configuração salva do nicho (banner_colors.json) ou os padrões.
 
     Returns:
         (width, height) da imagem gerada — usado para posicionar o overlay.
     """
-    if bg_color is None or text_color is None:
-        stored_bg, stored_text, _ = load_banner_colors(source_type)
-        bg_color = bg_color or stored_bg
-        text_color = text_color or stored_text
+    if bg_color is None or text_color is None or font_key is None:
+        stored = load_banner_style(source_type)
+        bg_color = bg_color or stored.bg_color
+        text_color = text_color or stored.text_color
+        font_key = font_key or stored.font
 
-    pill_rgba = parse_hex_color(bg_color, _BANNER_RED)
+    box_rgba = parse_hex_color(bg_color, _BANNER_RED)
     text_rgba = parse_hex_color(text_color, _BANNER_TEXT_WHITE)
-    # Lábio 3D: tom escuro derivado do fundo (padrão mantém o vermelho escuro original)
-    lip_rgba = _BANNER_RED_DARK if pill_rgba == _BANNER_RED else _darken(pill_rgba)
 
     text = _EMOJI_RE.sub("", text).strip().upper()
     if not text:
@@ -459,7 +498,7 @@ def generate_banner(
     for max_lines in (2, 3):
         min_size = 44 if max_lines == 2 else 34
         for size in range(60, min_size - 1, -2):
-            f = _load_font(size)
+            f = _load_bar_font(font_key, size)
             for n in range(1, max_lines + 1):
                 wrapped = _balanced_wrap(words, f, _BANNER_MAX_TEXT_W, n)
                 if wrapped:
@@ -470,7 +509,7 @@ def generate_banner(
         if font:
             break
     if font is None:  # texto extremamente longo: trunca
-        font = _load_font(34)
+        font = _load_bar_font(font_key, 34)
         lines = _balanced_wrap(words[:14], font, _BANNER_MAX_TEXT_W, 3) or [text[:30]]
 
     ascent, descent = font.getmetrics()
@@ -478,29 +517,350 @@ def generate_banner(
     text_w = max(int(font.getlength(l)) for l in lines)
     text_h = line_h * len(lines)
 
-    pill_w = text_w + 2 * _BANNER_PAD_X
-    pill_h = text_h + 2 * _BANNER_PAD_Y
-    radius = pill_h // 2 if len(lines) == 1 else 40
+    # Largura do canvas inteiro: o retângulo vai de borda a borda, e o texto
+    # fica centralizado dentro dele (_BANNER_MAX_TEXT_W garante a folga lateral).
+    # O max() é só uma trava — o texto nunca passa de 840px + padding.
+    box_w = max(CANVAS_W, text_w + 2 * _BANNER_PAD_X)
+    box_h = text_h + 2 * _BANNER_PAD_Y
 
-    img = Image.new("RGBA", (pill_w, pill_h + _BANNER_LIP), (0, 0, 0, 0))
+    # Retângulo reto: cantos vivos e nada atrás dele. O lábio 3D que ficava sob
+    # a pílula foi retirado a pedido do usuário (23/08/2026) — sem sombra.
+    img = Image.new("RGBA", (box_w, box_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-
-    # Lábio 3D (tom escuro, deslocado para baixo) + pílula principal
-    draw.rounded_rectangle(
-        [0, _BANNER_LIP, pill_w - 1, pill_h + _BANNER_LIP - 1],
-        radius=radius, fill=lip_rgba,
-    )
-    draw.rounded_rectangle([0, 0, pill_w - 1, pill_h - 1], radius=radius, fill=pill_rgba)
+    draw.rectangle([0, 0, box_w - 1, box_h - 1], fill=box_rgba)
 
     y = _BANNER_PAD_Y + (line_h - ascent - descent) // 2
     for line in lines:
-        x = (pill_w - font.getlength(line)) / 2
+        x = (box_w - font.getlength(line)) / 2
         draw.text((x, y), line, font=font, fill=text_rgba)
         y += line_h
 
     img.save(output_path)
-    logger.info(f"Banner generated: {output_path} ({pill_w}x{img.height}, {len(lines)} line(s))")
-    return pill_w, img.height
+    logger.info(
+        f"Banner generated: {output_path} ({box_w}x{box_h}, "
+        f"{len(lines)} line(s), font: {font_key})"
+    )
+    return box_w, box_h
+
+
+# ─── Banner de título do layout streamer ──────────────────────────────────────
+#
+# Outro banner, com outro trabalho. O de cima (generate_banner) fica na emenda
+# do layout 'cover', tem a largura do texto e o texto em caixa alta.
+# Este ocupa a largura inteira e encosta na faixa do streamer,
+# formando um bloco só com ela — o que o usuário desenhou no exemplo enviado em
+# 20/08/2026.
+#
+# A razão de ele existir é de retenção, não de estética: a legenda passa palavra
+# a palavra e muitas vezes não chega a ser lida. Um título parado nos primeiros
+# segundos é a única coisa na tela que diz do que se trata o clipe antes de a
+# fala chegar lá.
+
+# Margem lateral: o texto respira sem que a caixa deixe de ser de ponta a ponta.
+_TITLE_PAD_X = 48
+_TITLE_PAD_Y = 26
+# Fonte: grande o bastante para ser lida de relance, e o suficiente para caber
+# em duas linhas. Abaixo do mínimo o título compete com a legenda em vez de
+# dominar, e aí não cumpre a função.
+_TITLE_MAX_SIZE = 62
+_TITLE_MIN_SIZE = 38
+_TITLE_LINE_SPACING = 1.12
+_TITLE_MAX_LINES = 2
+
+
+# ─── Emoji colorido ───────────────────────────────────────────────────────────
+#
+# O emoji do hook faz parte do gancho ("Voltou minha casca no último segundo 😱")
+# e o resto do sistema o descarta — o banner do layout 'cover' e a faixa tiram
+# emoji do texto porque a fonte de texto simplesmente não tem esses glifos, e o
+# que sairia é o retângulo de "caractere ausente".
+#
+# Desenhá-lo custa duas coisas que não são óbvias:
+#
+# 1. A NotoColorEmoji é uma fonte de BITMAP (CBDT) com um único tamanho de
+#    strike: 109px. Pedir qualquer outro tamanho levanta "invalid pixel size".
+#    Então o emoji é desenhado no tamanho nativo e reduzido para a altura da
+#    linha — daí o LANCZOS, que é o que evita a borda serrilhada na redução.
+# 2. Ele não pode ser desenhado junto com o texto: são fontes diferentes na
+#    mesma linha. A linha é quebrada em trechos (texto | emoji) e cada um vai
+#    com o seu desenho, somando as larguras para o alinhamento continuar certo.
+#
+# Sem a fonte instalada nada disso acontece e o emoji volta a ser removido —
+# um clip sem emoji é melhor que um clip com tofu.
+
+_EMOJI_NATIVE_SIZE = 109  # único strike da NotoColorEmoji
+
+_EMOJI_FONT_SYSTEM_PATHS = [
+    "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+    "/usr/share/fonts/opentype/noto/NotoColorEmoji.ttf",
+    "/usr/local/share/fonts/NotoColorEmoji.ttf",
+    os.path.expanduser("~/.local/share/fonts/NotoColorEmoji.ttf"),
+    "C:/Windows/Fonts/seguiemj.ttf",  # Segoe UI Emoji
+]
+
+# Altura do emoji em relação ao ascent da fonte do texto, e o respiro lateral
+# em relação à altura dele. Emoji na altura cheia do ascent fica maior que as
+# maiúsculas ao lado e puxa o olho para longe da palavra.
+_EMOJI_HEIGHT_FRAC = 0.86
+_EMOJI_SIDE_FRAC = 0.10
+
+
+def emoji_font_path() -> Optional[str]:
+    """
+    Caminho da fonte de emoji colorido, ou None se não houver nenhuma.
+
+    A baixada pelo projeto (`make emoji-font`) vem primeiro: ela é a que se
+    sabe qual é. Uma do sistema pode ser qualquer versão, mas serve.
+    """
+    from app.config import settings
+
+    baixada = os.path.join(str(settings.branding_dir), "fonts", "NotoColorEmoji.ttf")
+    return _first_existing([baixada, *_EMOJI_FONT_SYSTEM_PATHS])
+
+
+def _split_emoji_runs(text: str) -> list[tuple[str, bool]]:
+    """
+    Quebra o texto em trechos (conteúdo, é_emoji), preservando a ordem.
+
+    Emojis vizinhos entram num trecho só: uma sequência ZWJ (família, bandeira,
+    tom de pele) é um glifo só depois do shaping, e separá-la em caracteres
+    desenharia as partes soltas.
+    """
+    runs: list[tuple[str, bool]] = []
+    for char in text:
+        is_emoji = bool(_EMOJI_RE.match(char))
+        if runs and runs[-1][1] == is_emoji:
+            runs[-1] = (runs[-1][0] + char, is_emoji)
+        else:
+            runs.append((char, is_emoji))
+    return [(content, flag) for content, flag in runs if content]
+
+
+def _render_emoji(cluster: str, target_h: int) -> Optional[Image.Image]:
+    """O emoji desenhado no tamanho nativo e reduzido para `target_h`."""
+    path = emoji_font_path()
+    if path is None or target_h <= 0:
+        return None
+    try:
+        font = ImageFont.truetype(path, _EMOJI_NATIVE_SIZE)
+    except OSError as exc:
+        logger.warning(f"Fonte de emoji não pôde ser carregada ({exc})")
+        return None
+
+    ascent, descent = font.getmetrics()
+    width = max(1, math.ceil(font.getlength(cluster)))
+    canvas = Image.new("RGBA", (width, ascent + descent), (0, 0, 0, 0))
+    try:
+        ImageDraw.Draw(canvas).text((0, 0), cluster, font=font, embedded_color=True)
+    except (OSError, ValueError) as exc:
+        logger.warning(f"Emoji {cluster!r} não pôde ser desenhado ({exc})")
+        return None
+
+    box = canvas.getbbox()
+    if not box:
+        return None
+    glyph = canvas.crop(box)
+    scale = target_h / glyph.height
+    return glyph.resize(
+        (max(1, round(glyph.width * scale)), target_h), Image.LANCZOS
+    )
+
+
+def _emoji_metrics(font: ImageFont.FreeTypeFont) -> tuple[int, int]:
+    """(altura do emoji, respiro lateral) para a fonte de texto dada."""
+    ascent, _ = font.getmetrics()
+    height = max(1, round(ascent * _EMOJI_HEIGHT_FRAC))
+    return height, round(height * _EMOJI_SIDE_FRAC)
+
+
+def _mixed_line_width(line: str, font: ImageFont.FreeTypeFont) -> float:
+    """Largura de uma linha que mistura texto e emoji."""
+    emoji_h, side = _emoji_metrics(font)
+    total = 0.0
+    for content, is_emoji in _split_emoji_runs(line):
+        glyph = _render_emoji(content, emoji_h) if is_emoji else None
+        if glyph is None:
+            # Não é emoji, ou a fonte de emoji não tem este glifo. O intervalo
+            # de _EMOJI_RE inclui setas e sinais que fontes de texto desenham
+            # normalmente — devolvê-los ao texto é melhor que engoli-los.
+            total += font.getlength(content)
+        else:
+            total += glyph.width + 2 * side
+    return total
+
+
+def _draw_mixed_line(
+    img: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    line: str,
+    font: ImageFont.FreeTypeFont,
+    x: float,
+    y: float,
+    fill: tuple,
+) -> None:
+    """Desenha a linha trecho a trecho, alternando a fonte do texto e o emoji."""
+    ascent, _ = font.getmetrics()
+    emoji_h, side = _emoji_metrics(font)
+
+    for content, is_emoji in _split_emoji_runs(line):
+        glyph = _render_emoji(content, emoji_h) if is_emoji else None
+        if glyph is None:
+            draw.text((x, y), content, font=font, fill=fill)
+            x += font.getlength(content)
+            continue
+        # Assentado na linha de base do texto: alinhar pelo topo deixaria o
+        # emoji flutuando acima das letras.
+        img.alpha_composite(glyph, (round(x + side), round(y + ascent - emoji_h)))
+        x += glyph.width + 2 * side
+
+
+def generate_title_banner(
+    text: str,
+    output_path: str,
+    canvas_w: int = CANVAS_W,
+    bg_color: Optional[str] = None,
+    text_color: Optional[str] = None,
+    font_key: Optional[str] = None,
+    source_type: Optional[str] = None,
+) -> tuple[int, int]:
+    """
+    Gera o PNG retangular do título que encosta na faixa do streamer.
+
+    Ao contrário do banner do layout 'cover', o texto NÃO vai para caixa alta:
+    o exemplo aprovado usa caixa de frase, e em duas linhas longas a caixa alta
+    engorda o suficiente para forçar uma fonte menor.
+
+    Cores e fonte saem dos presets do nicho — as mesmas da faixa —, para o
+    título e a faixa lerem como uma peça só em vez de dois adesivos colados.
+
+    Returns:
+        (width, height) do PNG gerado.
+    """
+    if bg_color is None or text_color is None:
+        stored = load_banner_style(source_type)
+        bg_color = bg_color or stored.bg_color
+        text_color = text_color or stored.text_color
+    if font_key is None:
+        font_key = load_bar_style(source_type).font
+
+    bg_rgba = parse_hex_color(bg_color, _BANNER_RED)
+    text_rgba = parse_hex_color(text_color, _BANNER_TEXT_WHITE)
+
+    # O emoji do hook é parte do gancho e fica — desde que haja fonte para
+    # desenhá-lo. Sem ela sai o retângulo de caractere ausente, que é pior que
+    # não ter emoji nenhum.
+    if emoji_font_path() is None:
+        text = _EMOJI_RE.sub("", text)
+    text = text.strip()
+    if not text:
+        raise ValueError("Título do banner vazio")
+
+    max_text_w = canvas_w - 2 * _TITLE_PAD_X
+    words = text.split()
+
+    font, lines = None, None
+    for size in range(_TITLE_MAX_SIZE, _TITLE_MIN_SIZE - 1, -2):
+        candidate = _load_bar_font(font_key, size)
+        measure = lambda line, f=candidate: _mixed_line_width(line, f)
+        for n in range(1, _TITLE_MAX_LINES + 1):
+            wrapped = _balanced_wrap(words, candidate, max_text_w, n, measure)
+            if wrapped:
+                font, lines = candidate, wrapped
+                break
+        if font:
+            break
+
+    if font is None:
+        # Título longo demais para duas linhas legíveis. Truncar é melhor que
+        # encolher mais: um título que exige esforço para ler não retém
+        # ninguém, e o texto completo continua no título do post.
+        font = _load_bar_font(font_key, _TITLE_MIN_SIZE)
+        measure = lambda line: _mixed_line_width(line, font)
+        lines = None
+        for keep in range(len(words) - 1, 2, -1):
+            lines = _balanced_wrap(
+                words[:keep], font, max_text_w, _TITLE_MAX_LINES, measure
+            )
+            if lines:
+                lines[-1] = lines[-1] + "..."
+                break
+        if not lines:
+            lines = [text[:24] + "..."]
+        logger.info(f"Título do banner truncado para caber em {_TITLE_MAX_LINES} linhas")
+
+    ascent, descent = font.getmetrics()
+    line_h = math.ceil((ascent + descent) * _TITLE_LINE_SPACING)
+    height = line_h * len(lines) + 2 * _TITLE_PAD_Y
+    height = height // 2 * 2  # dimensão par: o overlay entra num canvas yuv420p
+
+    img = Image.new("RGBA", (canvas_w, height), bg_rgba)
+    draw = ImageDraw.Draw(img)
+
+    y = _TITLE_PAD_Y + (line_h - ascent - descent) // 2
+    for line in lines:
+        x = (canvas_w - _mixed_line_width(line, font)) / 2
+        _draw_mixed_line(img, draw, line, font, x, y, text_rgba)
+        y += line_h
+
+    img.save(output_path)
+    logger.info(
+        f"Title banner generated: {output_path} ({canvas_w}x{height}, "
+        f"{len(lines)} linha(s), fonte {font.size}px)"
+    )
+    return canvas_w, height
+
+
+def _smoothstep(p: float) -> float:
+    """Aceleração suave nas duas pontas (3p² − 2p³), para p em [0,1]."""
+    p = min(1.0, max(0.0, p))
+    return p * p * (3.0 - 2.0 * p)
+
+
+def generate_banner_collapse_frames(
+    banner_path: str,
+    output_dir: str,
+    n_frames: int,
+) -> list[str]:
+    """
+    Os quadros da saída do banner: ele encolhe para dentro da faixa.
+
+    A borda de BAIXO fica presa na faixa e a de CIMA desce até encontrá-la,
+    recortando o conteúdo — o texto não se move nem diminui, vai sendo comido
+    de cima para baixo. Foi assim no exemplo aprovado, e é diferente de deslizar
+    para trás da faixa (que comeria o texto de baixo para cima, movendo-o).
+
+    Cada quadro tem o tamanho INTEIRO do banner, com a parte já recolhida
+    transparente. Tamanho constante é o que permite entregá-los ao FFmpeg como
+    uma sequência de imagens e sobrepô-los numa posição fixa: o `overlay` exige
+    dimensões constantes, e o `crop` do FFmpeg não aceita altura variável no
+    tempo. Recortar aqui, no Pillow, custa milissegundos e evita um filtergraph
+    que o FFmpeg não sabe montar.
+
+    Returns:
+        Os caminhos dos quadros, em ordem. O último é totalmente transparente.
+    """
+    master = Image.open(banner_path).convert("RGBA")
+    width, height = master.size
+    os.makedirs(output_dir, exist_ok=True)
+
+    paths: list[str] = []
+    for i in range(n_frames):
+        # i=0 já sai do repouso: o quadro idêntico ao estático seria um quadro
+        # perdido no meio de uma animação de ~0,2s.
+        collapsed = _smoothstep((i + 1) / n_frames)
+        visible = int(round(height * (1.0 - collapsed)))
+
+        frame = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        if visible > 0:
+            strip = master.crop((0, height - visible, width, height))
+            frame.paste(strip, (0, height - visible))
+
+        path = os.path.join(output_dir, f"collapse_{i:03d}.png")
+        frame.save(path)
+        paths.append(path)
+
+    logger.info(f"Banner collapse: {n_frames} quadro(s) em {output_dir}")
+    return paths
 
 
 # ─── Capa (frame expressivo) ──────────────────────────────────────────────────

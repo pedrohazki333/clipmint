@@ -40,7 +40,7 @@ def test_bar_style_defaults_without_config(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "storage_dir", str(tmp_path))
 
     assert load_bar_style() == (
-        BAR_DEFAULT_BG_HEX, BAR_DEFAULT_TEXT_HEX, BAR_DEFAULT_FONT, False
+        BAR_DEFAULT_BG_HEX, BAR_DEFAULT_TEXT_HEX, BAR_DEFAULT_FONT, "", False
     )
 
 
@@ -49,7 +49,7 @@ def test_bar_style_reads_saved_config(tmp_path, monkeypatch):
         "bg_color": "#123456", "text_color": "#ABCDEF", "font": "inter",
     }))
 
-    assert load_bar_style() == ("#123456", "#ABCDEF", "inter", True)
+    assert load_bar_style() == ("#123456", "#ABCDEF", "inter", "", True)
 
 
 def test_bar_style_survives_a_corrupt_config(tmp_path, monkeypatch):
@@ -57,7 +57,7 @@ def test_bar_style_survives_a_corrupt_config(tmp_path, monkeypatch):
     _write_style(tmp_path, monkeypatch, "{isso não é json")
 
     assert load_bar_style() == (
-        BAR_DEFAULT_BG_HEX, BAR_DEFAULT_TEXT_HEX, BAR_DEFAULT_FONT, False
+        BAR_DEFAULT_BG_HEX, BAR_DEFAULT_TEXT_HEX, BAR_DEFAULT_FONT, "", False
     )
 
 
@@ -65,9 +65,9 @@ def test_bar_style_completes_a_partial_config(tmp_path, monkeypatch):
     """Só a cor de fundo salva: o resto vem dos padrões."""
     _write_style(tmp_path, monkeypatch, json.dumps({"bg_color": "#000000"}))
 
-    bg, text, font, customized = load_bar_style()
-    assert (bg, text, font, customized) == (
-        "#000000", BAR_DEFAULT_TEXT_HEX, BAR_DEFAULT_FONT, True
+    bg, text, font, name, customized = load_bar_style()
+    assert (bg, text, font, name, customized) == (
+        "#000000", BAR_DEFAULT_TEXT_HEX, BAR_DEFAULT_FONT, "", True
     )
 
 
@@ -157,8 +157,8 @@ def test_bar_style_is_per_niche(tmp_path, monkeypatch):
         "bg_color": "#992200", "text_color": "#FFCC00", "font": "condensed",
     }), source="gameplay")
 
-    assert load_bar_style("podcast") == ("#111111", "#EEEEEE", "inter", True)
-    assert load_bar_style("gameplay") == ("#992200", "#FFCC00", "condensed", True)
+    assert load_bar_style("podcast") == ("#111111", "#EEEEEE", "inter", "", True)
+    assert load_bar_style("gameplay") == ("#992200", "#FFCC00", "condensed", "", True)
 
 
 def test_bar_style_unknown_niche_falls_back(tmp_path, monkeypatch):
@@ -188,8 +188,8 @@ def test_legacy_branding_is_copied_to_both_niches(tmp_path, monkeypatch):
 
     migrate_legacy_branding()
 
-    assert load_bar_style("podcast") == ("#ABCABC", "#FFFFFF", "inter", True)
-    assert load_bar_style("gameplay") == ("#ABCABC", "#FFFFFF", "inter", True)
+    assert load_bar_style("podcast") == ("#ABCABC", "#FFFFFF", "inter", "", True)
+    assert load_bar_style("gameplay") == ("#ABCABC", "#FFFFFF", "inter", "", True)
 
     # Rodar de novo não sobrescreve o que o usuário já diferenciou
     preset_path("gameplay", BAR_STYLE_FILE).write_text(
@@ -198,3 +198,36 @@ def test_legacy_branding_is_copied_to_both_niches(tmp_path, monkeypatch):
     )
     migrate_legacy_branding()
     assert load_bar_style("gameplay")[0] == "#000000"
+
+
+# ─── Nome escrito na faixa ────────────────────────────────────────────────────
+#
+# A faixa do layout do podcast (clipper.cut_and_crop) só existe quando o nicho
+# tem um nome configurado. Sem essa regra ela escreveria o nome do canal do
+# vídeo de origem — o dono do podcast, e não a conta que publica o clipe.
+
+def test_bar_name_is_read_from_the_niche_preset(tmp_path, monkeypatch):
+    _write_style(tmp_path, monkeypatch, json.dumps({
+        "bg_color": "#022DA5", "text_color": "#FBBF03",
+        "font": "condensed", "name": "@hzpodclips",
+    }))
+
+    assert load_bar_style().name == "@hzpodclips"
+
+
+def test_bar_name_defaults_to_empty(tmp_path, monkeypatch):
+    """Sem nome salvo o layout decide: canal do vídeo no streamer, nada no cover."""
+    _write_style(tmp_path, monkeypatch, json.dumps({"bg_color": "#000000"}))
+
+    assert load_bar_style().name == ""
+
+
+def test_bar_name_is_trimmed_and_bounded():
+    assert BarStyle(
+        bg_color="#000000", text_color="#FFFFFF", font="sans", name="  @conta  "
+    ).name == "@conta"
+
+    with pytest.raises(ValidationError):
+        BarStyle(
+            bg_color="#000000", text_color="#FFFFFF", font="sans", name="@" + "x" * 40
+        )

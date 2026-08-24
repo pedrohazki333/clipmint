@@ -1,0 +1,33 @@
+{
+  "clip_id": "c1b43e9846a24370ac84c0b483667232",
+  "validated_at": "2026-08-22T15:39:28.521841+00:00",
+  "video": {
+    "url": "https://www.youtube.com/watch?v=n2CxBmonu6o",
+    "title": "TENTANDO NÃO QUEBRAR O OVO COM O FALL! - AN EGGSTREMELY HARD GAME",
+    "channel": "alanzoka",
+    "language": "pt",
+    "duration": 9617.0
+  },
+  "clip": {
+    "start": 9453.0,
+    "end": 9554.1,
+    "duration": 101.10000000000036,
+    "opening_phrase": "A fazenda!",
+    "virality_score": 8.65,
+    "hook": "Entramos no top 10 mundial!",
+    "suggested_title": "2h37 depois: top 10 mundial no jogo mais difícil",
+    "reason": "Clímax emocional de quase 3 horas de gameplay comprimido em 90s. A alegria genuína e o grito de comemoração são universalmente shareáveis — não exige contexto prévio. O detalhe do top 10/11 ('mesma coisa, é igual') é o twist cômico que gera comentários. Pico de +14 dB é o mais intenso do vídeo inteiro. Alta loopability: quem assistiu vai querer ver a reação de novo.",
+    "tags": [
+      "gaming",
+      "victory",
+      "emotion",
+      "cooperative",
+      "top10"
+    ]
+  },
+  "validation": {
+    "performance": "bom",
+    "aprendizado": "A frase de hook aparentemente segura os viwers por pelo menos 25s no vídeo. Isso parece que fez esse vídeo subir naturalmente. Fazem 2 horas que eu postei e já é o vídeo com mais visualizações da conta. O resto do vídeo não é tão legar mas o hook é extremamente bom.",
+    "views": 3000
+  }
+}

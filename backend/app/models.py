@@ -30,6 +30,17 @@ class Job(Base):
     # Muda a rubrica da análise (critérios de podcast x gameplay) e define em
     # qual conta o clip é postado no cronograma. Default vem do layout_mode.
     source_type = Column(String, default="podcast")  # podcast | gameplay
+    # individual: um clipe por momento, como sempre. compilation: PROCURA um
+    # compilado (vários momentos costurados num vídeo só) e, não achando, cai
+    # de volta em clipes individuais — o modo é um pedido, não uma promessa.
+    clip_mode = Column(String, default="individual")  # individual | compilation
+    # Trechos que o usuário marcou assistindo, JSON [[inicio, fim], ...] em
+    # segundos, NA ORDEM EM QUE FORAM DIGITADOS — num compilado essa ordem é a
+    # montagem. Nulo = nenhum trecho indicado.
+    manual_clips = Column(Text, nullable=True)
+    # only: corta só os trechos indicados. plus: eles entram garantidos e a
+    # análise segue procurando outros.
+    manual_mode = Column(String, default="only")  # only | plus
     # Caixa da facecam em frações da fonte, JSON {x,y,w,h,confidence,method}.
     # Detectada no 1º clip e reusada nos demais; editável pelo usuário.
     facecam_rect = Column(Text, nullable=True)
@@ -60,22 +71,41 @@ class ReferenceExample(Base):
     """
     Exemplo de aprendizado a partir de um clipe viral de OUTRO criador.
 
-    O usuário fornece a URL do vídeo original + o arquivo do clipe viral.
-    O pipeline localiza onde o clipe foi cortado dentro do original (alinhamento
-    de transcrições), pede ao Claude uma análise reversa de por que aquele trecho
-    viralizou e, após confirmação do usuário, publica o resultado como exemplo
-    validado few-shot em prompt_engine/examples/validated/.
+    Há dois jeitos de aprender com um clipe alheio, e `kind` diz qual foi usado:
 
-    Pipeline de status:
-      queued → downloading_source → transcribing → aligning → analyzing → done
-      (qualquer etapa pode ir para: error)
+    'aligned' — o usuário tem a URL do vídeo ORIGINAL. O pipeline baixa o
+      original, transcreve os dois e localiza onde o corte foi feito
+      (services/aligner.py). Responde a melhor pergunta possível: por que ESTE
+      recorte e não o de dois minutos antes — porque sabe o que ficou de fora.
+      Status: queued → downloading_source → transcribing → aligning → analyzing → done
+
+    'standalone' — só o arquivo do clipe, tipicamente salvo do TikTok. O
+      original é desconhecido (ou é uma live de 6h que não vale baixar), então
+      não há o que alinhar e o objeto de estudo passa a ser o clipe em si:
+      fala, som e imagem periciados segundo a segundo (services/clip_forensics.py).
+      Status: queued → extracting → transcribing → watching → analyzing → done
+
+    Nos dois casos o resultado NÃO vira exemplo few-shot sozinho: fica esperando
+    a confirmação do usuário, que informa a performance real antes de publicar
+    em prompt_engine/examples/validated/.
+
+    Qualquer etapa pode ir para: error.
     """
 
     __tablename__ = "reference_examples"
 
     id = Column(String, primary_key=True, default=uuid4_hex)
-    source_url = Column(String, nullable=False)      # URL do vídeo original (YouTube)
+    kind = Column(String, default="aligned")         # aligned | standalone (ver docstring)
+    # No modo standalone não existe vídeo de origem: a coluna guarda o link do
+    # post (TikTok/Reels), quando o usuário souber, ou string vazia. Continua
+    # NOT NULL porque o SQLite não afrouxa isso por ALTER TABLE e o projeto não
+    # usa Alembic — vazio custa menos que uma tabela reescrita.
+    source_url = Column(String, nullable=False)      # URL do vídeo original (YouTube) ou do post
     clip_path = Column(String, nullable=False)       # arquivo do clipe viral enviado
+    # Nicho a que a referência pertence (podcast | gameplay | siege). Só rótulo:
+    # o few-shot hoje é comum às três contas, e o campo existe para a leitura
+    # ser atribuível a um nicho quando isso deixar de ser verdade.
+    source_type = Column(String, default="podcast")
 
     # Metadados do vídeo original (preenchidos após download)
     source_title = Column(String, nullable=True)
@@ -91,6 +121,11 @@ class ReferenceExample(Base):
 
     # Análise reversa gerada pelo Claude (JSON serializado)
     analysis_json = Column(Text, nullable=True)      # {hook, suggested_title, reason, tags, virality_score}
+    # Só no modo standalone: a perícia detalhada do clipe (gancho quadro a
+    # quadro, batidas, papel do som, estilo visual, regras transferíveis).
+    # Separada de analysis_json porque aquele campo tem o mesmo formato dos dois
+    # modos e é o que o confirm() publica como exemplo.
+    forensics_json = Column(Text, nullable=True)
     opening_phrase = Column(String, nullable=True)
     transcript_excerpt = Column(Text, nullable=True)
 

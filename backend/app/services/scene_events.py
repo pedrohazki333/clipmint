@@ -30,9 +30,21 @@ logger = logging.getLogger(__name__)
 # começar um pouco antes de a fala parar.
 _MARGIN = 4.0
 
+# Perguntar "o que se vê" traz o CENÁRIO; o clipe está no que MUDA. Medido no
+# vídeo do alanzoka (Grain Rot), janela [3840-3850], mesmos 10 quadros e mesmo
+# modelo, só a pergunta trocada: com "descreva o que se vê" a resposta foi
+# "exploração rotineira, sem evento marcante visível"; com esta, "aparece à
+# esquerda a figura de outro jogador (pequena, junto a um banco)" — e a ligação
+# entre a aparição e a risada. O gag era o personagem de outro jogador passando
+# pela tela, e a primeira pergunta o classificou como nada.
 _QUESTION = (
-    "Estes quadros cobrem um trecho em que ninguém fala mas o áudio está alto. "
-    "Descreva o que se vê — na cena e no rosto de quem aparece.\n"
+    "Estes quadros cobrem um trecho em que o áudio está alto — riso, grito ou "
+    "reação. Alguma coisa aconteceu NA TELA. Compare os quadros entre si e diga "
+    "o que MUDA: algo ou alguém que aparece, atravessa, some, se move de um "
+    "jeito estranho ou está fora de lugar. Personagens de outros jogadores "
+    "contam, mesmo pequenos, escuros ou no canto do quadro. Descreva também o "
+    "rosto de quem aparece na facecam. Se de fato nada muda, diga isso "
+    "explicitamente em vez de descrever o cenário parado.\n"
     + vision.JSON_RULES
 )
 
@@ -50,7 +62,20 @@ async def describe_events(job_id: str, video_path: str, gaps: list[Gap]) -> None
     if not settings.vision_enabled or not gaps:
         return
 
-    targets = [g for g in gaps if g.is_strong_event][: settings.vision_max_windows]
+    # Numa live longa há muito mais evento forte do que orçamento de visão, e
+    # aqui a escolha entre eles é que decide o que o modelo enxerga. A fatia
+    # cronológica que existia neste lugar pegava os PRIMEIROS eventos: medido
+    # no vídeo do alanzoka (110 min, 74 eventos fortes), as 20 janelas cobriam
+    # de 0:30 a 52:30 — a metade de trás do vídeo não era olhada por ninguém, e
+    # dois dos seis momentos que um editor humano escolheu para o compilado
+    # estavam justamente lá (71min e 94min). Ordenar por intensidade escolhe os
+    # momentos mais barulhentos do vídeo INTEIRO em vez dos mais cedo.
+    strongest = sorted(
+        (g for g in gaps if g.is_strong_event),
+        key=lambda g: -g.above_speech,
+    )[: settings.vision_max_windows]
+
+    targets = sorted(strongest, key=lambda g: g.start)
     if not targets:
         logger.info(f"[{job_id}] Nenhum evento forte de áudio para a visão olhar")
         return
@@ -58,7 +83,10 @@ async def describe_events(job_id: str, video_path: str, gaps: list[Gap]) -> None
     windows = [(g.start - _MARGIN, g.end + _MARGIN) for g in targets]
     questions = [_QUESTION] * len(targets)
 
-    logger.info(f"[{job_id}] Visão olhando {len(targets)} evento(s) de áudio")
+    logger.info(
+        f"[{job_id}] Visão olhando {len(targets)} evento(s) de áudio "
+        f"(os mais fortes de {sum(1 for g in gaps if g.is_strong_event)})"
+    )
     scenes = await vision.look_many(job_id, video_path, windows, questions)
 
     described = 0

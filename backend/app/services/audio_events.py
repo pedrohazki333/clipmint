@@ -72,6 +72,7 @@ _LONG_BUILDUP = 30.0
 # desta janela após o fim do buraco está pegando a reação sem a causa.
 _REACTION_TOLERANCE = 4.0
 
+
 # O outro jeito de perder a preparação: em vez de começar depois do evento, o
 # corte começa EM CIMA dele. O clipe abre no meio da gargalhada, sem a fala que
 # monta a piada — visto na prática quando a anotação de imagem deixou o modelo
@@ -148,13 +149,16 @@ class Gap:
 
 # ─── Medição ───────────────────────────────────────────────────────────────────
 
-async def _loudness_timeline(audio_path: str) -> list[tuple[float, float]]:
+async def loudness_timeline(audio_path: str) -> list[tuple[float, float]]:
     """
     Loudness momentânea (janela de 400ms do ebur128) a cada ~100ms.
 
     O ebur128 é a medida certa aqui porque acompanha percepção: gargalhada e
     grito sobem nela do mesmo jeito que sobem para quem está assistindo, o que
     um pico de amostra bruta não garante.
+
+    Pública porque services/clip_forensics.py mede a mesma coisa num clipe já
+    pronto — com outra régua, mas a partir desta mesma curva.
     """
     proc = await asyncio.create_subprocess_exec(
         "ffmpeg", "-v", "error", "-i", audio_path,
@@ -238,7 +242,7 @@ async def detect_gaps(job_id: str, audio_path: str, words: list[dict]) -> list[G
         return []
 
     try:
-        timeline = await _loudness_timeline(audio_path)
+        timeline = await loudness_timeline(audio_path)
     except (RuntimeError, OSError, FileNotFoundError) as exc:
         logger.warning(f"[{job_id}] Sem leitura de loudness ({exc}) — análise só pelo texto")
         return []

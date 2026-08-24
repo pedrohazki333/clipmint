@@ -6,8 +6,10 @@ import type { Reference } from "@/lib/types";
 const STATUS_LABEL: Record<string, string> = {
   queued: "Na fila",
   downloading_source: "Baixando",
+  extracting: "Preparando",
   transcribing: "Transcrevendo",
   aligning: "Localizando",
+  watching: "Assistindo",
   analyzing: "Analisando",
   done: "Pronto",
   error: "Erro",
@@ -26,11 +28,13 @@ export default function ReferenceCard({ reference }: { reference: Reference }) {
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
           <p className="text-sm font-medium text-gray-200 truncate">
-            {r.source_title ?? r.source_url}
+            {r.source_title || r.source_url || "Clipe sem título"}
           </p>
-          {r.source_channel && (
-            <p className="text-xs text-gray-500 truncate mt-0.5">{r.source_channel}</p>
-          )}
+          <p className="text-xs text-gray-500 truncate mt-0.5">
+            {[r.source_channel, r.kind === "standalone" ? "só o clipe" : "com o original"]
+              .filter(Boolean)
+              .join(" · ")}
+          </p>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           {r.published && (
