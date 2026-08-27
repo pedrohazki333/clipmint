@@ -421,3 +421,90 @@ export interface Subscription {
   current_period_end: string | null;
   canceled_at: string | null;
 }
+
+// ─── Painel do dono ──────────────────────────────────────────────────────────
+
+export interface Overview {
+  periodo: string;
+  mrr_brl: string;
+  assinantes_ativos: number;
+  novos_no_mes: number;
+  cancelados_no_mes: number;
+  churn_pct: string;
+  receita_bruta_brl: string;
+  taxas_gateway_brl: string;
+  receita_liquida_brl: string;
+  pagamentos: number;
+  custo_variavel_brl: string;
+  custo_fixo_brl: string;
+  imposto_brl: string;
+  lucro_liquido_brl: string;
+  margem_liquida_pct: string;
+  /** Custou e não recebeu: job que falhou ou foi excluído em andamento. */
+  prejuizo_devolvido_brl: string;
+  videos_devolvidos: number;
+  videos_processados: number;
+  taxas_estimadas: number;
+  imposto_pct: string;
+  avisos: string[];
+}
+
+export interface OverviewComparado {
+  atual: Overview;
+  anterior: Overview;
+}
+
+export interface SerieDia {
+  dia: string;
+  receita_brl: string;
+  custo_brl: string;
+  lucro_brl: string;
+}
+
+export interface UsuarioNoPeriodo {
+  user_id: string;
+  email: string;
+  receita_brl: string;
+  custo_brl: string;
+  resultado_brl: string;
+  videos: number;
+  deficitario: boolean;
+}
+
+export interface CostConfig {
+  assemblyai_usd_per_min: string;
+  llm_rates: Record<string, { input: number; output: number }>;
+  storage_usd_per_video: string;
+  fx_usd_brl: string;
+  fx_eur_brl: string;
+  fixed_cost_brl_month: string;
+  tax_pct_on_revenue: string;
+  gateway_fee_pct: string;
+  updated_at: string | null;
+}
+
+export interface PaymentAdmin {
+  id: string;
+  user_id: string;
+  gateway: string;
+  gateway_payment_id: string;
+  tipo: string;
+  amount_brl_gross: string;
+  gateway_fee_brl: string | null;
+  credits_granted: number;
+  status: string;
+  paid_at: string | null;
+  created_at: string | null;
+}
+
+export interface SubscriptionAdmin {
+  id: string;
+  user_id: string;
+  plan_code: string;
+  valor_brl: string;
+  creditos_mes: number;
+  status: string;
+  gateway: string;
+  started_at: string | null;
+  canceled_at: string | null;
+}

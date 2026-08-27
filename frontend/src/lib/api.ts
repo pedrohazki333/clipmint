@@ -355,3 +355,77 @@ export async function cancelSubscription(): Promise<Subscription> {
   const { data } = await api.post<Subscription>("/billing/subscription/cancel");
   return data;
 }
+
+// ─── Painel do dono ──────────────────────────────────────────────────────────
+//
+// Todas fechadas por `require_owner` no backend. Um usuário comum que chame
+// estas funções recebe 403 do servidor — a interface não é a fechadura.
+
+export async function getAdminOverview(mes?: string): Promise<OverviewComparado> {
+  const { data } = await api.get<OverviewComparado>("/admin/overview", {
+    params: mes ? { mes } : undefined,
+  });
+  return data;
+}
+
+export async function getAdminSeries(mes?: string): Promise<SerieDia[]> {
+  const { data } = await api.get<SerieDia[]>("/admin/series", {
+    params: mes ? { mes } : undefined,
+  });
+  return data;
+}
+
+export async function getAdminUsers(mes?: string): Promise<UsuarioNoPeriodo[]> {
+  const { data } = await api.get<UsuarioNoPeriodo[]>("/admin/users", {
+    params: mes ? { mes } : undefined,
+  });
+  return data;
+}
+
+export async function getCostConfig(): Promise<CostConfig> {
+  const { data } = await api.get<CostConfig>("/admin/cost-config");
+  return data;
+}
+
+export async function updateCostConfig(
+  campos: Partial<Record<string, string>>,
+): Promise<CostConfig> {
+  const { data } = await api.put<CostConfig>("/admin/cost-config", campos);
+  return data;
+}
+
+export async function getAdminPayments(): Promise<PaymentAdmin[]> {
+  const { data } = await api.get<PaymentAdmin[]>("/admin/payments");
+  return data;
+}
+
+export async function createManualPayment(corpo: {
+  email: string;
+  valor_brl: string;
+  taxa_brl?: string;
+  referencia?: string;
+  pago_em?: string;
+  conceder_creditos?: boolean;
+  creditos?: number;
+}): Promise<PaymentAdmin> {
+  const { data } = await api.post<PaymentAdmin>("/admin/payments", corpo);
+  return data;
+}
+
+export async function setPaymentStatus(
+  id: string,
+  status: "paid" | "refunded" | "chargeback",
+): Promise<PaymentAdmin> {
+  const { data } = await api.patch<PaymentAdmin>(`/admin/payments/${id}`, { status });
+  return data;
+}
+
+export async function createManualSubscription(corpo: {
+  email: string;
+  plan_code: string;
+  valor_brl: string;
+  creditos_mes: number;
+}): Promise<SubscriptionAdmin> {
+  const { data } = await api.post<SubscriptionAdmin>("/admin/subscriptions", corpo);
+  return data;
+}

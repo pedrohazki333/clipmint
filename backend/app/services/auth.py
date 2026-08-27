@@ -188,6 +188,48 @@ async def get_or_create_owner(db: AsyncSession) -> User:
     return dono
 
 
+async def promote_owner(db: AsyncSession) -> User | None:
+    """Dá a coroa de administrador à conta de `OWNER_EMAIL`, no build público.
+
+    Lá o cadastro sempre grava `is_owner=False` — e tem que ser assim, senão
+    qualquer um viraria administrador se cadastrando. Só que, sem este passo,
+    NINGUÉM é dono num servidor novo: o painel financeiro ficaria inacessível
+    inclusive para quem instalou, e a única saída seria um UPDATE à mão no
+    Postgres às duas da manhã.
+
+    A configuração já prometia isto (`OWNER_EMAIL`: "no público é quem
+    administra"); faltava alguém cumprir a promessa.
+
+    **Não cria conta**, diferente de `get_or_create_owner`: a conta do dono no
+    público nasce pelo cadastro normal, com senha de verdade. Criar aqui faria
+    um usuário sem senha com poder de administrador, que é o oposto do que se
+    quer num servidor exposto. Enquanto o dono não se cadastrar, ninguém
+    administra — e isso é seguro, não quebrado.
+
+    Idempotente: roda a cada startup.
+    """
+    email = normalize_email(settings.owner_email)
+    if not email:
+        return None
+
+    user = (
+        await db.execute(select(User).where(User.email == email))
+    ).scalar_one_or_none()
+    if user is None:
+        logger.info(
+            "Nenhuma conta com OWNER_EMAIL (%s) ainda — cadastre-se com esse "
+            "e-mail e reinicie para administrar o painel.",
+            email,
+        )
+        return None
+
+    if not user.is_owner:
+        user.is_owner = True
+        await db.commit()
+        logger.warning("Conta %s promovida a administradora da instalação", email)
+    return user
+
+
 async def adopt_orphan_jobs(db: AsyncSession, user: User) -> int:
     """
     Dá ao dono os jobs que existiam antes de haver usuários.

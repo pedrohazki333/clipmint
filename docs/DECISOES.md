@@ -1506,6 +1506,242 @@ reenviaria para sempre uma notificação que nunca conseguiríamos tratar.
 
 ---
 
+### D119. `usage_events` é o outro lado do `credit_ledger`
+
+Parecem redundantes e não são: o ledger registra o que o **usuário pagou**, em
+créditos; `usage_events` registra o que **nós pagamos**, em dólar e real. É o
+cruzamento dos dois que diz se um cliente dá lucro — nenhum dos dois sozinho diz.
+
+**Um registro por VÍDEO, não por clipe.** A fatura da AssemblyAI e da Anthropic
+é por minuto de vídeo: um job que gera oito clipes custa o mesmo que um que gera
+dois. Contar por clipe inflaria o custo por um número sem relação nenhuma com a
+conta que chega.
+
+`credits_charged` é o campo que fecha o par com a receita, e existe por causa da
+decisão de não cobrar job que falha (D110): esses eventos ficam com custo maior
+que zero e `credits_charged = 0`, e é exatamente essa combinação que o painel
+soma para mostrar quanto está sendo perdido ali. `status` separa `failed` de
+`deleted` porque a causa é diferente — um é bug nosso, o outro é o usuário
+desistindo — e a resposta a cada um também.
+
+Índice único parcial em `job_id`: um vídeo, um evento. Mesma disciplina do
+ledger, e pela mesma razão — os quatro caminhos terminais da D110 podem
+disparar mais de uma vez, e custo contado em dobro é pior que custo não contado.
+
+### D120. As tarifas de LLM ficam num mapa por modelo
+
+O prompt do monitor pedia `opus_input_usd_per_mtok` e `opus_output_usd_per_mtok`,
+duas colunas fixas. Viraram um mapa `{modelo: {input, output}}`, e o evento grava
+QUAL modelo rodou.
+
+O motivo apareceu antes de escrever qualquer código: o prompt dizia que a análise
+usa Opus 4.8, e o `config.py` roda **`claude-sonnet-4-6`**. As tarifas não são as
+mesmas — Opus 4.8 é $5/$25 por MTok e Sonnet 4.6 é $3/$15 — então os defaults do
+prompt, aplicados no tráfego real, superestimariam o custo de análise em ~67%.
+Um painel de lucro que erra o custo para cima faz recusar cliente que dá lucro.
+
+Com colunas fixas, trocar de modelo exigiria migração e o evento antigo passaria
+a ser lido com a tarifa do modelo novo. Com o mapa, a troca é uma linha na
+configuração e o histórico continua congelado no `rate_snapshot`. Os dois modelos
+já estão semeados, então a decisão de trocar não depende de deploy.
+
+Decisão do dono em 27/08/2026: **fica no Sonnet**.
+
+### D121. O que o monitor não reconhece é MARCADO, não zerado
+
+Duas situações passam pelo cálculo sem tarifa exata: modelo sem preço cadastrado
+e provedor de transcrição diferente do cotado. Nos dois casos a saída fácil seria
+zerar.
+
+Zerar mente para baixo, e custo subestimado é justamente o erro que faz aceitar
+cliente deficitário — o oposto do que este painel existe para evitar. Então:
+modelo sem tarifa entra com análise 0 **e** `analysis_rate_missing: true` no
+snapshot; provedor diferente usa a tarifa que existe **e** marca
+`transcription_rate_mismatch: true`. O painel pode mostrar a lacuna; o silêncio
+não daria essa chance.
+
+Pela mesma lógica, o arredondamento é de seis casas em USD: a tarifa de
+transcrição é 0,0035 por minuto, e arredondar a centavo a faria desaparecer.
+
+---
+
+### D122. Os tokens só existem uma vez, e o custo parcial precisa de prova
+
+A API devolve `usage` na resposta da análise e esse número **não volta depois**.
+O `analyzer.py` já o lia — e jogava num log. Agora ele grava, no mesmo ponto,
+antes que a informação se perca; sem isso o custo de análise viraria estimativa
+por contagem de caracteres, que é justamente o que este monitor não quer ser.
+
+Daí o evento ter **dois momentos e uma linha só**: `registrar_analise` escreve os
+tokens quando eles existem, `fechar` completa quando já se sabe como o job
+terminou e quanto o usuário pagou. Os dois escrevem na mesma linha, pelo
+`job_id` (índice único). Se o processo morrer entre um e outro, sobra um evento
+com tokens e sem fechamento — que é a verdade ("pagamos a análise e não sabemos
+como terminou"), e não um silêncio.
+
+**O custo parcial é decidido por evidência, não por status.** Um job pode morrer
+no download (não custou nada), depois da transcrição (custou os minutos) ou
+depois da análise (custou os dois):
+
+  - transcrição paga = **existe linha em `transcripts`** para este job;
+  - análise paga = os tokens foram registrados;
+  - storage = só se houve transcrição (implica mídia baixada).
+
+`jobs.duration_seconds` **não serve de prova** e essa é a armadilha: ele é
+preenchido na CRIAÇÃO do job, pela consulta de metadados, e existe cheio mesmo
+num job que morreu antes de baixar um byte. Usá-lo como sinal cobraria
+transcrição de vídeo que nunca foi transcrito.
+
+**`credits_charged` vem do ledger, não de um parâmetro.** É por isso que `fechar`
+roda DEPOIS da reconciliação: antes dela o débito ainda não existe e todo job
+pareceria prejuízo.
+
+E, como o `reconciliar_job` da D110, tudo aqui **engole exceção**: vídeo pronto
+não pode virar job com erro por causa da contabilidade. As funções vêm em par —
+núcleo que recebe sessão, invólucro que abre a sua — porque `AsyncSessionLocal`
+aponta para o banco real e um teste que chamasse o invólucro estaria medindo
+outro banco. Mesma separação de `usage.reconciliar` / `reconciliar_job`.
+
+---
+
+### D123. A fronteira do mês é America/São_Paulo, e isso não é cosmético
+
+As colunas de data são `timestamptz` em UTC. "Mês corrente" para quem toca o
+negócio é o mês em São Paulo — é o que bate com o extrato do contador. Em UTC,
+**as três últimas horas de todo dia 31 caem no mês seguinte**: um pagamento às
+23h do dia 31/07 viraria receita de agosto.
+
+A borda é calculada no fuso local e CONVERTIDA para UTC antes de ir ao banco: a
+comparação continua sendo entre instantes, que é o que um índice sabe fazer
+rápido. Verificado trocando o fuso por UTC de propósito — o teste da virada
+falha, que é o que se quer de um teste de fronteira.
+
+O agrupamento da série diária é feito em Python, e não em SQL, pelo mesmo
+motivo invertido: o dia depende do fuso, e `AT TIME ZONE` não existe no SQLite
+dos testes. Uma consulta que só roda em produção é a pior forma de descobrir que
+ela está errada. As consultas trazem duas colunas por linha — instante e valor —
+e na escala deste produto isso é um mês de eventos. Se passar de dezenas de
+milhares, o caminho é agregação materializada, não um `GROUP BY` mais esperto.
+
+### D124. Estimativa entra marcada, e o mês corrente vem com o anterior
+
+Duas coisas no painel não são medição, e as duas voltam com aviso: a **taxa do
+gateway** enquanto o pagamento não liquidou (o Mercado Pago só a informa depois,
+e até lá vale o percentual da configuração) e o **imposto**, que é placeholder
+até o contador confirmar. Um número estimado sem etiqueta vira fato na cabeça de
+quem lê — e este painel existe para decidir preço e rate limit.
+
+`overview` devolve o mês pedido **e o anterior**: R$ 400 de lucro é ótimo depois
+de R$ 100 e péssimo depois de R$ 900, e um número sozinho não distingue os dois.
+
+O custo fixo entra INTEIRO mesmo em mês corrente — o servidor já foi pago —, e a
+série diária mostra lucro só de receita menos custo variável: ratear custo fixo
+e imposto por dia desenharia uma curva que não existe.
+
+Churn é sobre a base do INÍCIO do mês, reconstruída como
+`ativos_hoje − novos + cancelados`. Dividir pelos ativos de hoje subestimaria o
+churn justamente nos meses ruins, que são os que interessam.
+
+### D125. A porta do painel é no backend, e o 403 deixou de falar de branding
+
+`/admin` fica atrás de `require_owner` no **servidor**. Esconder na interface não
+é proteção: quem descobrir a URL tem que levar 403 do backend. O router também só
+é registrado no build público — mas isso é conteúdo (lá não há receita para
+monitorar), não segurança.
+
+Reusar `require_owner` trouxe um efeito colateral pequeno e real: ele nasceu para
+os presets de marca, e quem tentava abrir o painel recebia *"Os presets de marca
+são compartilhados nesta instalação..."* — um texto que não explica nada de onde
+a pessoa está. A mensagem do 403 virou genérica; o porquê específico do branding
+continua no docstring, que é onde quem lê o código procura.
+
+---
+
+### D126. Verde e vermelho, medidos, dão ΔE 6,5 em deuteranopia
+
+O gráfico do painel ia codificar lucro por cor: mint para positivo, danger para
+negativo. Rodei o validador de paleta contra a superfície escura antes de
+escrever o SVG, e ele reprovou:
+
+```
+[WARN] CVD separation  worst adjacent #f87171↔#34d399 ΔE 6.5 (deutan)
+```
+
+É o clássico vermelho/verde, e é o tipo de CVD mais comum. Quem enxerga assim
+não distinguiria lucro de prejuízo pelo matiz — num painel cuja pergunta é
+exatamente essa.
+
+O sinal passou a ser codificado **três vezes**: pela DIREÇÃO da barra em relação
+à linha do zero, pelo `+`/`−` escrito no valor, e só então pela cor. Mesma regra
+na variação dos indicadores (▲/▼ mais o sinal) e na tabela por usuário (tarja na
+lateral mais a etiqueta "prejuízo", não a cor da linha sozinha).
+
+A lição é a mesma da D104, noutro domínio: **não avalie a olho o que dá para
+computar.** A paleta do produto parecia óbvia e estava errada para uma parte dos
+leitores.
+
+### D127. Barras de lucro, e não três linhas
+
+O pedido era "receita, custo e lucro por dia". Três linhas fariam o leitor
+conferir a subtração no olho — lucro É receita menos custo, não uma terceira
+medida independente. E dinheiro por dia é DISCRETO: um dia sem pagamento é um
+zero de verdade, não um ponto de uma curva contínua; barra representa isso, linha
+sugeriria um fluxo que não existe.
+
+Ficou: barras de lucro (a pergunta que traz alguém à tela), com receita e custo
+no hover **e** numa tabela sob o gráfico. A tabela não é enfeite de
+acessibilidade — é o que garante que nenhum número viva só no `:hover`, o que
+quebraria em impressão, leitor de tela e toque.
+
+A ordem da página segue a ordem da pergunta: resultado do mês, desenho dele no
+tempo, quem está dando prejuízo, tarifas que produziram tudo. E os **avisos de
+estimativa ficam entre os números e o gráfico**, não num rodapé: quem lê "lucro
+de R$ 112" precisa saber ali que parte daquilo é estimada.
+
+---
+
+### D128. Registrar receita e entregar crédito são coisas diferentes
+
+O lançamento manual do painel tem uma caixa "entregar créditos", e ela nasce
+**desmarcada**. Um Pix recebido na chave quer as duas coisas; uma correção de
+contabilidade quer só a primeira. Conceder por padrão daria crédito de graça
+toda vez que o dono só quisesse acertar o extrato — e crédito concedido por
+engano não volta sem deixar a conta de alguém negativa.
+
+Quando o crédito é concedido, ele passa pelo MESMO caminho do gateway
+(`payments._marcar_pago_e_creditar`): a idempotência da Fatia 2 vale igual, e um
+segundo mecanismo de crédito erraria onde aquele já acerta.
+
+**A idempotência do lançamento manual é a referência do Pix.** O
+`gateway_payment_id` recebe `manual:<referência>` e é único, então o mesmo E2E
+lançado duas vezes é recusado pelo banco — que é o erro provável aqui: conferir o
+extrato, lançar, e lançar de novo na semana seguinte. Sem referência não há
+proteção, e por isso o campo é PEDIDO com o motivo escrito na tela, não
+obrigatório: quem tem o comprovante ganha a garantia, quem não tem consegue
+lançar assim mesmo.
+
+Tudo isso escreve nas MESMAS tabelas do webhook. Uma tabela paralela para o que
+é manual daria dois totais que discordariam no primeiro fechamento de mês; o que
+distingue é a coluna `gateway`.
+
+### D129. Estorno tira do mês e não mexe no saldo
+
+Marcar um pagamento como `refunded` ou `chargeback` limpa o `paid_at`, e com isso
+ele sai da receita do mês — que é o efeito desejado quando o dinheiro volta.
+
+O que NÃO acontece é retirar os créditos. Quem já processou vídeo com aquele
+saldo ficaria negativo, e o extrato passaria a mostrar um débito que ninguém
+pediu. Se for para cobrar de volta, isso é um `ajuste` explícito no ledger — o
+único tipo que pode deixar a conta negativa (D102), justamente porque é uma
+decisão consciente de alguém.
+
+E o cancelamento de assinatura do painel só aceita as **manuais**. Encerrar uma
+do gateway por aqui a marcaria como encerrada sem avisar o Mercado Pago, e o
+cartão continuaria sendo debitado — o erro mais caro possível nessa direção
+(D118). As do gateway saem pelo fluxo do usuário, que fala com o gateway antes.
+
+---
+
 ---
 
 ## Adiado, com destino definido

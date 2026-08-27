@@ -75,6 +75,18 @@ def billing_enabled() -> bool:
     return public_build()
 
 
+def admin_panel_enabled() -> bool:
+    """O painel financeiro do dono existe neste build?
+
+    Só no público, e por uma razão de conteúdo: na versão pessoal não há receita,
+    cliente nem assinatura para monitorar — o painel mostraria zeros.
+
+    Isto NÃO é o que protege o painel. Quem protege é `require_owner` no
+    backend; esta função só decide se as rotas chegam a existir.
+    """
+    return public_build()
+
+
 def learning_enabled() -> bool:
     """O sistema de aprendizado existe neste build?
 

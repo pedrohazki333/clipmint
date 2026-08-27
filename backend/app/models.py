@@ -694,3 +694,144 @@ class CreditLedger(Base):
             sqlite_where=text("tipo = 'release' AND ref_usage_id IS NOT NULL"),
         ),
     )
+
+
+# ─── Monitor financeiro: o outro lado da linha ────────────────────────────────
+#
+# O `credit_ledger` acima registra o que o USUÁRIO pagou, em créditos. O que
+# vem abaixo registra o que NÓS pagamos, em dólar e real. São os dois lados da
+# mesma operação, e é o cruzamento deles que diz se um cliente dá lucro.
+
+#: Como o processamento terminou. `failed` e `deleted` ficam separados porque a
+#: causa é diferente — um é bug nosso, o outro é o usuário desistindo — e a
+#: resposta a cada um também.
+STATUS_USO = ("success", "failed", "deleted")
+
+
+class CostConfig(Base):
+    """Tarifas e câmbio. Uma linha só, `id = 1`.
+
+    Irmã da `billing_config` e separada dela de propósito: `billing_config` é
+    **o que cobramos**, esta é **o que pagamos**. Misturar as duas faria uma
+    alteração de preço de venda mexer no custo histórico.
+
+    Estes são os valores CORRENTES, usados para projeção e para eventos novos.
+    O histórico não mora aqui — cada `usage_event` congela as tarifas que usou
+    no `rate_snapshot`, e é por isso que mudar uma tarifa hoje não reescreve o
+    lucro do mês passado.
+    """
+
+    __tablename__ = "cost_config"
+
+    id = Column(Integer, primary_key=True, default=1)
+
+    #: AssemblyAI cobra por minuto de áudio.
+    assemblyai_usd_per_min = Column(Numeric(12, 6), nullable=False)
+
+    #: Tarifas de LLM por MODELO, em USD por milhão de tokens:
+    #: {"claude-sonnet-4-6": {"input": 3.0, "output": 15.0}, ...}
+    #:
+    #: Um mapa, e não duas colunas fixas, porque o modelo de análise pode
+    #: mudar: com colunas por modelo, trocar de modelo exigiria migração e o
+    #: evento antigo passaria a ser lido com a tarifa do modelo novo. Assim o
+    #: evento grava QUAL modelo rodou e congela a tarifa dele.
+    llm_rates = Column(JSONVariant, nullable=False)
+
+    #: Custo de guardar um vídeo. Estimativa por vídeo, não medição.
+    storage_usd_per_video = Column(Numeric(12, 6), nullable=False)
+
+    fx_usd_brl = Column(Numeric(12, 4), nullable=False)
+    #: A Hetzner cobra em euro — daí a segunda taxa.
+    fx_eur_brl = Column(Numeric(12, 4), nullable=False)
+
+    #: Servidor + IPv4 + domínio, por mês.
+    fixed_cost_brl_month = Column(Numeric(12, 2), nullable=False)
+    #: Percentual de imposto sobre a receita. PLACEHOLDER até o contador
+    #: confirmar — está aqui para o número aparecer no painel, não porque
+    #: alguém o apurou.
+    tax_pct_on_revenue = Column(Numeric(6, 3), nullable=False)
+    #: Taxa do gateway sobre o bruto (Pix).
+    gateway_fee_pct = Column(Numeric(6, 3), nullable=False)
+
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    updated_by_user_id = Column(String, ForeignKey("users.id"), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_cost_config_linha_unica"),
+        CheckConstraint("fx_usd_brl > 0", name="ck_cost_config_fx_positivo"),
+        CheckConstraint(
+            "tax_pct_on_revenue >= 0", name="ck_cost_config_imposto_nao_negativo"
+        ),
+    )
+
+
+class UsageEvent(Base):
+    """Um registro por VÍDEO processado — não por clipe.
+
+    O custo é por minuto de vídeo: um job que gera oito clipes custa o mesmo que
+    um que gera dois. Contar por clipe inflaria o custo por um número que não
+    tem relação nenhuma com a fatura.
+
+    `credits_charged` é o que fecha o par com a receita. Quando um job falha ou
+    é excluído em andamento, a reserva é devolvida e o usuário não paga
+    (`COBRAR_JOB_QUE_FALHOU = False`) — mas a transcrição já foi paga por nós.
+    Esses eventos ficam com custo maior que zero e `credits_charged = 0`, e é
+    exatamente essa combinação que o painel soma para mostrar quanto está sendo
+    perdido aí.
+    """
+
+    __tablename__ = "usage_events"
+
+    id = Column(String, primary_key=True, default=uuid4_hex)
+    user_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
+    #: `SET NULL` pela mesma razão do ledger (migração 0007): registro
+    #: financeiro não pode ser apagado junto com o job.
+    job_id = Column(String, ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    source_video_url = Column(Text, nullable=True)
+    #: Numeric, e não Float: estes minutos multiplicam direto numa tarifa, e
+    #: arredondamento de ponto flutuante aqui vira centavo errado lá na frente.
+    source_minutes = Column(Numeric(10, 3), nullable=True)
+
+    transcription_provider = Column(String, nullable=True)
+    transcription_minutes = Column(Numeric(10, 3), nullable=True)
+    transcription_cost_usd = Column(Numeric(12, 6), nullable=False, default=0)
+
+    #: O modelo que DE FATO rodou, não o que a configuração dizia na hora de ler.
+    analysis_model = Column(String, nullable=True)
+    input_tokens = Column(Integer, nullable=False, default=0)
+    output_tokens = Column(Integer, nullable=False, default=0)
+    analysis_cost_usd = Column(Numeric(12, 6), nullable=False, default=0)
+
+    storage_cost_usd = Column(Numeric(12, 6), nullable=False, default=0)
+    total_cost_usd = Column(Numeric(12, 6), nullable=False, default=0)
+    total_cost_brl = Column(Numeric(12, 4), nullable=False, default=0)
+
+    #: Tarifas, câmbio e modelo congelados no momento do cálculo. É o que faz
+    #: uma alteração de tarifa hoje NÃO reescrever o custo do mês passado.
+    rate_snapshot = Column(JSONVariant, nullable=True)
+
+    status = Column(String, nullable=False, default="success")
+    #: Créditos efetivamente cobrados do usuário. 0 = devolvido.
+    credits_charged = Column(Integer, nullable=False, default=0)
+
+    __table_args__ = (
+        CheckConstraint(_em("status", STATUS_USO), name="ck_usage_events_status"),
+        CheckConstraint("credits_charged >= 0", name="ck_usage_events_creditos"),
+        # O painel agrega por período e por usuário. O composto atende os dois
+        # (o prefixo mais à esquerda serve a busca só por usuário); o índice de
+        # data sozinho atende a agregação do mês inteiro, que não filtra usuário.
+        Index("ix_usage_events_user_created", "user_id", "created_at"),
+        Index("ix_usage_events_created_at", "created_at"),
+        # Um vídeo, um evento. Mesma disciplina do ledger: a garantia mora no
+        # banco, para uma retomada ou um caminho terminal disparado duas vezes
+        # não contar o custo em dobro.
+        Index(
+            "uq_usage_events_job",
+            "job_id",
+            unique=True,
+            postgresql_where=text("job_id IS NOT NULL"),
+            sqlite_where=text("job_id IS NOT NULL"),
+        ),
+    )

@@ -445,3 +445,153 @@ class SubscriptionResponse(BaseModel):
     canceled_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
+
+
+# ─── Painel do dono ───────────────────────────────────────────────────────────
+
+
+class OverviewResponse(BaseModel):
+    periodo: str
+
+    mrr_brl: Decimal
+    assinantes_ativos: int
+    novos_no_mes: int
+    cancelados_no_mes: int
+    churn_pct: Decimal
+
+    receita_bruta_brl: Decimal
+    taxas_gateway_brl: Decimal
+    receita_liquida_brl: Decimal
+    pagamentos: int
+
+    custo_variavel_brl: Decimal
+    custo_fixo_brl: Decimal
+    imposto_brl: Decimal
+
+    lucro_liquido_brl: Decimal
+    margem_liquida_pct: Decimal
+
+    #: Custou e não recebeu: job que falhou ou foi excluído em andamento.
+    prejuizo_devolvido_brl: Decimal
+    videos_devolvidos: int
+    videos_processados: int
+
+    taxas_estimadas: int
+    imposto_pct: Decimal
+    avisos: List[str] = []
+
+    model_config = {"from_attributes": True}
+
+
+class OverviewComparadoResponse(BaseModel):
+    """Mês corrente ao lado do anterior — número sozinho não diz se melhorou."""
+
+    atual: OverviewResponse
+    anterior: OverviewResponse
+
+
+class SerieDiaResponse(BaseModel):
+    dia: str
+    receita_brl: Decimal
+    custo_brl: Decimal
+    lucro_brl: Decimal
+
+    model_config = {"from_attributes": True}
+
+
+class UsuarioNoPeriodoResponse(BaseModel):
+    user_id: str
+    email: str
+    receita_brl: Decimal
+    custo_brl: Decimal
+    resultado_brl: Decimal
+    videos: int
+    deficitario: bool
+
+    model_config = {"from_attributes": True}
+
+
+class CostConfigResponse(BaseModel):
+    assemblyai_usd_per_min: Decimal
+    llm_rates: dict
+    storage_usd_per_video: Decimal
+    fx_usd_brl: Decimal
+    fx_eur_brl: Decimal
+    fixed_cost_brl_month: Decimal
+    tax_pct_on_revenue: Decimal
+    gateway_fee_pct: Decimal
+    updated_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class CostConfigUpdate(BaseModel):
+    """Só o que veio é alterado. Nada aqui reescreve evento já gravado."""
+
+    assemblyai_usd_per_min: Optional[Decimal] = None
+    llm_rates: Optional[dict] = None
+    storage_usd_per_video: Optional[Decimal] = None
+    fx_usd_brl: Optional[Decimal] = None
+    fx_eur_brl: Optional[Decimal] = None
+    fixed_cost_brl_month: Optional[Decimal] = None
+    tax_pct_on_revenue: Optional[Decimal] = None
+    gateway_fee_pct: Optional[Decimal] = None
+
+
+class ManualPaymentRequest(BaseModel):
+    """Um recebimento que não veio pelo gateway."""
+
+    email: str
+    valor_brl: Decimal = Field(..., ge=0)
+    taxa_brl: Optional[Decimal] = None
+    #: Informe a referência do Pix (o E2E do comprovante) e o banco passa a
+    #: recusar o mesmo recebimento lançado duas vezes.
+    referencia: Optional[str] = None
+    pago_em: Optional[datetime] = None
+    plan_code: Optional[str] = None
+    #: Registrar receita e ENTREGAR crédito são coisas diferentes. Padrão é só
+    #: registrar — conceder por engano daria crédito de graça.
+    conceder_creditos: bool = False
+    creditos: int = 0
+
+
+class ManualStatusRequest(BaseModel):
+    status: Literal["paid", "refunded", "chargeback"]
+
+
+class ManualSubscriptionRequest(BaseModel):
+    email: str
+    plan_code: str
+    valor_brl: Decimal = Field(..., ge=0)
+    creditos_mes: int = Field(..., ge=0)
+    started_at: Optional[datetime] = None
+
+
+class PaymentAdminResponse(BaseModel):
+    id: str
+    user_id: str
+    gateway: str
+    gateway_payment_id: str
+    tipo: str
+    amount_brl_gross: Decimal
+    gateway_fee_brl: Optional[Decimal] = None
+    credits_granted: int
+    status: str
+    paid_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class SubscriptionAdminResponse(BaseModel):
+    id: str
+    user_id: str
+    plan_code: str
+    valor_brl: Decimal
+    creditos_mes: int
+    status: str
+    gateway: str
+    started_at: Optional[datetime] = None
+    canceled_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}

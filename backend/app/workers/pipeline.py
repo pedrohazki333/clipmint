@@ -57,6 +57,7 @@ from app.prompts.viral_analysis import default_source_type
 from app.services.layout import streamer_geometry
 from app.services import r6_hud
 from app.services import usage as usage_service
+from app.services import usage_monitor
 from app.services import segments as segments_service
 from app.services.segments import compact_segments, remap_words
 from app.workers import joblock
@@ -243,6 +244,7 @@ async def reconcile_interrupted_jobs() -> list[str]:
     # usuário perderia saldo por um reinício do servidor.
     for jid in job_ids:
         await usage_service.reconciliar_job(jid, sucesso=False)
+        await usage_monitor.fechar_job(jid, status="failed")
 
     logger.warning(
         f"{len(job_ids)} job(s) interrompido(s) por restart marcado(s) como erro: "
@@ -1011,6 +1013,9 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
         # Fecha a conta: devolve a reserva e cobra os minutos que rodaram. Nunca
         # levanta — contabilidade não derruba um job que já terminou bem.
         await usage_service.reconciliar_job(job_id, sucesso=True)
+        # Depois da reconciliação: é dela que sai quanto o usuário pagou, e o
+        # par (custo, cobrado) é o que diz se este vídeo deu prejuízo.
+        await usage_monitor.fechar_job(job_id, status="success")
         logger.info(f"[{job_id}] Pipeline complete!")
 
     except JobDeleted:
@@ -1031,6 +1036,7 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
         # pode ficar preso. Num job já excluído não faz nada: a exclusão
         # devolveu.
         await usage_service.reconciliar_job(job_id, sucesso=False)
+        await usage_monitor.fechar_job(job_id, status="failed")
 
 
 def _discard_storage(job_id: str) -> None:

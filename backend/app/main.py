@@ -17,6 +17,7 @@ from app.features import (
     schedule_enabled,
     video_enhance_enabled,
 )
+from app.routers import admin as admin_router
 from app.routers import billing as billing_router
 from app.routers import (
     auth,
@@ -31,6 +32,7 @@ from app.routers import (
 from app.services.auth import (
     adopt_orphan_jobs,
     get_or_create_owner,
+    promote_owner,
     purge_expired_sessions,
 )
 from app.services import retention
@@ -100,7 +102,13 @@ async def lifespan(app: FastAPI):
     # A versão pessoal não tem cadastro, mas o resto do sistema fala em usuário:
     # existe UM dono, e todos os jobs são dele. Semear aqui é o que permite ao
     # pipeline, à cota e ao TTL tratarem as duas versões do mesmo jeito.
-    if not public_build():
+    if public_build():
+        # No público a conta do dono nasce pelo cadastro normal, com senha de
+        # verdade — aqui ela só ganha a coroa. Sem isto ninguém administra num
+        # servidor novo, nem quem instalou.
+        async with AsyncSessionLocal() as db:
+            await promote_owner(db)
+    else:
         async with AsyncSessionLocal() as db:
             dono = await get_or_create_owner(db)
             await adopt_orphan_jobs(db, dono)
@@ -296,6 +304,9 @@ def register_routers(target: FastAPI) -> None:
         target.include_router(auth.router, prefix="/api")
         # Cobrança só existe no público (ver features.billing_enabled).
         target.include_router(billing_router.router, prefix="/api")
+        # Painel do dono. Registrado aqui e fechado por require_owner lá dentro:
+        # a rota existir não é o mesmo que a rota estar aberta.
+        target.include_router(admin_router.router, prefix="/api")
 
     target.include_router(profiles_router.router, prefix="/api")
     target.include_router(jobs.router, prefix="/api")

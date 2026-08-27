@@ -16,7 +16,7 @@ from app.layouts import LAYOUT_LABELS, layout_allowed, layouts_for
 from app.models import Clip, CreditLedger, Job, Profile, Transcript, User
 from app.prompts.viral_analysis import default_source_type
 from app.schemas import JobCreate, JobResponse, JobDetailResponse
-from app.services import usage
+from app.services import usage, usage_monitor
 from app.services.quota import guard_new_job
 from app.utils.timecodes import parse_ranges
 from app.workers import joblock
@@ -301,6 +301,12 @@ async def delete_job(
     # não vai mais rodar. Não tem efeito nenhum num job já concluído — lá a
     # reserva já foi devolvida e o consumo já foi cobrado.
     await usage.reconciliar(db, job_id=job_id, segundos_reais=None, sucesso=False)
+    await db.commit()
+
+    # Fecha o custo ANTES de apagar: depois do DELETE os dados do job já não
+    # existem, e o gasto com transcrição deste vídeo sumiria do monitor junto
+    # com ele. `deleted` fica separado de `failed` porque a causa é outra.
+    await usage_monitor.fechar(db, job_id, status="deleted")
 
     # Registros no banco (sem FK cascade configurado — remoção explícita)
     await db.execute(delete(Clip).where(Clip.job_id == job_id))

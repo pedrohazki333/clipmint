@@ -111,7 +111,14 @@ ser preenchidas** — sem elas o servidor não sobe ou não funciona:
 | `CLIPMINT_PASSWORD` | Senha de perímetro da API. Gere com `openssl rand -base64 24` |
 | `ASSEMBLYAI_API_KEY` | Transcrição |
 | `ANTHROPIC_API_KEY` | Análise de viralidade |
+| `OWNER_EMAIL` | **O seu e-mail.** É a conta que vai administrar — ver abaixo |
 
+**Sobre o `OWNER_EMAIL`:** o cadastro público sempre cria conta comum, senão
+qualquer um viraria administrador se cadastrando. A coroa é dada no startup à
+conta que tiver esse e-mail — e o startup **não cria a conta**. A ordem é:
+subir o servidor, cadastrar-se normalmente com esse e-mail, reiniciar. Deixando
+o padrão `dono@clipmint.local`, ninguém administra o servidor, nem você, e o
+painel `/admin` responde 403 para todo mundo.
 
 Também deixe `SQLITE_URL=` **vazia**: ela é o nome antigo de `DATABASE_URL` e,
 preenchida, vence — o servidor subiria em SQLite achando que está em Postgres.

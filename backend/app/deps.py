@@ -86,10 +86,16 @@ async def require_owner(user: User = Depends(current_user)) -> User:
     """
     Restringe a rota a quem administra a instalação.
 
-    Usado nos presets de marca. Eles são gravados por NICHO, num diretório
+    Nasceu para os presets de marca: eles são gravados por NICHO, num diretório
     compartilhado — no build público, deixar qualquer usuário escrever ali faria
     a logo de um aparecer no clipe do outro. Enquanto o branding não for por
     usuário (ver docs/DECISOES.md, D42), a porta fica fechada para não-donos.
+
+    Agora também guarda o painel financeiro (`routers/admin.py`), e por isso a
+    mensagem do 403 é GENÉRICA: quem tentasse abrir o painel recebia um texto
+    sobre presets de marca, que não explica nada de onde ele está. O porquê
+    específico do branding fica neste docstring, que é onde quem lê o código
+    procura — a resposta HTTP só precisa dizer que a área é restrita.
 
     Na versão pessoal todo mundo é o dono, então nada muda.
     """
@@ -97,8 +103,7 @@ async def require_owner(user: User = Depends(current_user)) -> User:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
-                "Os presets de marca são compartilhados nesta instalação e só "
-                "quem administra pode alterá-los."
+                "Esta área é restrita a quem administra a instalação."
             ),
         )
     return user
