@@ -353,3 +353,51 @@ def test_cover_banner_uses_the_configured_font(tmp_path, monkeypatch):
     generate_banner("Fonte de teste", str(tmp_path / "c.png"), None, None, "condensed")
     generate_banner("Fonte de teste", str(tmp_path / "s.png"), None, None, "serif")
     assert (tmp_path / "c.png").read_bytes() != (tmp_path / "s.png").read_bytes()
+
+
+# ─── O banner tem que usar a marca do PERFIL, não a de fábrica ────────────────
+
+
+def test_o_banner_recebe_o_perfil_do_clipe(tmp_path, monkeypatch):
+    """O `profile_id` precisa CHEGAR ao gerador do banner.
+
+    Em produção ele não chegava: a chamada em `clipper._prepare_title_banner`
+    passava os argumentos por POSIÇÃO e parava no `source_type`, deixando o
+    `profile_id` — que é o último parâmetro — no padrão `None`. Nada acusava,
+    porque a assinatura aceita a omissão.
+
+    O resultado no clipe era metade certo: a faixa saía com a cor do perfil
+    (ela passa o perfil) e o banner de título saía com a marca de fábrica do
+    ClipMint. Duas peças da mesma imagem com identidades diferentes.
+
+    Este teste olha o que a função REALMENTE recebe, e não o que a de cima
+    aceita — foi essa diferença que escondeu o defeito.
+    """
+    import asyncio
+
+    from app.services import clipper
+
+    recebido = {}
+
+    def espiao(text, output_path, canvas_w, *args, **kwargs):
+        recebido["args"] = args
+        recebido["kwargs"] = kwargs
+        # O chamador só usa a altura devolvida.
+        return (canvas_w, 216)
+
+    monkeypatch.setattr(clipper, "generate_title_banner", espiao)
+    monkeypatch.setattr(clipper, "generate_banner_collapse_frames", lambda *a, **k: None)
+
+    geo = clipper.streamer_geometry()
+    asyncio.run(
+        clipper._prepare_title_banner(
+            tmp_path, "clip1", "Um título qualquer", geo, 30.0,
+            "gameplay", "b373853ee416437c8221e2ff3df84b32",
+        )
+    )
+
+    assert recebido, "generate_title_banner nem chegou a ser chamado"
+    assert (
+        recebido["kwargs"].get("profile_id") == "b373853ee416437c8221e2ff3df84b32"
+    ), "o perfil não chegou ao banner — ele vai sair com a marca de fábrica"
+    assert recebido["kwargs"].get("source_type") == "gameplay"

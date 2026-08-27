@@ -884,9 +884,18 @@ async def _prepare_title_banner(
     frames_dir = clip_dir / f"{clip_id}_title_frames"
 
     try:
+        # Argumentos por NOME, e não por posição. Na forma posicional o
+        # `profile_id` simplesmente não era passado — e como ele é o último
+        # parâmetro, nada acusava: o banner saía com a marca de fábrica do
+        # ClipMint enquanto a barra, que passa o perfil, saía com a cor certa.
+        # Duas peças do mesmo clipe com marcas diferentes.
         _, height = await asyncio.to_thread(
-            generate_title_banner, text, static_path, geo.canvas_w, None, None,
-            None, source_type,
+            generate_title_banner,
+            text,
+            static_path,
+            geo.canvas_w,
+            source_type=source_type,
+            profile_id=profile_id,
         )
         n_frames = max(2, round(exit_dur * settings.streamer_banner_exit_fps))
         await asyncio.to_thread(
