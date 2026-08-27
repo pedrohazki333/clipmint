@@ -16,7 +16,7 @@ from app.layouts import LAYOUT_LABELS, layout_allowed, layouts_for
 from app.models import Clip, CreditLedger, Job, Profile, Transcript, User
 from app.prompts.viral_analysis import default_source_type
 from app.schemas import JobCreate, JobResponse, JobDetailResponse
-from app.services import usage, usage_monitor
+from app.services import credits, usage, usage_monitor
 from app.services.quota import guard_new_job
 from app.utils.timecodes import parse_ranges
 from app.workers import joblock
@@ -259,6 +259,21 @@ async def retry_job(
             status_code=409,
             detail="O job já está em processamento.",
         )
+
+    # Retomar um job cuja reserva já foi DEVOLVIDA é uma compra: ele falhou,
+    # o crédito voltou, e agora vai entregar os clips. Cobra-se no fim, mas a
+    # porta é aqui — deixar entrar sem saldo seria renderizar o vídeo inteiro
+    # para descobrir na última linha que não há como cobrar. Devolve 402, o
+    # mesmo que a criação de job, e a interface manda para a recarga.
+    necessario = await usage.creditos_para_retomar(
+        db, job_id=job.id, segundos=job.duration_seconds
+    )
+    if necessario > 0:
+        disponivel = await credits.saldo(db, user.id)
+        if disponivel < necessario:
+            raise credits.SaldoInsuficiente(
+                necessario=necessario, disponivel=disponivel
+            )
 
     job.status = "queued"
     job.error_message = None

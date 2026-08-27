@@ -22,8 +22,15 @@ lançamento seria RECUSADO por saldo insuficiente, num job que já rodou. Devolv
 primeiro leva a `B`, e o débito de `R` cai em cima disso.
 
 Cada um dos três tem índice único parcial por job no banco (migrações 0006 e
-0007): segura uma vez, devolve uma vez, cobra uma vez. Um job retomado à mão —
-que este projeto faz — não paga de novo.
+0007): segura uma vez, devolve uma vez, cobra uma vez. É o banco que garante o
+"uma vez", não um `if` em Python.
+
+**Job retomado paga.** Um job que falha devolve a reserva e não cobra nada — e
+até aqui está certo, o usuário não recebeu clip nenhum. Mas ele pode ser
+RETOMADO, e aí recebe. Quem decide se já se cobrou é o lançamento de `debito`;
+enquanto ele não existe, uma conclusão bem-sucedida cobra, tenha havido
+devolução antes ou não. Confundir "já devolvi" com "já cobrei" era o caminho
+para clip de graça: bastava falhar uma vez antes de dar certo.
 """
 
 import logging
@@ -98,6 +105,36 @@ async def segurar(
     return custo
 
 
+async def creditos_para_retomar(
+    db: AsyncSession, *, job_id: str, segundos: float | None
+) -> int:
+    """Quantos créditos a pessoa precisa TER no saldo para retomar este job.
+
+    Zero — retomar sai de graça — em três casos, e todos os três são legítimos:
+
+      - job sem reserva: build pessoal, ou job anterior à cobrança;
+      - job que já foi cobrado: retomar para re-renderizar um clip que falhou
+        não é uma segunda compra do mesmo vídeo;
+      - job com a reserva ainda de pé: já está pago adiantado, é a retomada de
+        algo que nunca chegou a ser devolvido (o processo morreu no meio).
+
+    Sobra o caso que importa: a reserva foi DEVOLVIDA e nada foi cobrado. Aí
+    retomar é receber o produto, e o produto tem preço. O número aqui é o mesmo
+    que `reconciliar` vai cobrar no fim — inclusive o teto da reserva, para a
+    tela nunca prometer um preço e a cobrança sair outro.
+    """
+    hold = await _lancamento(db, job_id, "hold")
+    if hold is None:
+        return 0
+    if await _lancamento(db, job_id, "debito") is not None:
+        return 0
+    if await _lancamento(db, job_id, "release") is None:
+        return 0
+
+    reservado = -int(hold.amount)
+    return min(custo_em_creditos(segundos or 0) or reservado, reservado)
+
+
 async def reconciliar(
     db: AsyncSession, *, job_id: str, segundos_reais: float | None, sucesso: bool
 ) -> None:
@@ -110,21 +147,27 @@ async def reconciliar(
     hold = await _lancamento(db, job_id, "hold")
     if hold is None:
         return
-    if await _lancamento(db, job_id, "release") is not None:
-        logger.debug("Job %s já reconciliado; nada a fazer", job_id)
+    if await _lancamento(db, job_id, "debito") is not None:
+        logger.debug("Job %s já foi cobrado; nada a fazer", job_id)
         return
 
     reservado = -int(hold.amount)
 
+    # A devolução pode já ter acontecido: é o job que falhou, devolveu, e está
+    # sendo RETOMADO agora. Não se devolve duas vezes — mas a cobrança lá
+    # embaixo continua de pé, porque desta vez o usuário recebeu os clips.
+    ja_devolvido = await _lancamento(db, job_id, "release") is not None
+
     # 1. Devolver ANTES de cobrar (ver o docstring do módulo).
-    await credits.lancar(
-        db,
-        user_id=hold.user_id,
-        tipo="release",
-        amount=reservado,
-        ref_usage_id=job_id,
-        descricao=f"Devolução da reserva do job {job_id}",
-    )
+    if not ja_devolvido:
+        await credits.lancar(
+            db,
+            user_id=hold.user_id,
+            tipo="release",
+            amount=reservado,
+            ref_usage_id=job_id,
+            descricao=f"Devolução da reserva do job {job_id}",
+        )
 
     if not sucesso and not COBRAR_JOB_QUE_FALHOU:
         logger.info(
@@ -164,9 +207,19 @@ async def reconciliar(
         amount=-real,
         ref_usage_id=job_id,
         descricao=f"Processamento do job {job_id} ({real} min)",
+        # Só no job retomado. Ali o saldo já voltou para o usuário e pode ter
+        # sido gasto em outro vídeo enquanto este renderizava; o trabalho foi
+        # entregue, então a conta fica devendo e é o PRÓXIMO job que espera —
+        # em vez de a entrega sair de graça. No caminho normal isto é
+        # inalcançável: `real` nunca passa de `reservado`, que ainda está preso.
+        permitir_negativo=ja_devolvido,
     )
     logger.info(
-        "Job %s reconciliado: reservado %s, cobrado %s", job_id, reservado, real
+        "Job %s reconciliado: reservado %s, cobrado %s%s",
+        job_id,
+        reservado,
+        real,
+        " (retomado)" if ja_devolvido else "",
     )
 
 

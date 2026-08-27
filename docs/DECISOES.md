@@ -1779,6 +1779,47 @@ real da aplicação — assinatura correta devolve 200, assinatura errada devolv
 
 ---
 
+### D131. Quem decide se o job já foi cobrado é o débito, nunca a devolução
+
+A conta de um job tem três lançamentos: `hold` ao criar, `release` ao terminar,
+`debito` quando deu certo. A reconciliação saía cedo ao encontrar um `release`,
+tratando-o como "este job já está resolvido".
+
+Não está. **Um job que falha devolve a reserva e pode ser retomado depois** — e
+a retomada entrega os clips. Com o `release` como sentinela, essa entrega não
+cobrava nada: bastava falhar uma vez antes de dar certo para levar o vídeo de
+graça. E falhar é comum (rede, chave de API vencida, restart no meio de um
+render), com um botão "Retomar de onde parou" bem visível ao lado.
+
+O sinal certo é o `debito`. Enquanto ele não existe, uma conclusão
+bem-sucedida cobra — tenha havido devolução antes ou não. A devolução continua
+acontecendo uma vez só, e o "uma vez" de cada um dos três segue garantido pelos
+índices únicos parciais do banco (0006/0007), não por `if` em Python.
+
+Duas consequências que precisaram de decisão própria:
+
+**A porta fica no `retry`, não na cobrança.** Retomar um job cuja reserva já foi
+devolvida é uma compra, então o endpoint confere saldo e devolve 402 — o mesmo
+que a criação de job, e a tela manda para a recarga. Recusar só na hora de
+cobrar significaria renderizar o vídeo inteiro para descobrir na última linha
+que não há como cobrá-lo. Três retomadas continuam de graça, e as três são
+legítimas: job sem reserva (versão pessoal, ou anterior à cobrança), job já
+cobrado (re-renderizar um clip que falhou não é uma segunda compra), e job com
+a reserva ainda de pé (já está pago adiantado — sem essa exceção, um job morto
+no restart cujo `hold` consumiu todo o saldo ficaria impossível de retomar,
+porque o crédito que faltaria é o que ele mesmo segurou).
+
+**A retomada pode deixar a conta negativa.** Entre a falha e o fim da retomada
+o crédito devolvido pode ter ido para outro vídeo. O trabalho foi entregue: a
+conta fica devendo e quem espera é o job seguinte, que não nasce sem saldo. É a
+única saída que não dá o clip de graça, e é o segundo caso em que `debito` usa
+`permitir_negativo` (o primeiro é o `ajuste` de admin, D102). No caminho normal
+é inalcançável — ali o custo real nunca passa da reserva, que ainda está presa.
+
+A D110 (job que falha devolve tudo e não é cobrado) continua valendo sem
+ressalva. O que muda é só isto: **falhar não é o fim da história do job**, e
+"devolvi" nunca quis dizer "acabou".
+
 ---
 
 ## Adiado, com destino definido

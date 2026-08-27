@@ -22,6 +22,7 @@ export default function JobPage() {
   const [gone, setGone] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState("");
+  const [semSaldo, setSemSaldo] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   function stopPolling() {
@@ -68,11 +69,16 @@ export default function JobPage() {
   async function handleRetry() {
     setRetrying(true);
     setRetryError("");
+    setSemSaldo(false);
     try {
       await retryJob(id);
       await fetchJob();
       startPolling(); // o job voltou a rodar: volta a acompanhar
     } catch (err) {
+      // 402 é falta de saldo, não falha: acontece quando o job falhou, o
+      // crédito foi devolvido, e retomar é receber os clips de novo. A mensagem
+      // sozinha não resolve — o que a pessoa precisa é do caminho da recarga.
+      setSemSaldo(axios.isAxiosError(err) && err.response?.status === 402);
       setRetryError(getApiErrorMessage(err, "Não foi possível retomar o job."));
     } finally {
       setRetrying(false);
@@ -201,7 +207,19 @@ export default function JobPage() {
                   ` · re-renderiza ${failedClips.length} clip${failedClips.length !== 1 ? "s" : ""}`}
               </span>
             </div>
-            {retryError && <p className="text-label text-danger">{retryError}</p>}
+            {retryError && (
+              <p className="text-label text-danger">
+                {retryError}
+                {semSaldo && (
+                  <>
+                    {" "}
+                    <Link href="/recarga" className="underline hover:text-ink">
+                      Recarregar créditos
+                    </Link>
+                  </>
+                )}
+              </p>
+            )}
           </div>
         )}
       </div>

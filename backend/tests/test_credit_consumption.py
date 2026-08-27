@@ -375,3 +375,219 @@ def test_cobranca_substitui_a_cota_de_janela(ambiente, monkeypatch):
     monkeypatch.setattr(settings, "quota_max_minutes", 0)
 
     assert quota.quota_limits() == (0, 0)
+
+
+# ─── Retomar ──────────────────────────────────────────────────────────────────
+#
+# O caso que quase passou batido. Um job que falha devolve a reserva e não cobra
+# nada — certo, ninguém recebeu clip. Mas ele pode ser RETOMADO, e aí recebe. Se
+# a reconciliação usar o `release` como sinal de "já resolvi este job", a
+# conclusão bem-sucedida da retomada não cobra: basta falhar uma vez antes de
+# dar certo para levar o vídeo de graça, e falhar é comum (rede, chave de API,
+# restart no meio). O sinal certo é o `debito`.
+
+
+def _marcar_duracao(factory, jid, segundos, status="error"):
+    """Deixa o job no estado em que o botão Retomar aparece.
+
+    `duration_seconds` é o que o pipeline grava depois do download — é dela que
+    sai o preço da retomada. E o status precisa ser terminal: em `queued` o
+    endpoint responde 409 antes de olhar saldo, que é o comportamento certo.
+    """
+    async def _gravar():
+        async with factory() as db:
+            job = await db.get(Job, jid)
+            job.duration_seconds = segundos
+            job.status = status
+            await db.commit()
+
+    asyncio.run(_gravar())
+
+
+def test_job_retomado_com_sucesso_cobra(ambiente):
+    """O teste que o furo teria reprovado."""
+    preparar, factory = ambiente
+    cliente = preparar(bonus=30)
+    _criar_job(cliente)
+    jid = _job_id(factory)
+
+    # 1ª tentativa: quebrou na transcrição. Devolve tudo, não cobra.
+    asyncio.run(_reconciliar(factory, jid, segundos=180, sucesso=False))
+    assert asyncio.run(_saldo(factory)) == 30
+
+    # Retomada: desta vez rodou até o fim e entregou os clips.
+    asyncio.run(_reconciliar(factory, jid, segundos=180, sucesso=True))
+
+    assert asyncio.run(_extrato(factory)) == [
+        ("bonus", 30),
+        ("hold", -5),
+        ("release", 5),   # da falha
+        ("debito", -3),   # da retomada — não existia antes desta correção
+    ]
+    assert asyncio.run(_saldo(factory)) == 27
+
+
+def test_job_retomado_nao_devolve_a_reserva_de_novo(ambiente):
+    """Devolver duas vezes seria pior que não cobrar: criaria crédito."""
+    preparar, factory = ambiente
+    cliente = preparar(bonus=30)
+    _criar_job(cliente)
+    jid = _job_id(factory)
+
+    asyncio.run(_reconciliar(factory, jid, segundos=180, sucesso=False))
+    asyncio.run(_reconciliar(factory, jid, segundos=180, sucesso=True))
+
+    tipos = [t for t, _ in asyncio.run(_extrato(factory))]
+    assert tipos.count("release") == 1
+
+
+def test_falhar_duas_vezes_seguidas_continua_de_graca(ambiente):
+    """Cobrar só quem recebeu: duas falhas não entregaram nada."""
+    preparar, factory = ambiente
+    cliente = preparar(bonus=30)
+    _criar_job(cliente)
+    jid = _job_id(factory)
+
+    asyncio.run(_reconciliar(factory, jid, segundos=180, sucesso=False))
+    asyncio.run(_reconciliar(factory, jid, segundos=180, sucesso=False))
+
+    assert asyncio.run(_saldo(factory)) == 30
+    assert [t for t, _ in asyncio.run(_extrato(factory))] == ["bonus", "hold", "release"]
+
+
+def test_retomar_job_ja_cobrado_nao_cobra_de_novo(ambiente):
+    """Re-renderizar um clip que falhou não é uma segunda compra do vídeo."""
+    preparar, factory = ambiente
+    cliente = preparar(bonus=30)
+    _criar_job(cliente)
+    jid = _job_id(factory)
+
+    asyncio.run(_reconciliar(factory, jid, segundos=180, sucesso=True))
+    asyncio.run(_reconciliar(factory, jid, segundos=180, sucesso=True))
+
+    assert asyncio.run(_saldo(factory)) == 27
+    assert [t for t, _ in asyncio.run(_extrato(factory))].count("debito") == 1
+
+
+def test_saldo_gasto_durante_a_retomada_deixa_a_conta_devendo(ambiente):
+    """O trabalho foi entregue: quem espera é o próximo job, não este.
+
+    Entre a falha (que devolveu) e o fim da retomada, o crédito devolvido pode
+    ter ido para outro vídeo. Deixar a conta negativa é o único desfecho que não
+    dá o clip de graça — e o saldo negativo trava a criação seguinte sozinho.
+    """
+    preparar, factory = ambiente
+    cliente = preparar(bonus=30)
+    _criar_job(cliente)
+    jid = _job_id(factory)
+
+    asyncio.run(_reconciliar(factory, jid, segundos=180, sucesso=False))
+
+    # O usuário gastou o saldo inteiro em outra coisa enquanto este renderizava.
+    async def _zerar():
+        async with factory() as db:
+            uid = (await db.execute(select(User.id))).scalars().one()
+            await credits.lancar(
+                db, user_id=uid, tipo="ajuste", amount=-30, descricao="gastou fora"
+            )
+            await db.commit()
+
+    asyncio.run(_zerar())
+    asyncio.run(_reconciliar(factory, jid, segundos=180, sucesso=True))
+
+    assert asyncio.run(_saldo(factory)) == -3
+    assert [t for t, _ in asyncio.run(_extrato(factory))][-1] == "debito"
+
+
+# ─── A porta do Retomar ───────────────────────────────────────────────────────
+
+
+def test_retomar_sem_saldo_e_recusado_com_402(ambiente):
+    """Recusa ANTES de renderizar, não na última linha da cobrança."""
+    preparar, factory = ambiente
+    cliente = preparar(bonus=5)
+    _criar_job(cliente)
+    jid = _job_id(factory)
+    _marcar_duracao(factory, jid, 180)
+
+    asyncio.run(_reconciliar(factory, jid, segundos=180, sucesso=False))
+
+    async def _zerar():
+        async with factory() as db:
+            uid = (await db.execute(select(User.id))).scalars().one()
+            await credits.lancar(
+                db, user_id=uid, tipo="ajuste", amount=-5, descricao="gastou fora"
+            )
+            await db.commit()
+
+    asyncio.run(_zerar())
+
+    resp = cliente.post(f"/api/jobs/{jid}/retry")
+    assert resp.status_code == 402, resp.text
+    assert "3" in resp.json()["detail"]
+
+
+def test_retomar_com_saldo_passa(ambiente):
+    preparar, factory = ambiente
+    cliente = preparar(bonus=30)
+    _criar_job(cliente)
+    jid = _job_id(factory)
+    _marcar_duracao(factory, jid, 180)
+    asyncio.run(_reconciliar(factory, jid, segundos=180, sucesso=False))
+
+    assert cliente.post(f"/api/jobs/{jid}/retry").status_code == 202
+
+
+def test_retomar_job_com_reserva_de_pe_nao_pede_saldo(ambiente):
+    """Job morto no restart: já está pago adiantado, retomar é de graça.
+
+    Sem esta exceção, um job interrompido cujo hold consumiu todo o saldo ficaria
+    impossível de retomar — o saldo que faltaria é o que ele próprio segurou.
+    """
+    preparar, factory = ambiente
+    cliente = preparar(bonus=5)   # exatamente a reserva: saldo fica em zero
+    _criar_job(cliente)
+    jid = _job_id(factory)
+    _marcar_duracao(factory, jid, 300)
+
+    assert asyncio.run(_saldo(factory)) == 0
+    assert cliente.post(f"/api/jobs/{jid}/retry").status_code == 202
+
+
+def test_retomar_job_ja_cobrado_nao_pede_saldo(ambiente):
+    """Re-renderizar clip que falhou num job pago não cobra pedágio."""
+    preparar, factory = ambiente
+    cliente = preparar(bonus=30)
+    _criar_job(cliente)
+    jid = _job_id(factory)
+    asyncio.run(_reconciliar(factory, jid, segundos=300, sucesso=True))
+    _marcar_duracao(factory, jid, 300, status="done")
+
+    async def _zerar():
+        async with factory() as db:
+            uid = (await db.execute(select(User.id))).scalars().one()
+            await credits.lancar(
+                db, user_id=uid, tipo="ajuste", amount=-25, descricao="gastou fora"
+            )
+            await db.commit()
+
+    asyncio.run(_zerar())
+    assert cliente.post(f"/api/jobs/{jid}/retry").status_code == 202
+
+
+def test_versao_pessoal_retoma_sem_pedir_saldo(ambiente, monkeypatch):
+    """Sem cobrança não há reserva, e sem reserva retomar não tem preço."""
+    preparar, factory = ambiente
+    cliente = preparar(bonus=30)
+    _criar_job(cliente)
+    jid = _job_id(factory)
+    _marcar_duracao(factory, jid, 300)
+
+    async def _sem_reserva():
+        async with factory() as db:
+            for l in (await db.execute(select(CreditLedger))).scalars().all():
+                await db.delete(l)
+            await db.commit()
+
+    asyncio.run(_sem_reserva())
+    assert cliente.post(f"/api/jobs/{jid}/retry").status_code == 202
