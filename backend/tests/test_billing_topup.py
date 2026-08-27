@@ -359,3 +359,44 @@ def test_pagamento_guarda_o_id_do_gateway_e_o_payload(ambiente, monkeypatch):
     assert pag.credits_granted == 300
     # O payload do gateway é o que resolve conciliação divergente meses depois.
     assert pag.raw_gateway_payload["id"] == "MP-ORDER-1"
+
+
+# ─── O vocabulário de status do gateway ───────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "do_gateway,nosso",
+    [
+        # Os nove valores que a Orders API pode devolver, conferidos na
+        # documentação em 27/08/2026. Nenhum pode cair em "desconhecido".
+        ("created", "pending"),
+        ("processing", "pending"),
+        ("action_required", "pending"),
+        ("processed", "paid"),
+        ("canceled", "refunded"),
+        ("refunded", "refunded"),
+        ("charged_back", "chargeback"),
+        ("expired", "expired"),
+        ("failed", "expired"),
+    ],
+)
+def test_todos_os_status_da_orders_api_sao_reconhecidos(do_gateway, nosso):
+    assert mercadopago.traduzir_status({"status": do_gateway}) == nosso
+
+
+def test_status_fora_da_lista_continua_falhando_fechado(caplog):
+    """Um valor novo que o MP invente não pode virar crédito por omissão."""
+    assert mercadopago.traduzir_status({"status": "invencao_futura"}) == "pending"
+
+
+def test_cobranca_expirada_para_de_ser_consultada(ambiente, monkeypatch):
+    """Sem isso a tela fica em 'aguardando pagamento' num QR que já morreu."""
+    cliente, factory = ambiente
+    _gateway_falso(monkeypatch, status_consulta="expired")
+    payment_id = cliente.post("/api/billing/topup", json={"creditos": 300}).json()[
+        "payment_id"
+    ]
+
+    corpo = cliente.get(f"/api/billing/payments/{payment_id}").json()
+    assert corpo["status"] == "expired"
+    assert corpo["saldo"] == 0

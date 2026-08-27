@@ -1742,6 +1742,43 @@ cartão continuaria sendo debitado — o erro mais caro possível nessa direçã
 
 ---
 
+### D130. O vocabulário de status da Orders API, fechado
+
+A D106 registrou como NÃO VERIFICADO qual status o Mercado Pago devolve num
+pagamento aprovado. Ficou verificado em 27/08/2026, e por dois caminhos que se
+confirmam:
+
+  - **contra a API de verdade** (credencial de sandbox): `POST /v1/orders` com o
+    payload que implementei devolveu **201** com QR e copia-e-cola válidos, e
+    status `action_required` / `waiting_transfer`. A Orders API é o caminho
+    certo e o formato do payload está correto;
+  - **contra a documentação**, a lista completa dos nove valores possíveis:
+    `created`, `processed`, `processing`, `action_required`, `canceled`,
+    `charged_back`, `expired`, `failed`, `refunded`. Pago é **`processed`** com
+    `status_detail: accredited`.
+
+`processed` já estava na allowlist — o caminho do dinheiro estava certo desde o
+início. Mas a lista completa expôs dois valores sem mapeamento: **`expired` e
+`failed`**. Eles caíam em "status desconhecido", e a consequência não era perder
+dinheiro (falha fechado, não credita) e sim uma tela dizendo "aguardando
+pagamento" para sempre num QR que já não pode ser pago.
+
+A 0011 acrescenta `expired` a `payments.status`. Os dois valores do gateway
+colapsam nesse único: a CAUSA difere, a resposta não — para o usuário, "gere
+outra cobrança"; para o monitor, "isto nunca foi receita".
+
+**O que ainda não foi exercido:** um Pix efetivamente PAGO. O painel web do
+Mercado Pago não paga copia-e-cola ("abra o app no celular"), e conta de teste
+não entra no app de produção. O status de pagamento está confirmado pela
+documentação, não por uma transação — e o primeiro pagamento real fecha isso
+sozinho, sem risco, porque `processed` já é aceito.
+
+Também confirmado na prática: a validação HMAC do webhook, testada com o segredo
+real da aplicação — assinatura correta devolve 200, assinatura errada devolve
+401. Essa parte eu tinha escrito só a partir da documentação.
+
+---
+
 ---
 
 ## Adiado, com destino definido

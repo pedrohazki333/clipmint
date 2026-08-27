@@ -61,6 +61,16 @@ _STATUS_PAGOS = frozenset({"processed", "paid", "approved", "accredited"})
 #: Status que significam que o dinheiro voltou.
 _STATUS_DEVOLVIDOS = frozenset({"refunded", "cancelled", "canceled"})
 _STATUS_CHARGEBACK = frozenset({"charged_back", "chargeback", "disputed"})
+#: A cobrança morreu sem ser paga. Sem isto ela ficaria `pending` para sempre, e
+#: a tela seguiria dizendo "aguardando pagamento" num QR que já não pode ser
+#: pago. `failed` entra junto: causa diferente, resposta igual.
+_STATUS_MORTOS = frozenset({"expired", "failed"})
+
+#: Status que a Orders API pode devolver e que significam "ainda em andamento".
+#: Lista confirmada na documentação em 27/08/2026 — os nove valores possíveis
+#: são: created, processed, processing, action_required, canceled, charged_back,
+#: expired, failed, refunded.
+_STATUS_PENDENTES = frozenset({"pending", "processing", "action_required", "created"})
 
 
 #: Status de assinatura do gateway -> o nosso. Allowlist, como em `_STATUS_PAGOS`
@@ -154,8 +164,10 @@ def traduzir_status(payload: dict[str, Any]) -> str:
         return "chargeback"
     if bruto in _STATUS_DEVOLVIDOS:
         return "refunded"
+    if bruto in _STATUS_MORTOS:
+        return "expired"
 
-    if bruto and bruto not in {"pending", "processing", "action_required", "created"}:
+    if bruto and bruto not in _STATUS_PENDENTES:
         logger.warning(
             "Status desconhecido do Mercado Pago: %r — tratado como pendente, "
             "nada foi creditado. Confira _STATUS_PAGOS em services/mercadopago.py",

@@ -431,7 +431,10 @@ TIPOS_LANCAMENTO = (
     "release",
 )
 
-STATUS_PAGAMENTO = ("pending", "paid", "refunded", "chargeback")
+#: `expired` cobre o desfecho mais comum de um Pix: o QR morrer sem ninguém
+#: pagar. O `failed` do gateway colapsa aqui — a causa difere, a resposta
+#: não: "gere outra cobrança", e nunca foi receita.
+STATUS_PAGAMENTO = ("pending", "paid", "refunded", "chargeback", "expired")
 #: `pending` = criada no gateway, esperando a pessoa autorizar o cartão na
 #: página dele. É onde a assinatura passa mais tempo no começo, e usar
 #: `paused` para isso seria mentir no banco.

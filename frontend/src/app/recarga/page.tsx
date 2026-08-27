@@ -38,6 +38,8 @@ export default function RecargaPage() {
   const [gerando, setGerando] = useState<number | null>(null);
   const [cobranca, setCobranca] = useState<Topup | null>(null);
   const [pago, setPago] = useState(false);
+  //: Desfecho que não é pagamento — expirada, falhada, estornada.
+  const [morreu, setMorreu] = useState<string | null>(null);
   const [copiado, setCopiado] = useState(false);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -112,6 +114,7 @@ export default function RecargaPage() {
   async function comprar(creditos: number) {
     setErro("");
     setPago(false);
+    setMorreu(null);
     setGerando(creditos);
     try {
       const nova = await createTopup(creditos);
@@ -127,6 +130,12 @@ export default function RecargaPage() {
             // O saldo do topo tem que mudar no mesmo instante em que a tela diz
             // que foi pago; senão a pessoa recarrega a página para conferir.
             avisarSaldoMudou();
+          } else if (status.status !== "pending") {
+            // Expirou, falhou, foi estornada: qualquer desfecho que não seja
+            // "ainda esperando" encerra a consulta. Sem isto a tela ficaria
+            // dizendo "aguardando pagamento" num QR que já não pode ser pago.
+            pararPolling();
+            setMorreu(status.status);
           }
         } catch {
           /* uma consulta que falhou não cancela a compra; a próxima tenta */
@@ -246,13 +255,33 @@ export default function RecargaPage() {
                   </>
                 )}
 
-                <p className="mt-3 flex items-center gap-2 text-label text-ink-muted">
-                  <span
-                    aria-hidden
-                    className="h-1.5 w-1.5 animate-pulse rounded-full bg-running"
-                  />
-                  Aguardando pagamento…
-                </p>
+                {morreu ? (
+                  <div className="mt-3 flex flex-col items-start gap-2">
+                    <p className="text-label text-danger">
+                      {morreu === "expired"
+                        ? "Este código expirou. Gere outro para pagar."
+                        : `Esta cobrança foi encerrada (${morreu}).`}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCobranca(null);
+                        setMorreu(null);
+                      }}
+                      className="rounded-sm bg-mint px-3 py-1.5 text-label font-semibold text-base transition-opacity hover:opacity-90"
+                    >
+                      Gerar outro Pix
+                    </button>
+                  </div>
+                ) : (
+                  <p className="mt-3 flex items-center gap-2 text-label text-ink-muted">
+                    <span
+                      aria-hidden
+                      className="h-1.5 w-1.5 animate-pulse rounded-full bg-running"
+                    />
+                    Aguardando pagamento…
+                  </p>
+                )}
               </div>
             </div>
           )}
