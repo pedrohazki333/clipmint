@@ -183,6 +183,39 @@ status que o MP devolve contra a allowlist `_STATUS_PAGOS` de
 `app/services/mercadopago.py` — a documentação não fecha a lista de estados
 finais, e o que não está na lista não credita (ver D106).
 
+### O YouTube bloqueia IP de datacenter
+
+Num servidor, `yt-dlp` responde isto para **qualquer** vídeo, inclusive os
+públicos há vinte anos:
+
+```
+ERROR: [youtube] ...: Sign in to confirm you're not a bot.
+```
+
+Não é o vídeo nem o link: é a faixa de IP. O mesmo endereço funciona numa
+conexão doméstica e falha na VPS. Confirme com um vídeo de controle antes de
+culpar o seu link:
+
+```bash
+cd /opt/clipmint/app/backend
+sudo -u clipmint .venv/bin/python -m yt_dlp --skip-download \
+  --print "%(duration)s" "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+```
+
+Falhando também nesse, é o IP. A saída é preencher `YTDLP_COOKIES_FILE` (ou
+`YTDLP_PROXY`) no `.env` — as duas valem para a consulta de metadados **e** para
+o download, que compartilham as opções (`app/utils/ytdlp.py`).
+
+Para os cookies: exporte de um navegador logado numa **conta descartável**, no
+formato Netscape, e ponha o arquivo em algo como
+`/opt/clipmint/app/backend/storage/cookies.txt`, com dono `clipmint` e
+`chmod 600` — é uma credencial de sessão do Google.
+
+Sem nenhuma das duas, o guarda de custo recusa o job **antes** de gastar
+qualquer coisa, com a mensagem "não foi possível descobrir a duração deste
+vídeo". Falhar fechado ali é de propósito (ver D45): a alternativa deixou um
+link de live baixar 18 GB.
+
 ## 6. Build
 
 ```bash

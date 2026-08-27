@@ -6,6 +6,8 @@ from typing import Optional
 
 import yt_dlp
 
+from app.utils import ytdlp as ytdlp_opts
+
 from app.config import settings
 from app.utils.ffmpeg import get_duration, run_ffmpeg
 
@@ -74,11 +76,11 @@ def _download_sync(youtube_url: str, video_path: str) -> dict:
     # Até 4K: o crop 9:16 usa só ~56% da largura do vídeo — fonte 1080p vira
     # upscale no clip final. Com fonte 2160p o crop sai em resolução nativa.
     ydl_opts = {
+        # Mesma autenticação da consulta de metadados (ver utils/ytdlp.py).
+        **ytdlp_opts.base_opts(),
         "format": "bestvideo[height<=2160]+bestaudio/bestvideo[height<=2160]/best[height<=2160]/best",
         "outtmpl": video_path,
         "merge_output_format": "mp4",
-        "quiet": True,
-        "no_warnings": True,
         # Retentativas DENTRO de uma tentativa, para o soluço curto não custar
         # uma re-extração inteira. A camada de fora cuida do resto.
         "retries": 10,

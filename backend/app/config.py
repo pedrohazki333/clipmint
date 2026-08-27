@@ -238,6 +238,18 @@ class Settings(BaseSettings):
     # é o que se faz quando ela vira um cron (ver docs/DEPLOY.md).
     cleanup_interval_hours: int = 6
 
+    # ── yt-dlp ────────────────────────────────────────────────────────────────
+    # Num servidor de datacenter o YouTube responde "Sign in to confirm you're
+    # not a bot" para QUALQUER vídeo — o bloqueio é por faixa de IP. Numa
+    # máquina doméstica nada disso é necessário e as duas ficam vazias.
+    #
+    # Cookies exportados de um navegador logado. Use conta descartável: o
+    # YouTube suspende contas que associa a tráfego de datacenter.
+    ytdlp_cookies_file: str = ""
+    # Proxy (residencial, se for para baixar vídeo — datacenter é bloqueado
+    # igual). Cobrado por GB, então pesa: um vídeo de 2h passa de 1 GB.
+    ytdlp_proxy: str = ""
+
     # Storage
     storage_dir: str = "./storage"
 

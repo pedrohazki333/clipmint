@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.features import billing_enabled, public_build
 from app.models import Job, User
+from app.utils import ytdlp as ytdlp_opts
 from app.workers.pipeline import RUNNING_STATUSES
 
 logger = logging.getLogger(__name__)
@@ -93,8 +94,10 @@ def quota_limits() -> tuple[int, int]:
 def _probe_sync(url: str) -> dict:
     """Metadados do vídeo, sem baixar nada."""
     opts = {
-        "quiet": True,
-        "no_warnings": True,
+        # Cookies e proxy vêm da base comum: a consulta e o download PRECISAM
+        # se autenticar do mesmo jeito. Configurar só um faria o job nascer e
+        # falhar minutos depois, com o crédito já reservado.
+        **ytdlp_opts.base_opts(),
         "skip_download": True,
         # Sem isto, um link de playlist faria o yt-dlp enumerar a lista inteira.
         "noplaylist": True,
