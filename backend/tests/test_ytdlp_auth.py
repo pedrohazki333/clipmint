@@ -12,6 +12,8 @@ Por isso os testes verificam o dicionário que CADA UM entrega ao yt-dlp, e não
 só a função que monta a base.
 """
 
+from pathlib import Path
+
 import pytest
 
 from app.config import settings
@@ -42,7 +44,8 @@ def test_sem_configuracao_nao_inventa_nada(monkeypatch):
 def test_cookies_existentes_entram(monkeypatch, cookies):
     monkeypatch.setattr(settings, "ytdlp_cookies_file", str(cookies))
     monkeypatch.setattr(settings, "ytdlp_proxy", "")
-    assert ytdlp.base_opts()["cookiefile"] == str(cookies)
+    entregue = ytdlp.base_opts()["cookiefile"]
+    assert Path(entregue).read_text() == cookies.read_text()
 
 
 def test_caminho_errado_nao_entra_e_reclama_alto(monkeypatch):
@@ -105,7 +108,10 @@ def test_a_consulta_de_metadados_usa_os_cookies(monkeypatch, cookies):
 
     quota._probe_sync("https://youtu.be/x")
 
-    assert opts["cookiefile"] == str(cookies)
+    # O caminho é o de uma cópia (ver _copia_descartavel); o que precisa bater
+    # é o conteúdo.
+    assert opts["cookiefile"] != str(cookies)
+    assert Path(opts["cookiefile"]).read_text() == cookies.read_text()
     assert opts["skip_download"] is True
 
 
@@ -118,7 +124,7 @@ def test_o_download_usa_os_mesmos_cookies(monkeypatch, cookies, tmp_path):
 
     downloader._download_sync("https://youtu.be/x", str(tmp_path / "v.mp4"))
 
-    assert opts["cookiefile"] == str(cookies)
+    assert Path(opts["cookiefile"]).read_text() == cookies.read_text()
     # E não perdeu o que já tinha.
     assert opts["merge_output_format"] == "mp4"
     assert "bestvideo" in opts["format"]
@@ -138,3 +144,58 @@ def test_os_dois_recebem_o_mesmo_proxy(monkeypatch, tmp_path):
     downloader._download_sync("https://youtu.be/x", str(tmp_path / "v.mp4"))
 
     assert consulta["proxy"] == baixa["proxy"] == "socks5://10.0.0.1:1080"
+
+
+# ─── O arquivo mestre não pode ser destruído ──────────────────────────────────
+
+
+def test_o_ytdlp_recebe_uma_copia_e_nao_o_original(monkeypatch, cookies):
+    """O yt-dlp REESCREVE o arquivo de cookies quando a sessão é rejeitada.
+
+    Aconteceu em produção: o arquivo caiu de 2954 para 1843 bytes numa única
+    tentativa e perdeu SID, HSID, SSID, APISID, SAPISID, LOGIN_INFO e
+    __Secure-1PSID. A partir dali toda chamada ia sem credencial, e o erro
+    ("confirme que você não é um robô") apontava para o lugar errado.
+    """
+    monkeypatch.setattr(settings, "ytdlp_cookies_file", str(cookies))
+    monkeypatch.setattr(settings, "ytdlp_proxy", "")
+
+    entregue = ytdlp.base_opts()["cookiefile"]
+
+    assert entregue != str(cookies), "entregou o mestre; o yt-dlp o destruiria"
+    assert Path(entregue).read_text() == cookies.read_text()
+
+
+def test_estragar_a_copia_nao_toca_no_mestre(monkeypatch, cookies):
+    monkeypatch.setattr(settings, "ytdlp_cookies_file", str(cookies))
+    monkeypatch.setattr(settings, "ytdlp_proxy", "")
+    original = cookies.read_text()
+
+    # É exatamente o que o yt-dlp faz: sobrescreve com um jar degradado.
+    Path(ytdlp.base_opts()["cookiefile"]).write_text("# jar vazio\n")
+
+    assert cookies.read_text() == original
+
+
+def test_cada_chamada_recebe_a_sua_copia(monkeypatch, cookies):
+    """Dois jobs simultâneos não podem escrever no mesmo arquivo."""
+    monkeypatch.setattr(settings, "ytdlp_cookies_file", str(cookies))
+    monkeypatch.setattr(settings, "ytdlp_proxy", "")
+
+    a = ytdlp.base_opts()["cookiefile"]
+    b = ytdlp.base_opts()["cookiefile"]
+
+    assert a != b
+
+
+def test_copia_impossivel_segue_sem_cookies(monkeypatch, cookies):
+    """Entregar o mestre seria arriscar destruí-lo; falhar é recuperável."""
+    monkeypatch.setattr(settings, "ytdlp_cookies_file", str(cookies))
+    monkeypatch.setattr(settings, "ytdlp_proxy", "")
+
+    def sem_espaco(*a, **k):
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(ytdlp.shutil, "copyfile", sem_espaco)
+
+    assert "cookiefile" not in ytdlp.base_opts()

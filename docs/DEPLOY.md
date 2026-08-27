@@ -211,6 +211,42 @@ formato Netscape, e ponha o arquivo em algo como
 `/opt/clipmint/app/backend/storage/cookies.txt`, com dono `clipmint` e
 `chmod 600` — é uma credencial de sessão do Google.
 
+#### Um runtime de JavaScript é obrigatório
+
+Só cookies não bastam. O YouTube exige resolver um desafio em JavaScript, e sem
+um runtime instalado o `yt-dlp` responde **"The page needs to be reloaded"** —
+mensagem que não sugere em nada a causa real. O diagnóstico está no `-v`:
+
+```
+[debug] JS runtimes: none
+[debug] [youtube] [jsc] JS Challenge Providers: deno (unavailable), node (unavailable), ...
+```
+
+O Node do sistema **não serve** (o yt-dlp o reporta como indisponível mesmo
+instalado e no PATH). Instale o Deno:
+
+```bash
+sudo apt install -y unzip
+curl -fsSL -o /tmp/deno.zip https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip
+sudo unzip -o /tmp/deno.zip -d /usr/local/bin && sudo chmod 755 /usr/local/bin/deno && rm /tmp/deno.zip
+```
+
+Confirme com o vídeo de controle: `JS runtimes: deno-...` e a duração impressa.
+
+#### O arquivo de cookies é protegido pelo app
+
+O `yt-dlp` **reescreve** o arquivo que recebe em `cookiefile`. Quando a sessão é
+rejeitada, ele salva por cima um jar sem os cookies de autenticação — em
+produção, 27/08/2026, o arquivo caiu de 2954 para 1843 bytes e perdeu `SID`,
+`HSID`, `SSID`, `APISID`, `SAPISID`, `LOGIN_INFO` e `__Secure-1PSID` numa única
+tentativa. Depois disso o erro volta a ser "confirme que você não é um robô",
+apontando para o lugar errado.
+
+Por isso `app/utils/ytdlp.py` entrega uma **cópia descartável** a cada chamada e
+nunca o arquivo original. Ao reexportar, exporte de uma **janela anônima** e
+feche-a sem fazer logout: sessão anônima não continua sendo usada pelo
+navegador, então não rotaciona por baixo dos panos.
+
 Sem nenhuma das duas, o guarda de custo recusa o job **antes** de gastar
 qualquer coisa, com a mensagem "não foi possível descobrir a duração deste
 vídeo". Falhar fechado ali é de propósito (ver D45): a alternativa deixou um
