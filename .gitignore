@@ -19,7 +19,7 @@ pip-log.txt
 .env.local
 .env.*.local
 
-# Storage (downloads, clips, transcripts - local only)
+# Storage (downloads, clips, transcripts, comparisons - local only)
 storage/
 
 # SQLite database
@@ -34,6 +34,8 @@ logs/
 # Node / Next.js
 node_modules/
 .next/
+# Saída do build público (ver frontend/next.config.ts)
+.next-public/
 out/
 .npm
 .yarn
@@ -50,3 +52,10 @@ Thumbs.db
 
 # TypeScript incremental build info
 *.tsbuildinfo
+
+# Backups do SQLite (clipmint.db.bak-AAAAMMDD-HHMMSS)
+*.db.bak*
+
+# Storage isolado da demo pública — os presets de marca do dono não podem
+# vazar para o build que outras pessoas veem.
+storage-demo/

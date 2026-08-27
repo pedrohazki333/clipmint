@@ -15,6 +15,9 @@ from app.prompts.viral_analysis import (
     build_analysis_prompt,
 )
 from app.services.analyzer import (
+    AXIS_WEIGHTS,
+    _axis_scores,
+    _clip_score,
     _find_split_point,
     _split_clip,
     _parse_claude_response,
@@ -136,7 +139,7 @@ def test_parse_claude_response_invalid_json():
 # ─── Testes do prompt builder ──────────────────────────────────────────────────
 
 def test_build_analysis_prompt_contains_metadata():
-    system, user = build_analysis_prompt(
+    user = build_analysis_prompt(
         words=SAMPLE_WORDS,
         title="My Video",
         channel="Test Channel",
@@ -147,16 +150,446 @@ def test_build_analysis_prompt_contains_metadata():
     )
     assert "My Video" in user
     assert "Test Channel" in user
-    assert "7.0" in user
-    assert "15" in system
-    assert "90" in system
+    # O threshold vai para o prompt na escala do final_score (0-100)
+    assert "70" in user
 
 
 def test_build_analysis_prompt_not_empty():
-    system, user = build_analysis_prompt(
+    user = build_analysis_prompt(
         words=SAMPLE_WORDS,
         title="T", channel="C", duration_seconds=60,
         threshold=7.0, min_duration=15, max_duration=90,
     )
-    assert len(system) > 100
     assert len(user) > 100
+
+
+def test_build_analysis_prompt_switches_rubric_by_source():
+    """Corte de podcast e de gameplay não são avaliados pelos mesmos critérios."""
+    from app.prompts.viral_analysis import source_criteria
+
+    podcast = build_analysis_prompt(
+        words=SAMPLE_WORDS, title="T", channel="C", duration_seconds=60,
+        threshold=7.0, min_duration=15, max_duration=90, source_type="podcast",
+    )
+    gameplay = build_analysis_prompt(
+        words=SAMPLE_WORDS, title="T", channel="C", duration_seconds=60,
+        threshold=7.0, min_duration=15, max_duration=90, source_type="gameplay",
+    )
+
+    assert "podcast" in podcast
+    assert "gameplay" in gameplay
+    assert "Frase-momento" in source_criteria("podcast")
+    assert "Legibilidade sem áudio" in source_criteria("gameplay")
+    # Tipo desconhecido não pode quebrar a análise
+    assert source_criteria(None) == source_criteria("podcast")
+    assert source_criteria("outra-coisa") == source_criteria("podcast")
+
+
+# ─── Testes da rubrica de cinco eixos ──────────────────────────────────────────
+
+FULL_AXES = {
+    "hook_score": 9,
+    "retention_score": 8,
+    "shareability_score": 7,
+    "loopability_score": 6,
+    "comment_bait_score": 5,
+}
+
+
+def test_clip_score_recomputes_weighted_average():
+    """
+    A nota sai dos eixos, não do final_score que o modelo escreveu.
+
+    LLM erra média ponderada com frequência, e o cronograma escolhe clipe por
+    eixo — a nota geral tem que ser coerente com os eixos que ela resume.
+    """
+    clip = dict(FULL_AXES, final_score=99)  # aritmética errada de propósito
+    axes = _axis_scores(clip)
+
+    # 8*.30 + 9*.25 + 7*.20 + 5*.15 + 6*.10 = 7.4
+    assert _clip_score(clip, axes) == pytest.approx(7.4)
+
+
+def test_clip_score_falls_back_to_final_score():
+    """Sem os eixos completos, o final_score (0-100) vira a nota 0-10."""
+    clip = {"final_score": 82, "hook_score": 9}
+    assert _clip_score(clip, _axis_scores(clip)) == pytest.approx(8.2)
+
+
+def test_clip_score_falls_back_to_legacy_field():
+    """Resposta no formato antigo continua sendo entendida."""
+    clip = {"score": 8.6}
+    assert _clip_score(clip, _axis_scores(clip)) == pytest.approx(8.6)
+
+
+def test_clip_score_survives_garbage():
+    assert _clip_score({}, {}) == 0.0
+    assert _clip_score({"score": "não é número"}, {}) == 0.0
+
+
+def test_axis_scores_clamps_out_of_range():
+    """Eixo fora de 0-10 não pode contaminar a ordenação do cronograma."""
+    axes = _axis_scores(dict(FULL_AXES, hook_score=42, retention_score=-3))
+    assert axes["hook_score"] == 10.0
+    assert axes["retention_score"] == 0.0
+
+
+def test_axis_scores_ignores_missing_and_invalid():
+    axes = _axis_scores({"hook_score": 7, "retention_score": None, "shareability_score": "x"})
+    assert axes == {"hook_score": 7.0}
+
+
+def test_axis_weights_sum_to_one():
+    assert sum(AXIS_WEIGHTS.values()) == pytest.approx(1.0)
+
+
+def test_siege_rubric_targets_r6_moments():
+    """
+    A aba de Siege existe porque o que vira clipe em R6 é específico:
+    sequência de abates, morte rápida de um tiro, clutch e treta na call.
+    """
+    from app.prompts.viral_analysis import SOURCE_TYPES, source_criteria
+
+    siege = source_criteria("siege")
+
+    assert "siege" in SOURCE_TYPES
+    for termo in ("Sequência de eliminações", "um tiro", "Clutch", "Treta"):
+        assert termo in siege, termo
+    # Só existe transcrição: a rubrica precisa dizer como inferir a jogada
+    assert "SOMENTE a transcrição" in siege
+    # A nota vem da qualidade dos abates, não de quantos nem de quão rápidos:
+    # um 4k com quatro abates bonitos vale mais que um triplo relâmpago sortudo.
+    assert "QUALIDADE de cada abate" in siege
+    # Jogada espalhada não perde nota — quem se ajusta é o corte
+    assert "derruba o CORTE" in siege
+    assert "segments" in siege
+    # E não pode ser confundida com as outras
+    assert siege != source_criteria("gameplay")
+    assert siege != source_criteria("podcast")
+
+
+def test_siege_prompt_is_assembled_end_to_end():
+    """O prompt do sistema monta com a rubrica de Siege, sem placeholder solto."""
+    import re
+
+    from prompt_engine.prompt_builder import PromptBuilder
+    from app.prompts.viral_analysis import source_criteria
+
+    system = PromptBuilder().build(
+        min_duration=15, max_duration=90, source_criteria=source_criteria("siege")
+    )
+    user = build_analysis_prompt(
+        words=SAMPLE_WORDS, title="T", channel="C", duration_seconds=60,
+        threshold=7.0, min_duration=15, max_duration=90, source_type="siege",
+    )
+
+    assert "Sequência de eliminações" in system
+    assert re.findall(r"{[a-z_]+}", system) == []
+    assert "siege" in user
+
+
+# ─── Clipes costurados (só Siege) ─────────────────────────────────────────────
+
+def test_parse_segments_accepts_a_valid_ace():
+    """Ace espalhado pelo round vira três trechos emendados."""
+    from app.services.analyzer import parse_segments
+
+    got = parse_segments([[1820.4, 1834.0], [1851.2, 1863.5], [1879.0, 1892.4]])
+
+    assert got == [(1820.4, 1834.0), (1851.2, 1863.5), (1879.0, 1892.4)]
+
+
+def test_parse_segments_drops_blinks_and_disorder():
+    """Trecho curtíssimo vira piscada; fora de ordem ou sobreposto é lixo."""
+    from app.services.analyzer import parse_segments
+
+    assert parse_segments([[10.0, 11.0], [20.0, 25.0], [30.0, 36.0]]) == [
+        (20.0, 25.0), (30.0, 36.0)
+    ]
+    # Segundo trecho começa antes de o primeiro acabar
+    assert parse_segments([[10.0, 30.0], [25.0, 40.0]]) == []
+
+
+def test_parse_segments_caps_the_total_duration():
+    """
+    O clipe tem que ficar perto de um minuto, não do round inteiro.
+
+    Trechos que estouram o teto são cortados fora em vez de a lista ser
+    descartada — o começo da jogada é o que se perde, como manda a rubrica.
+    """
+    from app.services.analyzer import parse_segments
+
+    got = parse_segments([[0, 30], [40, 70], [80, 110], [120, 150]])
+
+    assert got == [(0.0, 30.0), (40.0, 70.0)]  # 60s; o terceiro passaria de 70
+
+
+def test_parse_segments_needs_at_least_two():
+    """Um trecho só não é costura — é corte contínuo comum."""
+    from app.services.analyzer import parse_segments
+
+    assert parse_segments([[10.0, 40.0]]) == []
+    assert parse_segments(None) == []
+    assert parse_segments("não é lista") == []
+    assert parse_segments([["a", "b"], [1, 2]]) == []
+
+
+# ─── Compilado ────────────────────────────────────────────────────────────────
+
+# Os seis trechos do compilado real do alanzoka (Grain Rot), na ordem em que
+# aparecem no vídeo publicado. Vieram de 64min, 6min, 71min, 94min, 46min e
+# 51min da fonte: a ordem é editorial, abre pela risada mais forte.
+REAL_COMPILATION = [
+    [3843.4, 3851.5],
+    [388.8, 404.5],
+    [4291.8, 4313.8],
+    [5653.6, 5675.5],
+    [2780.6, 2800.6],
+    [3099.0, 3139.2],
+]
+
+
+def test_compilation_keeps_the_editorial_order():
+    """Compilado não é cronologia: a ordem entregue pelo modelo é preservada."""
+    from app.services.analyzer import parse_segments
+
+    got = parse_segments(REAL_COMPILATION, chronological=False, max_total=140.0)
+
+    assert got == [(a, b) for a, b in REAL_COMPILATION]
+
+
+def test_chronological_rule_would_gut_the_real_compilation():
+    """
+    Por que o modo precisa da flag.
+
+    Com a regra do Siege, tudo que "volta no tempo" é descartado — o compilado
+    real perderia quatro dos seis trechos e viraria outro vídeo.
+    """
+    from app.services.analyzer import parse_segments
+
+    got = parse_segments(REAL_COMPILATION, max_total=140.0)
+
+    assert got == [(3843.4, 3851.5), (4291.8, 4313.8), (5653.6, 5675.5)]
+
+
+def test_compilation_merges_halves_of_one_moment():
+    """
+    Caso real: o modelo fatiou um bloco contínuo e inverteu as metades.
+
+    [5575.3-5600.1] seguido de [5547.3-5575.3] é um vídeo tocando de trás para
+    frente. Encostados na fonte = mesmo acontecimento; sobra um trecho só, e um
+    trecho só não é costura — o clipe sai contínuo, que é o certo aqui.
+    """
+    from app.services.analyzer import parse_segments
+
+    assert parse_segments([[5575.3, 5600.1], [5547.3, 5575.3]], chronological=False) == []
+
+
+def test_compilation_merge_keeps_the_other_moments():
+    """Errar um par não pode derrubar o compilado inteiro."""
+    from app.services.analyzer import parse_segments
+
+    got = parse_segments(
+        [[5575.3, 5600.1], [5547.3, 5575.3], [388.8, 404.5]],
+        chronological=False,
+        max_total=140.0,
+    )
+
+    assert got == [(5547.3, 5600.1), (388.8, 404.5)]
+
+
+def test_siege_keeps_neighbouring_segments():
+    """Num ace os trechos são vizinhos de propósito — a caminhada entre abates."""
+    from app.services.analyzer import parse_segments
+
+    got = parse_segments([[1820.4, 1834.0], [1851.2, 1863.5], [1879.0, 1892.4]])
+
+    assert len(got) == 3
+
+
+def test_compilation_still_bars_overlapping_segments():
+    """Fora de ordem é editorial; sobreposto é o mesmo material duas vezes."""
+    from app.services.analyzer import parse_segments
+
+    got = parse_segments(
+        [[100.0, 130.0], [10.0, 40.0], [120.0, 150.0]], chronological=False
+    )
+
+    assert got == [(100.0, 130.0), (10.0, 40.0)]
+
+
+def test_compilation_rule_replaces_the_siege_rule_in_the_prompt():
+    """
+    As duas regras usam `segments`, mas pedem coisas opostas quanto à ordem.
+
+    Mandar as duas juntas deixaria o modelo escolher qual seguir.
+    """
+    from app.prompts.viral_analysis import _segments_rule
+
+    compilation = _segments_rule("siege", "compilation", 70)
+
+    assert "Compilado" in compilation
+    assert "ace" not in compilation
+    assert "ordem cronológica" not in _segments_rule("siege", "individual", 70).replace(
+        "Os trechos vêm em ordem cronológica e não se sobrepõem.", ""
+    )
+
+
+def test_compilation_mode_changes_the_task_itself():
+    """
+    Pedir compilado só na regra do campo não bastou.
+
+    No primeiro job em modo compilado o modelo devolveu seis clipes individuais
+    porque a TAREFA continuava mandando "encontre TODOS os trechos" e "prefira
+    cortes de 25-40s" — o oposto de montar um vídeo de 60s com vários pedaços.
+    """
+    from app.prompts.viral_analysis import _task_directive
+
+    task = _task_directive("gameplay", "compilation", 70, 25, 40, 90)
+
+    assert "COMPILADOS" in task
+    assert "TODOS os trechos" not in task
+    assert "25-40s" not in task
+
+
+def test_individual_mode_keeps_the_usual_task():
+    from app.prompts.viral_analysis import _task_directive
+
+    task = _task_directive("gameplay", "individual", 70, 25, 40, 90)
+
+    assert "TODOS os trechos" in task
+    assert "25-40s" in task
+    assert "COMPILADOS" not in task
+
+
+def test_individual_mode_asks_for_no_segments_outside_siege():
+    """Modo individual fora do Siege não fala de costura nenhuma."""
+    from app.prompts.viral_analysis import _segments_rule
+
+    assert _segments_rule("gameplay", "individual", 70) == ""
+    assert _segments_rule("podcast", "individual", 70) == ""
+
+
+def test_remap_words_follows_the_stitched_timeline():
+    """
+    A legenda tem que acompanhar a emenda.
+
+    Palavra do tempo morto descartado some junto — senão a legenda mostraria
+    fala que não está mais no vídeo.
+    """
+    from app.services.segments import remap_words, total_duration
+
+    words = [
+        {"text": "peguei", "start": 10.0, "end": 10.5},
+        {"text": "morto", "start": 25.0, "end": 25.4},   # cai no buraco
+        {"text": "ace", "start": 50.0, "end": 50.6},
+    ]
+    segments = [(8.0, 14.0), (48.0, 54.0)]
+
+    got = remap_words(words, segments)
+
+    assert [w["text"] for w in got] == ["peguei", "ace"]
+    assert got[0]["start"] == pytest.approx(2.0)    # 10.0 - 8.0
+    assert got[1]["start"] == pytest.approx(8.0)    # 6.0 (1º trecho) + 50.0-48.0
+    assert total_duration(segments) == pytest.approx(12.0)
+
+
+# ─── O fato e a reação ─────────────────────────────────────────────────────────
+# Corte que começa depois do momento é o erro mais caro do sistema: entrega a
+# risada sem a piada. Ver services/audio_events.py.
+
+def test_rescue_move_o_inicio_para_antes_do_fato():
+    from app.services.analyzer import _rescue_event_starts
+    from app.services.audio_events import Gap
+
+    words = [
+        {"text": "Você", "start": 20.0, "end": 20.4},
+        {"text": "joga", "start": 20.5, "end": 21.0},
+        {"text": "no", "start": 22.5, "end": 22.8},
+        {"text": "mar.", "start": 24.3, "end": 26.0},
+        # buraco alto de 20s: o momento em si
+        {"text": "Finalmente!", "start": 46.0, "end": 47.0},
+    ]
+    gap = Gap(start=26.0, end=46.0, loudness=-14.0, speech_level=-27.0)
+    clips = [{"start": 46.0, "end": 90.0, "_segments": [], "trim_reason": "corte enxuto"}]
+
+    _rescue_event_starts("job", clips, [gap], words, max_duration=90)
+
+    assert clips[0]["start"] == 20.0            # volta para antes do fato
+    assert clips[0]["end"] == 90.0              # o fim não é tocado
+    assert "corte enxuto" in clips[0]["trim_reason"]
+    assert "reação sem o fato" in clips[0]["trim_reason"]
+
+
+def test_rescue_nao_toca_em_clipe_costurado():
+    """A lista de segmentos já define a linha do tempo — mexer no start a quebra."""
+    from app.services.analyzer import _rescue_event_starts
+    from app.services.audio_events import Gap
+
+    words = [{"text": "Finalmente!", "start": 46.0, "end": 47.0}]
+    gap = Gap(start=26.0, end=46.0, loudness=-14.0, speech_level=-27.0)
+    clips = [{"start": 46.0, "end": 90.0, "_segments": [(46.0, 60.0), (70.0, 90.0)]}]
+
+    _rescue_event_starts("job", clips, [gap], words, max_duration=90)
+
+    assert clips[0]["start"] == 46.0
+
+
+def test_rescue_sem_medicao_de_audio_e_no_op():
+    """Vídeo sem leitura de loudness segue analisado só pelo texto, como antes."""
+    from app.services.analyzer import _rescue_event_starts
+
+    clips = [{"start": 46.0, "end": 90.0, "_segments": []}]
+    _rescue_event_starts("job", clips, [], [], max_duration=90)
+    assert clips[0]["start"] == 46.0
+
+
+def test_prompt_anota_buraco_alto_para_o_modelo():
+    """O buraco barulhento chega ao Claude como momento, não como ausência."""
+    from app.services.audio_events import Gap
+
+    gap = Gap(start=3.6, end=30.0, loudness=-14.0, speech_level=-27.0)
+    user = build_analysis_prompt(
+        words=SAMPLE_WORDS, title="T", channel="C", duration_seconds=60,
+        threshold=7.0, min_duration=15, max_duration=90, gaps=[gap],
+    )
+
+    assert "ÁUDIO ALTO" in user
+    assert "parênteses duplos" in user       # a legenda explicando a anotação
+    assert "FATO" in user and "REAÇÃO" in user
+
+
+def test_prompt_sem_gaps_nao_menciona_anotacao():
+    user = build_analysis_prompt(
+        words=SAMPLE_WORDS, title="T", channel="C", duration_seconds=60,
+        threshold=7.0, min_duration=15, max_duration=90,
+    )
+    assert "parênteses duplos" not in user
+
+
+def test_core_prompt_manda_incluir_o_fato():
+    """A regra que evita o corte só-reação vive no system prompt."""
+    from prompt_engine.prompt_builder import PromptBuilder
+
+    system = PromptBuilder().build(min_duration=15, max_duration=90)
+
+    assert "O fato e a reação" in system
+    assert "ÁUDIO ALTO" in system
+    # E a estratégia de duração não pode mais justificar cortar o momento fora
+    assert "nunca justifica deixar o fato de fora" in system
+
+
+def test_split_de_janela_absurda_continua_absurdo():
+    """
+    Por que existe teto de duração POR PARTE, e não só a divisão.
+
+    O divisor corta em DUAS partes, só isso. Um compilado recusado virou um
+    intervalo bruto de 1950s; dividido, deu duas partes de 16 minutos, e sem
+    teto o render aceitou as duas.
+    """
+    from app.services.analyzer import _split_clip
+
+    parts = _split_clip({"start": 321.9, "end": 2272.0}, [], 120)
+
+    assert len(parts) == 2
+    assert all(part["end"] - part["start"] > 120 for part in parts)

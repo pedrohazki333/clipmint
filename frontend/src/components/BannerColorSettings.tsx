@@ -1,147 +1,109 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import {
-  getApiErrorMessage,
-  getBannerColors,
-  resetBannerColors,
-  saveBannerColors,
-} from "@/lib/api";
 import ColorField, { HEX_RE, toFullHex } from "@/components/ColorField";
+import FontField, { fontStack } from "@/components/FontField";
+import { BANNER_PADRAO, type BannerDraft, type FontOption } from "@/lib/brand";
+import {
+  BANNER_DEFAULT_BG as DEFAULT_BG,
+  BANNER_DEFAULT_TEXT as DEFAULT_TEXT,
+} from "@/lib/branding";
 
-const DEFAULT_BG = "#ED2828";
-const DEFAULT_TEXT = "#FFFFFF";
+/**
+ * Cores e fonte do banner de título — campo controlado.
+ *
+ * O preview desenha o que o FFmpeg vai desenhar; os defaults vêm de
+ * `lib/branding.ts`, que é espelho de `layout.py`.
+ */
+interface Props {
+  value: BannerDraft;
+  onChange: (v: BannerDraft) => void;
+  fonts: FontOption[];
+  disabled?: boolean;
+}
 
-export default function BannerColorSettings() {
-  const [bgColor, setBgColor] = useState(DEFAULT_BG);
-  const [textColor, setTextColor] = useState(DEFAULT_TEXT);
-  const [customized, setCustomized] = useState(false);
-  const [dirty, setDirty] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [saved, setSaved] = useState(false);
+export function bannerValido(v: BannerDraft): boolean {
+  return HEX_RE.test(v.bg) && HEX_RE.test(v.text);
+}
 
-  useEffect(() => {
-    getBannerColors()
-      .then((c) => {
-        setBgColor(c.bg_color);
-        setTextColor(c.text_color);
-        setCustomized(c.customized);
-      })
-      .catch(() => {
-        /* backend fora do ar — mantém padrões */
-      });
-  }, []);
-
-  function update(setter: (v: string) => void) {
-    return (v: string) => {
-      setter(v);
-      setDirty(true);
-      setSaved(false);
-    };
-  }
-
-  const valid = HEX_RE.test(bgColor) && HEX_RE.test(textColor);
-
-  async function handleSave() {
-    setBusy(true);
-    setError("");
-    try {
-      const c = await saveBannerColors(bgColor, textColor);
-      setBgColor(c.bg_color);
-      setTextColor(c.text_color);
-      setCustomized(true);
-      setDirty(false);
-      setSaved(true);
-    } catch (err) {
-      setError(getApiErrorMessage(err, "Não foi possível salvar as cores."));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleReset() {
-    setBusy(true);
-    setError("");
-    try {
-      await resetBannerColors();
-      setBgColor(DEFAULT_BG);
-      setTextColor(DEFAULT_TEXT);
-      setCustomized(false);
-      setDirty(false);
-      setSaved(false);
-    } catch (err) {
-      setError(getApiErrorMessage(err, "Não foi possível restaurar o padrão."));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const previewBg = toFullHex(bgColor, DEFAULT_BG);
-  const previewText = toFullHex(textColor, DEFAULT_TEXT);
+export default function BannerColorSettings({
+  value,
+  onChange,
+  fonts,
+  disabled = false,
+}: Props) {
+  const previewBg = toFullHex(value.bg, DEFAULT_BG);
+  const previewText = toFullHex(value.text, DEFAULT_TEXT);
+  const stack = fontStack(value.font);
+  const noPadrao =
+    value.bg === BANNER_PADRAO.bg &&
+    value.text === BANNER_PADRAO.text &&
+    value.font === BANNER_PADRAO.font;
 
   return (
-    <div className="rounded-2xl bg-gray-900 border border-gray-800 p-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h2 className="text-base font-semibold text-gray-100">Cores do banner</h2>
-          <p className="text-sm text-gray-500 mt-1">
-            Cor da pílula de título e da fonte nos próximos clips gerados.
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-body font-medium text-ink">Banner de título</p>
+          <p className="mt-1 text-label text-ink-muted">
+            Cores e fonte da faixa de título nos próximos clipes.
           </p>
         </div>
+        {!noPadrao && (
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => onChange({ ...BANNER_PADRAO })}
+            className="text-label text-ink-dim transition-colors hover:text-ink disabled:opacity-50"
+          >
+            Restaurar padrão
+          </button>
+        )}
+      </div>
 
-        {/* Preview da pílula */}
+      {/* Preview: retângulo de ponta a ponta, como sai no clipe */}
+      <div
+        className="select-none overflow-hidden rounded px-5 py-3 text-center"
+        style={{ backgroundColor: previewBg }}
+      >
         <span
-          className="rounded-full px-5 py-2 text-sm font-bold tracking-wide select-none"
-          style={{ backgroundColor: previewBg, color: previewText }}
+          className="text-body"
+          style={{
+            color: previewText,
+            fontFamily: stack.family,
+            fontWeight: stack.weight,
+          }}
         >
           TÍTULO DO CLIP
         </span>
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-6">
+      <div className="flex flex-wrap items-center gap-6">
         <ColorField
           label="Fundo"
-          value={bgColor}
-          onChange={update(setBgColor)}
-          disabled={busy}
+          value={value.bg}
+          onChange={(bg) => onChange({ ...value, bg })}
+          disabled={disabled}
           fallback={DEFAULT_BG}
         />
         <ColorField
-          label="Fonte"
-          value={textColor}
-          onChange={update(setTextColor)}
-          disabled={busy}
+          label="Texto"
+          value={value.text}
+          onChange={(text) => onChange({ ...value, text })}
+          disabled={disabled}
           fallback={DEFAULT_TEXT}
         />
-
-        <div className="flex items-center gap-3 ml-auto">
-          {(customized || dirty) && (
-            <button
-              onClick={handleReset}
-              disabled={busy}
-              className="text-xs text-gray-500 hover:text-gray-300 transition-colors disabled:opacity-50"
-            >
-              Restaurar padrão
-            </button>
-          )}
-          <button
-            onClick={handleSave}
-            disabled={busy || !dirty || !valid}
-            className="rounded-lg px-4 py-2 text-sm font-medium transition-colors bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {busy ? "Salvando..." : saved ? "Salvo ✓" : "Salvar"}
-          </button>
-        </div>
+        <FontField
+          value={value.font}
+          onChange={(font: string) => onChange({ ...value, font })}
+          disabled={disabled}
+          fonts={fonts}
+        />
       </div>
 
-      {!valid && (
-        <p className="mt-3 text-xs text-amber-500/80 bg-amber-900/15 rounded px-3 py-2">
-          Use hexadecimal no formato #RRGGBB (ex: #ED2828).
+      {!bannerValido(value) && (
+        <p className="rounded-sm bg-amber-900/15 px-3 py-2 text-label text-amber-500/80">
+          Use hexadecimal no formato #RRGGBB (ex: {DEFAULT_BG}).
         </p>
-      )}
-      {error && (
-        <p className="mt-3 text-xs text-red-400 bg-red-900/20 rounded px-3 py-2">{error}</p>
       )}
     </div>
   );

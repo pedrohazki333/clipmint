@@ -1,0 +1,38 @@
+{
+ "clip_id": "50976efb432543af80e7ce2e2331e1dc",
+ "source": "external_reference",
+ "validated_at": "2026-08-24T17:11:28.187918+00:00",
+ "video": {
+  "url": "https://www.youtube.com/watch?v=csUeexUoiG0",
+  "title": "UM NOVO R.E.P.O? - GRAIN ROT COM OS AMIGOS",
+  "channel": "alanzoka",
+  "language": "pt",
+  "duration": 6593.0
+ },
+ "clip": {
+  "start": 388.8,
+  "end": 404.5,
+  "duration": 15.7,
+  "opening_phrase": "sabe? Tá bom, tá bom, tá bom. Verde",
+  "virality_score": 8.2,
+  "hook": "Ele inventou uma palavra e a mesa caiu",
+  "suggested_title": "A piada que travou o jogo inteiro",
+  "reason": "Em primeira pessoa, o jogador ataca com um grande martelo um guarda-roupa (\"Guarda-roupa – Nível 1\"): a madeira estoura, aparece um buraco na parede/móvel e ele recolhe 50 de material, enquanto outro personagem (jogador com mochila e roupa clara/esverdeada) passa borrado bem à frente da câmera. Logo depois a câmera gira violentamente e ele já está correndo pela 'Sala de Treinamento', parando para olhar uma prancheta caída no chão com o prompt 'E'.",
+  "tags": [
+   "banter",
+   "gameplay",
+   "amigos"
+  ]
+ },
+ "compilation": {
+  "of": "compilado publicado no TikTok (@alanzoka)",
+  "position": "2º",
+  "total_parts": 6,
+  "total_duration": 127.9
+ },
+ "validation": {
+  "performance": "muito_bom",
+  "aprendizado": "Piada verbal com o amigo passando borrado na frente da câmera enquanto ele quebra um móvel. Áudio baixo durante o gag, gargalhada depois. Entra em segundo para dar respiro entre a abertura e o caos: dois trechos de reação seguidos de quatro de ação.\n\nPadrão dos seis trechos deste compilado, medido: em CINCO deles o personagem de um companheiro está visível na tela fazendo alguma coisa (com a tag do nome à vista), e em TODOS os seis o rosto do streamer vira dentro do trecho — de concentrado para gargalhada, susto ou grito. A graça é o que o amigo faz; a cara é a prova de que funcionou. Áudio alto sozinho não seleciona: a janela com mais risadas do vídeo ficou de fora do compilado.",
+  "provenance": "Compilado publicado pelo dono da conta e entregue como alvo. Sem métricas medidas — a nota reflete a escolha editorial, não desempenho verificado."
+ }
+}

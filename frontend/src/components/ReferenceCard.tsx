@@ -6,8 +6,10 @@ import type { Reference } from "@/lib/types";
 const STATUS_LABEL: Record<string, string> = {
   queued: "Na fila",
   downloading_source: "Baixando",
+  extracting: "Preparando",
   transcribing: "Transcrevendo",
   aligning: "Localizando",
+  watching: "Assistindo",
   analyzing: "Analisando",
   done: "Pronto",
   error: "Erro",
@@ -21,30 +23,32 @@ export default function ReferenceCard({ reference }: { reference: Reference }) {
   return (
     <Link
       href={`/references/${r.id}`}
-      className="block rounded-xl bg-gray-900 border border-gray-800 hover:border-gray-700 p-4 transition-colors"
+      className="block rounded-md bg-raised border border-line hover:border-line-strong p-4 transition-colors"
     >
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <p className="text-sm font-medium text-gray-200 truncate">
-            {r.source_title ?? r.source_url}
+          <p className="text-body font-medium text-ink truncate">
+            {r.source_title || r.source_url || "Clipe sem título"}
           </p>
-          {r.source_channel && (
-            <p className="text-xs text-gray-500 truncate mt-0.5">{r.source_channel}</p>
-          )}
+          <p className="text-label text-ink-dim truncate mt-0.5">
+            {[r.source_channel, r.kind === "standalone" ? "só o clipe" : "com o original"]
+              .filter(Boolean)
+              .join(" · ")}
+          </p>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           {r.published && (
-            <span className="rounded-full bg-emerald-900/40 border border-emerald-800 px-2.5 py-0.5 text-xs text-emerald-300">
+            <span className="rounded-full bg-mint-soft border border-mint/30 px-2.5 py-0.5 text-label text-mint">
               aprendido
             </span>
           )}
           <span
-            className={`rounded-full px-2.5 py-0.5 text-xs border ${
+            className={`rounded-full px-2.5 py-0.5 text-label border ${
               isError
-                ? "bg-red-900/30 border-red-800 text-red-400"
+                ? "bg-danger-soft border-danger/40 text-danger"
                 : isDone
-                ? "bg-gray-800 border-gray-700 text-gray-300"
-                : "bg-gray-800 border-gray-700 text-gray-400 animate-pulse"
+                ? "bg-inset border-line text-ink"
+                : "bg-inset border-line text-ink-dim animate-pulse"
             }`}
           >
             {STATUS_LABEL[r.status] ?? r.status}

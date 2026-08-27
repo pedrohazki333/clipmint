@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { validateClip } from "@/lib/api";
+import { validateClip } from "@/personal/learning-api";
 
 type Performance = "viral" | "muito_bom" | "bom";
 
@@ -62,15 +62,15 @@ export default function ValidateModal({ clipId, onClose }: Props) {
       onClick={handleBackdropClick}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4"
     >
-      <div className="w-full max-w-md rounded-2xl bg-gray-900 border border-gray-700 p-6 flex flex-col gap-5 shadow-2xl">
+      <div className="w-full max-w-md rounded-md bg-raised border border-line p-6 flex flex-col gap-5 shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between">
-          <h2 className="text-base font-semibold text-gray-100">
+          <h2 className="text-body font-semibold text-ink">
             Salvar como exemplo validado
           </h2>
           <button
             onClick={onClose}
-            className="text-gray-500 hover:text-gray-300 transition-colors text-lg leading-none"
+            className="text-ink-dim hover:text-ink transition-colors text-title leading-none"
           >
             ✕
           </button>
@@ -79,14 +79,14 @@ export default function ValidateModal({ clipId, onClose }: Props) {
         {saved ? (
           /* Estado de sucesso */
           <div className="flex flex-col items-center gap-3 py-4 text-center">
-            <div className="text-3xl">✓</div>
-            <p className="text-emerald-400 font-medium">Exemplo salvo com sucesso!</p>
-            <p className="text-xs text-gray-500">
+            <div className="text-display">✓</div>
+            <p className="text-mint font-medium">Exemplo salvo com sucesso!</p>
+            <p className="text-label text-ink-dim">
               Este clip será usado como referência nas próximas análises.
             </p>
             <button
               onClick={onClose}
-              className="mt-2 px-5 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-sm text-gray-300 transition-colors"
+              className="mt-2 px-5 py-2 rounded-sm bg-inset hover:bg-hover text-body text-ink transition-colors"
             >
               Fechar
             </button>
@@ -95,7 +95,7 @@ export default function ValidateModal({ clipId, onClose }: Props) {
           <>
             {/* Performance */}
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-gray-400 uppercase tracking-wide">
+              <label className="text-label font-medium text-ink-dim uppercase tracking-wide">
                 Performance
               </label>
               <div className="flex gap-2">
@@ -103,10 +103,10 @@ export default function ValidateModal({ clipId, onClose }: Props) {
                   <button
                     key={opt.value}
                     onClick={() => setPerformance(opt.value)}
-                    className={`flex-1 rounded-lg py-2 text-sm font-medium border transition-colors ${
+                    className={`flex-1 rounded-sm py-2 text-body font-medium border transition-colors ${
                       performance === opt.value
-                        ? "bg-emerald-600 border-emerald-500 text-white"
-                        : "bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500"
+                        ? "bg-mint-strong border-mint text-white"
+                        : "bg-inset border-line text-ink-dim hover:border-line-strong"
                     }`}
                   >
                     {opt.label}
@@ -117,7 +117,7 @@ export default function ValidateModal({ clipId, onClose }: Props) {
 
             {/* Aprendizado */}
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-gray-400 uppercase tracking-wide">
+              <label className="text-label font-medium text-ink-dim uppercase tracking-wide">
                 Por que esse clip funcionou?
               </label>
               <textarea
@@ -125,15 +125,15 @@ export default function ValidateModal({ clipId, onClose }: Props) {
                 onChange={(e) => setAprendizado(e.target.value)}
                 placeholder="Ex: Hook de revelação no início + tensão crescente. Público sentiu que estava aprendendo um segredo."
                 rows={3}
-                className="rounded-lg bg-gray-800 border border-gray-700 text-sm text-gray-200 placeholder-gray-600 px-3 py-2 resize-none focus:outline-none focus:border-gray-500 transition-colors"
+                className="rounded-sm bg-inset border border-line text-body text-ink placeholder-ink-muted px-3 py-2 resize-none focus:outline-none focus:border-mint transition-colors"
               />
             </div>
 
             {/* Views */}
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-gray-400 uppercase tracking-wide">
+              <label className="text-label font-medium text-ink-dim uppercase tracking-wide">
                 Views obtidos{" "}
-                <span className="normal-case font-normal text-gray-600">(opcional)</span>
+                <span className="normal-case font-normal text-ink-muted">(opcional)</span>
               </label>
               <input
                 type="number"
@@ -141,13 +141,13 @@ export default function ValidateModal({ clipId, onClose }: Props) {
                 value={views}
                 onChange={(e) => setViews(e.target.value)}
                 placeholder="Ex: 50000"
-                className="rounded-lg bg-gray-800 border border-gray-700 text-sm text-gray-200 placeholder-gray-600 px-3 py-2 focus:outline-none focus:border-gray-500 transition-colors"
+                className="rounded-sm bg-inset border border-line text-body text-ink placeholder-ink-muted px-3 py-2 focus:outline-none focus:border-mint transition-colors"
               />
             </div>
 
             {/* Erro */}
             {error && (
-              <p className="text-xs text-red-400 bg-red-900/20 rounded px-3 py-2">
+              <p className="text-label text-danger bg-danger-soft rounded px-3 py-2">
                 {error}
               </p>
             )}
@@ -156,14 +156,14 @@ export default function ValidateModal({ clipId, onClose }: Props) {
             <div className="flex gap-2 pt-1">
               <button
                 onClick={onClose}
-                className="flex-1 rounded-lg py-2 text-sm text-gray-400 bg-gray-800 hover:bg-gray-700 border border-gray-700 transition-colors"
+                className="flex-1 rounded-sm py-2 text-body text-ink-dim bg-inset hover:bg-hover border border-line transition-colors"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleConfirm}
                 disabled={saving}
-                className="flex-1 rounded-lg py-2 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="flex-1 rounded-sm py-2 text-body font-semibold text-white bg-mint-strong hover:bg-mint disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {saving ? "Salvando..." : "Confirmar"}
               </button>

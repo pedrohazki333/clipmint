@@ -141,6 +141,26 @@ def _sample_reasons(examples: list[dict], limit: int = 5) -> list[str]:
     return out
 
 
+def _sample_rules(examples: list[dict], limit: int = 10) -> list[str]:
+    """
+    Regras de corte que as perícias de clipes standalone já formularam.
+
+    São o material mais próximo do que o miner produz — imperativas e sobre
+    escolha de corte —, e vêm de clipes que comprovadamente funcionaram. Entram
+    como insumo, não como saída: cabe ao miner ver o que se repete entre elas e
+    o que é específico de um clipe só.
+    """
+    rules: list[str] = []
+    for ex in examples:
+        for rule in (ex.get("forensics", {}) or {}).get("transferable_rules", []) or []:
+            text = str(rule).strip()
+            if text and text not in rules:
+                rules.append(text)
+            if len(rules) >= limit:
+                return rules
+    return rules
+
+
 _SYSTEM = """You distill reusable clip-selection heuristics from a set of real short-form clips that performed well. You are given aggregate statistics plus sample hooks and rationales. Produce a SHORT list of concrete, imperative guidelines that a viral-clip-selection AI should follow — grounded in the data provided, specific, and non-generic. Do not restate raw numbers verbatim as trivia; translate them into actionable selection rules."""
 
 _USER_TEMPLATE = """Here is what worked across {n} validated example clip(s).
@@ -153,6 +173,9 @@ _USER_TEMPLATE = """Here is what worked across {n} validated example clip(s).
 
 ## Sample rationales / lessons
 {reasons}
+
+## Cut rules already extracted from forensic breakdowns of standalone viral clips
+{rules}
 
 ## Task
 Return ONLY valid JSON, no markdown:
@@ -201,6 +224,7 @@ async def mine_and_write(examples: list[dict]) -> dict:
         stats=json.dumps(stats, ensure_ascii=False, indent=2),
         hooks="\n".join(f"- {h}" for h in _sample_hooks(examples)) or "(none)",
         reasons="\n".join(f"- {r}" for r in _sample_reasons(examples)) or "(none)",
+        rules="\n".join(f"- {r}" for r in _sample_rules(examples)) or "(none)",
     )
 
     client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)

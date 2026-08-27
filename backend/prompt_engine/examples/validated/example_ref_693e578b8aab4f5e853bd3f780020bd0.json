@@ -1,0 +1,38 @@
+{
+ "clip_id": "693e578b8aab4f5e853bd3f780020bd0",
+ "source": "external_reference",
+ "validated_at": "2026-08-24T17:11:28.186280+00:00",
+ "video": {
+  "url": "https://www.youtube.com/watch?v=csUeexUoiG0",
+  "title": "UM NOVO R.E.P.O? - GRAIN ROT COM OS AMIGOS",
+  "channel": "alanzoka",
+  "language": "pt",
+  "duration": 6593.0
+ },
+ "clip": {
+  "start": 3843.4,
+  "end": 3851.5,
+  "duration": 8.1,
+  "opening_phrase": "Eu",
+  "virality_score": 8.8,
+  "hook": "O bonequinho passou e ele não aguentou",
+  "suggested_title": "O amigo atravessou a tela e o Alan perdeu a linha",
+  "reason": "Jogo de exploração de tumba egípcia em primeira pessoa (interface em português: 'Pegar', 'Construir', 'Introspecção', 'Ejetar Faísca'). O jogador desce a escadaria escura, entra numa sala com pilar e tocha e nesse momento surge no centro da tela o aviso de status 'SANGRAS' (a stamina cai de 34 para 32 e depois sobe para 62 enquanto ele corre); logo em seguida ele segue por um corredor estreito. Fora isso, é deslocamento rotineiro pelo cenário — nenhum monstro ou outro jogador claramente visível.",
+  "tags": [
+   "visual_gag",
+   "gameplay",
+   "amigos"
+  ]
+ },
+ "compilation": {
+  "of": "compilado publicado no TikTok (@alanzoka)",
+  "position": "abertura",
+  "total_parts": 6,
+  "total_duration": 127.9
+ },
+ "validation": {
+  "performance": "muito_bom",
+  "aprendizado": "ABERTURA do compilado, e vem de 1h04 do vídeo — não do começo. É o trecho mais curto (8s) e o de áudio mais baixo dos seis, e ainda assim abre: a graça está inteira na IMAGEM, o personagem de outro jogador atravessando o campo de visão de um jeito ridículo. A gargalhada não é o conteúdo, é o recibo de que aconteceu. Um corte que começasse na risada perderia a piada.\n\nPadrão dos seis trechos deste compilado, medido: em CINCO deles o personagem de um companheiro está visível na tela fazendo alguma coisa (com a tag do nome à vista), e em TODOS os seis o rosto do streamer vira dentro do trecho — de concentrado para gargalhada, susto ou grito. A graça é o que o amigo faz; a cara é a prova de que funcionou. Áudio alto sozinho não seleciona: a janela com mais risadas do vídeo ficou de fora do compilado.",
+  "provenance": "Compilado publicado pelo dono da conta e entregue como alvo. Sem métricas medidas — a nota reflete a escolha editorial, não desempenho verificado."
+ }
+}

@@ -1,0 +1,38 @@
+{
+ "clip_id": "2e648f45291445309fa687bd371e5af8",
+ "source": "external_reference",
+ "validated_at": "2026-08-24T17:11:28.199838+00:00",
+ "video": {
+  "url": "https://www.youtube.com/watch?v=csUeexUoiG0",
+  "title": "UM NOVO R.E.P.O? - GRAIN ROT COM OS AMIGOS",
+  "channel": "alanzoka",
+  "language": "pt",
+  "duration": 6593.0
+ },
+ "clip": {
+  "start": 2780.6,
+  "end": 2800.6,
+  "duration": 20.0,
+  "opening_phrase": "Uau, caralho, eu jogo demais! Meu Deus, meu",
+  "virality_score": 8.0,
+  "hook": "O susto que arrancou o grito",
+  "suggested_title": "Ele gritou mais alto que o jogo",
+  "reason": "Jogo em primeira pessoa com as luvas de gravidade (Half-Life: Alyx): o jogador está num corredor escuro examinando uma lâmpada pendurada, gira bruscamente a câmera e avista uma figura/soldado atrás de uma grade; em seguida a tela toda fica tomada por um clarão roxo com partículas formando um borrão brilhante bem perto de um inimigo (com prompt 'E' e 'Empurrão de Força' no canto), como um susto/ataque à queima-roupa. Depois a cena volta ao normal e ele está diante de uma bancada/estação recolhendo recursos (contador de resina sobe para 354/366).",
+  "tags": [
+   "jumpscare",
+   "gameplay",
+   "amigos"
+  ]
+ },
+ "compilation": {
+  "of": "compilado publicado no TikTok (@alanzoka)",
+  "position": "5º",
+  "total_parts": 6,
+  "total_duration": 127.9
+ },
+ "validation": {
+  "performance": "muito_bom",
+  "aprendizado": "Clarão roxo perto de um inimigo e grito imediato. É o único dos seis em que a virada de rosto é susto e não riso — serve para variar a textura antes do trecho final, o mais longo.\n\nPadrão dos seis trechos deste compilado, medido: em CINCO deles o personagem de um companheiro está visível na tela fazendo alguma coisa (com a tag do nome à vista), e em TODOS os seis o rosto do streamer vira dentro do trecho — de concentrado para gargalhada, susto ou grito. A graça é o que o amigo faz; a cara é a prova de que funcionou. Áudio alto sozinho não seleciona: a janela com mais risadas do vídeo ficou de fora do compilado.",
+  "provenance": "Compilado publicado pelo dono da conta e entregue como alvo. Sem métricas medidas — a nota reflete a escolha editorial, não desempenho verificado."
+ }
+}

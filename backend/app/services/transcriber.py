@@ -1,75 +1,72 @@
-import asyncio
+"""
+Fachada da transcrição.
+
+O pipeline chama `transcribe_audio(job_id, audio_path)` e não sabe — nem
+precisa saber — qual serviço respondeu. Quem responde é o provedor escolhido em
+`TRANSCRIPTION_PROVIDER` (ver services/transcription/).
+
+O que a fachada faz por cima do provedor, e por que fica aqui e não lá:
+
+  - **limpa repetições degeneradas**: é defeito de decodificador, aparece em
+    qualquer fornecedor, e deixá-lo em um provedor só faria a comparação entre
+    eles medir o pós-processamento em vez do modelo;
+  - **grava o JSON de palavras**: é artefato do pipeline (legenda e análise leem
+    dele), não do fornecedor.
+"""
+
 import json
 import logging
-from dataclasses import dataclass
-from typing import List, Optional
-
-import assemblyai as aai
+from typing import Optional
 
 from app.config import settings
+from app.services.transcription import get_provider
+from app.services.transcription.base import (  # noqa: F401 - reexport
+    ProviderTranscript,
+    TranscriptionResult,
+    WordTimestamp,
+)
+from app.services.transcription.postprocess import drop_degenerate_repeats
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class WordTimestamp:
-    text: str
-    start: float  # seconds
-    end: float    # seconds
-    confidence: float
-
-
-@dataclass
-class TranscriptionResult:
-    full_text: str
-    words: List[WordTimestamp]
-    words_json_path: str
-    language: Optional[str]
-    confidence: float
-
-
-async def transcribe_audio(job_id: str, audio_path: str) -> TranscriptionResult:
+async def transcribe_audio(
+    job_id: str,
+    audio_path: str,
+    provider_name: Optional[str] = None,
+    words_json_path: Optional[str] = None,
+) -> TranscriptionResult:
     """
-    Transcreve o áudio usando AssemblyAI com word-level timestamps.
+    Transcreve o áudio com timestamps por palavra.
 
-    Salva o JSON de palavras com timestamps em disco para uso posterior
-    na geração de legendas e análise de viralidade.
+    Args:
+        job_id: identifica o trabalho nos logs e nomeia o JSON de palavras.
+        audio_path: WAV mono 16 kHz extraído pelo downloader.
+        provider_name: força um provedor específico. Usado pelo modo de
+            comparação; no pipeline normal vem None e vale o do .env.
+        words_json_path: destino do JSON. Omitido, usa o nome padrão do job —
+            a comparação precisa disso para os dois provedores não escreverem
+            no mesmo arquivo.
     """
-    aai.settings.api_key = settings.assemblyai_api_key
+    provider = get_provider(provider_name)
+    logger.info(f"[{job_id}] Transcrição via '{provider.name}'")
 
-    logger.info(f"[{job_id}] Starting transcription for: {audio_path}")
+    resultado = await provider.transcribe(job_id, audio_path)
 
-    config = aai.TranscriptionConfig(
-        speech_model=aai.SpeechModel.best,
-        language_detection=True,
-        punctuate=True,
-        format_text=True,
-    )
+    words, dropped = drop_degenerate_repeats(resultado.words)
+    if dropped:
+        logger.warning(
+            f"[{job_id}] {dropped} repetição(ões) degenerada(s) descartada(s) "
+            f"— o modelo travou em loop em algum trecho difícil"
+        )
 
-    transcriber = aai.Transcriber(config=config)
-
-    # AssemblyAI SDK é síncrono — executar em thread separada para não bloquear o event loop
-    transcript = await asyncio.to_thread(transcriber.transcribe, audio_path)
-
-    if transcript.status == aai.TranscriptStatus.error:
-        raise RuntimeError(f"AssemblyAI error: {transcript.error}")
-
-    logger.info(f"[{job_id}] Transcription complete. Words: {len(transcript.words or [])}")
-
-    words: List[WordTimestamp] = []
-    for w in (transcript.words or []):
-        words.append(WordTimestamp(
-            text=w.text,
-            start=w.start / 1000.0,  # AssemblyAI retorna milissegundos
-            end=w.end / 1000.0,
-            confidence=w.confidence,
-        ))
-
-    # Persiste JSON de palavras para uso posterior
-    words_json_path = str(settings.transcripts_dir / f"{job_id}_words.json")
-    with open(words_json_path, "w", encoding="utf-8") as f:
+    destino = words_json_path or str(settings.transcripts_dir / f"{job_id}_words.json")
+    with open(destino, "w", encoding="utf-8") as f:
         json.dump(
-            [{"text": w.text, "start": w.start, "end": w.end, "confidence": w.confidence} for w in words],
+            [
+                {"text": w.text, "start": w.start, "end": w.end, "confidence": w.confidence}
+                for w in words
+            ],
             f,
             ensure_ascii=False,
             indent=2,
@@ -80,9 +77,11 @@ async def transcribe_audio(job_id: str, audio_path: str) -> TranscriptionResult:
     )
 
     return TranscriptionResult(
-        full_text=transcript.text or "",
+        full_text=resultado.full_text,
         words=words,
-        words_json_path=words_json_path,
-        language=getattr(transcript, "language_code", None) or (transcript.json_response or {}).get("language_code"),
+        words_json_path=destino,
+        language=resultado.language,
         confidence=avg_confidence,
+        provider=provider.name,
+        model=resultado.model,
     )

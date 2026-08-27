@@ -42,6 +42,7 @@ Sem rosto estável no trecho, a lista volta vazia — o clipper cai para um reco
 padrão no canto e o usuário pode corrigir manualmente pelo job.
 """
 
+import copy
 import glob
 import logging
 import math
@@ -54,7 +55,13 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 # Amostragem
-_MAX_SAMPLES = 24          # frames analisados no trecho
+# Frames analisados no trecho. Eram 24, que num clipe de 80s dá uma amostra a
+# cada 3,4s — mais lento que o ritmo de corte de um vídeo EDITADO, em que a
+# edição alterna entre os POVs de vários streamers. Medido num clipe do
+# Bahiaqz: com 24 amostras o detector colocou a cam à direita num trecho em que
+# o rosto estava à esquerda, e o painel saiu mostrando tela vazia. Com 48 o
+# intervalo cai para ~1,7s e as trocas são acompanhadas.
+_MAX_SAMPLES = 48
 _DETECT_WIDTH = 1920       # teto da largura de trabalho (4K inteiro não compensa)
 
 # Ladrilhos de detecção. O rosto dentro de uma facecam pequena ocupa ~3% da
@@ -82,8 +89,23 @@ _CLUSTER_SIZE_RATIO = 2.5  # ...e o rosto tem que ter tamanho comparável ao pri
 _PHASE_MOVE = 0.06         # deslocamento do centro do rosto que denuncia outra caixa
 _PHASE_ZOOM = 1.45         # razão de área do rosto que denuncia zoom (e o inverso)
 _PHASE_CONFIRM = 2         # amostras seguidas para a mudança valer (anti-ruído)
-_MIN_PHASE_SAMPLES = 3     # fase menor que isso é absorvida pela vizinha
-_MAX_PHASES = 6            # teto de recortes por clip no filtergraph
+# Não há mais teto de fases nem mínimo de amostras por fase. Os dois existiam
+# porque cada fase custava um recorte no filtergraph, e fundir as sobrantes era
+# o preço — só que fundir fases de POSIÇÕES diferentes é exatamente o que
+# quebrava o enquadramento em vídeo editado: o encaixe passava a procurar
+# bordas comuns entre planos que não têm nenhuma, e achava a moldura da UI do
+# jogo. Agora o custo do render é por CAIXA ÚNICA (ver clipper), então a
+# quantidade de trocas deixou de importar.
+# Fases vizinhas dentro destas margens enquadram a mesma cam e viram uma só —
+# trocar o recorte à toa no meio do clipe aparece como pulinho de zoom.
+_SAME_BOX_CENTER = 0.02    # deslocamento do centro, em fração do frame
+_SAME_BOX_SIZE = 0.12      # diferença de lado, em fração do maior
+# Quanto uma fase pode destoar de tamanho das outras DO MESMO clip antes de ser
+# tratada como trava errada. Mais folgado que a tolerância do job porque num
+# vídeo editado streamers diferentes têm cams de tamanhos diferentes — mas não
+# de 2x. Medido no caso do Bahiaqz: cam real ~0.17-0.20 de largura, card do
+# jogo 0.46 (2.7x).
+_CLIP_SIZE_TOLERANCE = 1.6
 
 # Enquadramento derivado do rosto
 _BOX_FROM_FACE = 2.6       # altura da caixa ≈ 2.6x a altura do rosto (cabeça + ombros)
@@ -106,7 +128,20 @@ _PEAK_MIN_MARGIN = 1.0     # ...e superar a vizinhança por esta margem absoluta
                            # local, banding imita uma borda perfeita.
 _PEAK_MIN_GAP = 0.01       # picos mais próximos que isso são o mesmo (fica o maior)
 _CANDIDATES_PER_SIDE = 8
-_EDGE_QUALITY = 0.45       # qualidade atribuída à borda do frame como candidata
+_EDGE_QUALITY = 0.80       # Qualidade da borda do FRAME como candidata. Alta de
+                           # propósito: cam encostada no canto não produz linha
+                           # nenhuma no encosto — o degrau só existe onde sobra
+                           # gameplay do outro lado, e ali não sobra. Com 0.45 a
+                           # borda invisível perdia para móvel ESTÁTICO DENTRO da
+                           # cam (o quarto do streamer também fica parado em todo
+                           # frame, então a média de gradientes o mantém forte):
+                           # medido no job do Bahiaqz, o topo da cam encostava em
+                           # y=7 e o encaixe escolhia y=143, começando o painel no
+                           # meio da testa. No mesmo frame as bordas reais deram
+                           # 0.86-0.98 e as linhas internas <=0.58 — 0.80 poe o
+                           # encosto na liga das bordas reais sem passar por elas,
+                           # que e o que deixa o desempate por filete decidir
+                           # quando existe uma moldura de verdade logo adiante.
 
 # Prior de proporção: webcam de live é deitada, entre 4:3 e 16:9. É o que separa
 # a borda certa de uma linha forte perdida no gameplay.
@@ -117,13 +152,46 @@ _ASPECT_TOL = 0.30         # tolerância em log (~±35%). Largo de propósito: a
                            # a mandar mais que a qualidade das bordas.
 _ASPECT_FLOOR = 0.15       # peso mínimo — proporção esquisita não zera a caixa
 _SCORE_TIE = 0.05          # placares dentro de 5% empatam; desempata a menor caixa
+_TIE_MAX_SHRINK = 0.05     # ...mas so entre caixas que sao A MESMA caixa com um
+                           # filete a menos: encolher mais que isso em qualquer
+                           # lado tem que vencer pelo placar (_shaves_only_a_sliver)
+
+# Teto de tamanho da cam. O prior de proporção sozinho é cego para o pior erro:
+# uma caixa encostada nas bordas do frame tem a proporção DO FRAME (16:9) e sai
+# com peso máximo, então "o frame inteiro" competia de igual para igual com a
+# cam de verdade — e ganhava quando as bordas do gameplay eram mais fortes que
+# a moldura da cam. Medido nas lives deste projeto: as cams reais ficam entre
+# 0.05 e 0.15 de área, e os erros observados entre 0.41 e 0.82. O teto separa
+# os dois grupos com folga dos dois lados.
+_MAX_CAM_W = 0.55          # fração máxima da largura do frame
+_MAX_CAM_H = 0.60          # ...e da altura
+_MAX_CAM_AREA = 0.30       # ...e da área, que é o que pega a caixa quase-cheia
 _EDGE_REACH = 4.0          # sem linha e a até 4 alturas de rosto da borda = a cam encosta nela
+_REFINE_WINDOW = 0.10      # Vizinhança de cada borda na 2a passada, em fração do
+                           # lado da caixa. A 2a passada existe para PONTUAR cada
+                           # borda ao longo da cam real, não para procurar outra
+                           # caixa: medindo na largura inteira da cam, uma barra
+                           # de overlay logo abaixo dela imita uma borda melhor
+                           # que a borda de verdade. No job do Bahiaqz o fundo
+                           # certo caía de 0.937 para 0.78 (a moldura é escura
+                           # contra fundo escuro na ponta esquerda) enquanto a
+                           # barra de meta branca subia para 0.89, e a caixa
+                           # correta da 1a passada virava uma que engolia a barra.
 _CAM_INSET = 0.01          # recuo para dentro da caixa, em fração do lado
 _CAM_INSET_MIN = 3         # ...com piso em pixels da RESOLUÇÃO DE DETECÇÃO: cada
                            # pixel aqui vale 4 na fonte 4K, e a borda tem ±1 de
                            # incerteza. Perder 3px da cam é invisível depois da
                            # ampliação; deixar 3px de gameplay é uma listra.
 _EDGE_SNAP = 0.05          # só no fallback sem encaixe: quase colada na borda, encosta
+
+# Folga máxima entre a caixa e a borda de frame mais próxima. A facecam é um
+# overlay ancorado num canto da tela: ela ENCOSTA numa borda. Um rosto que o
+# detector acha solto no meio do frame é personagem do jogo, não o streamer.
+# Medido: 6 caixas reais em 3 jobs deste projeto ficaram entre 0.007 e 0.012 de
+# folga; a caixa errada do job e7182b9f (os generais da cutscene de "Senhor
+# presidente") ficou em 0.169. O limiar separa os dois grupos com folga larga
+# dos dois lados, do mesmo jeito que _MAX_CAM_AREA.
+_CAM_EDGE_GAP = 0.06
 
 
 @dataclass(eq=False)
@@ -295,19 +363,35 @@ def detect_facecam_phases(
             return []
 
         per_frame = _detect_faces_per_frame(frames, cv2, mp)
-        track, confidence = _cam_track(per_frame, len(frames))
+        track, confidence, groups = _cam_track(per_frame, len(frames))
         if track is None:
             return []
 
-        spans = _phase_spans(track)
-        phases: list[CamPhase] = []
-        for i0, i1 in spans:
-            rect = _fit_phase(
-                frames[i0:i1 + 1], track[i0:i1 + 1], box_aspect, confidence, cv2, np
+        # Uma caixa por POSIÇÃO da cam, encaixada com TODOS os frames em que
+        # ela aparece — não por trecho contíguo. Num vídeo editado cada plano
+        # dura 2-3 amostras, o que é pouco demais para o mapa de bordas fechar
+        # uma caixa; juntando os frames do clipe inteiro que compartilham o
+        # mesmo enquadramento, o encaixe volta a ter material de sobra.
+        rect_by_group: dict[int, FacecamRect] = {}
+        for gid, indexes in groups.items():
+            rect_by_group[gid] = _fit_phase(
+                [frames[i] for i in indexes],
+                [track[i] for i in indexes],
+                box_aspect, confidence, cv2, np,
             )
-            phases.append(
-                CamPhase(start=i0 * interval, end=(i1 + 1) * interval, rect=rect)
-            )
+
+        rect_by_group = _consolidate_boxes(rect_by_group, groups)
+
+        spans = _group_spans(track, groups)
+        phases = [
+            CamPhase(start=i0 * interval, end=(i1 + 1) * interval,
+                     rect=copy.copy(rect_by_group[gid]))
+            for i0, i1, gid in spans
+        ]
+
+    phases = _merge_equivalent_phases(phases)
+    phases = _absorb_size_outliers(phases)
+    phases = _absorb_floating_boxes(phases)
 
     # As bordas da linha do tempo são das amostras, não do vídeo: estica para
     # cobrir o trecho inteiro (senão sobra um buraco antes da 1ª/depois da última).
@@ -324,6 +408,185 @@ def detect_facecam_phases(
             f"x={r.x:.3f} y={r.y:.3f} w={r.w:.3f} h={r.h:.3f}"
         )
     return phases
+
+
+def _absorb_size_outliers(phases: list[CamPhase]) -> list[CamPhase]:
+    """
+    Descarta as fases cuja caixa destoa de tamanho das outras DO MESMO clip.
+
+    O detector de bordas procura retângulos com moldura forte, e a UI do jogo
+    também é isso. Num vídeo do Bahiaqz ele travou no card "RELATÓRIO"
+    desenhado no meio da tela: 46% da largura por 44% da altura, contra ~17%
+    das fases vizinhas, que eram a cam de verdade no canto.
+
+    A referência é o próprio clipe: a fase mais LONGA. Uma trava errada costuma
+    durar poucos segundos, enquanto o enquadramento certo domina o trecho. A
+    fase fora de escala herda a caixa da vizinha boa mais próxima no tempo, que
+    num vídeo editado é quase sempre o mesmo layout de câmera.
+
+    Só o tamanho é comparado. Cam que troca de canto mantendo o tamanho é
+    mudança real de layout e passa intacta.
+    """
+    if len(phases) < 2:
+        return phases
+
+    reference = max(phases, key=lambda p: p.end - p.start).rect
+
+    def _off(rect: FacecamRect) -> float:
+        w_ratio = rect.w / reference.w if reference.w else 1.0
+        h_ratio = rect.h / reference.h if reference.h else 1.0
+        return max(w_ratio, 1 / w_ratio, h_ratio, 1 / h_ratio)
+
+    good = [i for i, p in enumerate(phases) if _off(p.rect) <= _CLIP_SIZE_TOLERANCE]
+    if not good or len(good) == len(phases):
+        return phases
+
+    for i, phase in enumerate(phases):
+        if i in good:
+            continue
+        nearest = min(good, key=lambda g: abs(g - i))
+        source = phases[nearest].rect
+        logger.warning(
+            f"Facecam: fase [{phase.start:.1f}s–{phase.end:.1f}s] com caixa "
+            f"{phase.rect.w:.3f}x{phase.rect.h:.3f} destoa {_off(phase.rect):.1f}x "
+            f"das outras do clip — provável moldura da UI do jogo; "
+            f"usando a caixa de [{phases[nearest].start:.1f}s–{phases[nearest].end:.1f}s]"
+        )
+        phase.rect = FacecamRect(
+            x=source.x, y=source.y, w=source.w, h=source.h,
+            confidence=source.confidence, method="phase_fix",
+        )
+
+    return _merge_equivalent_phases(phases)
+
+
+def _edge_gap(rect: FacecamRect) -> float:
+    """Distância da caixa até a borda de frame mais próxima, em fração do frame."""
+    return min(rect.x, rect.y, 1.0 - (rect.x + rect.w), 1.0 - (rect.y + rect.h))
+
+
+def _absorb_floating_boxes(phases: list[CamPhase]) -> list[CamPhase]:
+    """
+    Descarta as fases cuja caixa não encosta em borda nenhuma do frame.
+
+    A facecam é um overlay ancorado num canto: ela toca uma borda da tela. Um
+    rosto estável no MEIO do frame é personagem do jogo. O detector não sabe a
+    diferença — ele decide por persistência, e numa cutscene longa o rosto do
+    personagem persiste tanto quanto o do streamer. Pior: enquanto a cena está
+    escura, ou o streamer olha para baixo, o rosto dele deixa de ser detectado,
+    a co-ocorrência que separaria os dois some, e o personagem passa por "a cam
+    se moveu para cá".
+
+    Foi o que aconteceu no clipe e7fc97eb (job e7182b9f): os generais em volta
+    da mesa na cutscene de "Senhor presidente" viraram uma segunda posição da
+    cam, e em ~24s dos 106s o painel de cima mostrou gameplay em vez do rosto.
+
+    Ancoragem é o que distingue os dois casos sem quebrar a cam que se move de
+    verdade: no vídeo editado com troca de POV cada streamer tem a cam num
+    canto DIFERENTE, e todas continuam encostadas numa borda.
+
+    Só as fases que não são a mais longa são avaliadas, e só quando a mais longa
+    está ela própria ancorada. Um layout esquisito, com a cam de verdade solta
+    no meio, passa intacto — a regra só sabe derrubar um deslocamento suspeito,
+    nunca a cam dominante do trecho.
+    """
+    if len(phases) < 2:
+        return phases
+
+    reference = max(phases, key=lambda p: p.end - p.start)
+    if _edge_gap(reference.rect) > _CAM_EDGE_GAP:
+        return phases
+
+    good = [
+        i for i, p in enumerate(phases)
+        if p is reference or _edge_gap(p.rect) <= _CAM_EDGE_GAP
+    ]
+    if len(good) == len(phases):
+        return phases
+
+    for i, phase in enumerate(phases):
+        if i in good:
+            continue
+        nearest = min(good, key=lambda g: abs(g - i))
+        source = phases[nearest].rect
+        logger.warning(
+            f"Facecam: fase [{phase.start:.1f}s–{phase.end:.1f}s] com caixa solta "
+            f"a {_edge_gap(phase.rect):.3f} da borda mais próxima — provável rosto "
+            f"do jogo, não a cam; usando a caixa de "
+            f"[{phases[nearest].start:.1f}s–{phases[nearest].end:.1f}s]"
+        )
+        phase.rect = FacecamRect(
+            x=source.x, y=source.y, w=source.w, h=source.h,
+            confidence=source.confidence, method="phase_fix",
+        )
+
+    return _merge_equivalent_phases(phases)
+
+
+def _merge_equivalent_phases(phases: list[CamPhase]) -> list[CamPhase]:
+    """
+    Junta fases vizinhas que descrevem a MESMA caixa.
+
+    A divisão em fases existe para a cam que se move. Quando duas fases vizinhas
+    caem na mesma caixa, a cam não mudou — foi o rosto que oscilou — e manter a
+    divisão troca o recorte no meio do clipe, o que aparece como um pulinho de
+    zoom. Fica a caixa da fase mais longa, que teve mais frames para encaixar.
+    """
+    if not phases:
+        return phases
+
+    merged = [phases[0]]
+    for phase in phases[1:]:
+        last = merged[-1]
+        if _same_box(last.rect, phase.rect):
+            if (phase.end - phase.start) > (last.end - last.start):
+                last.rect = phase.rect
+            last.end = phase.end
+            continue
+        merged.append(phase)
+    return merged
+
+
+def _consolidate_boxes(
+    rect_by_group: dict[int, FacecamRect], groups: dict[int, list[int]]
+) -> dict[int, FacecamRect]:
+    """
+    Faz grupos que enquadram a MESMA cam compartilharem uma caixa só.
+
+    O rosto oscila dentro da cam — o streamer se inclina, chega perto —, então
+    o mesmo enquadramento vira vários grupos e cada um encaixa uma caixa
+    ligeiramente diferente. Num clipe do Bahiaqz eram 10 caixas para 2 cams. Se
+    isso chega ao render, cada volta ao mesmo canto recorta alguns pixels
+    diferente da anterior, e o painel dá um pulinho a cada troca de plano.
+
+    Vence a caixa do grupo com MAIS frames: foi a que teve mais material para o
+    encaixe nas bordas.
+
+    A consolidação também é o que mantém o filtergraph pequeno, já que o render
+    cria um ramo por caixa única e não por fase.
+    """
+    order = sorted(rect_by_group, key=lambda g: len(groups[g]), reverse=True)
+    canon: list[int] = []
+    for gid in order:
+        match = next(
+            (c for c in canon if _same_box(rect_by_group[c], rect_by_group[gid])),
+            None,
+        )
+        if match is None:
+            canon.append(gid)
+        else:
+            rect_by_group[gid] = rect_by_group[match]
+    return rect_by_group
+
+
+def _same_box(a: FacecamRect, b: FacecamRect) -> bool:
+    """Duas caixas que enquadram a mesma cam, dentro da incerteza do encaixe."""
+    center_shift = max(
+        abs((a.x + a.w / 2) - (b.x + b.w / 2)),
+        abs((a.y + a.h / 2) - (b.y + b.h / 2)),
+    )
+    size_shift = max(abs(a.w - b.w) / max(a.w, b.w), abs(a.h - b.h) / max(a.h, b.h))
+    return center_shift <= _SAME_BOX_CENTER and size_shift <= _SAME_BOX_SIZE
 
 
 def detect_facecam(
@@ -446,7 +709,7 @@ def _cluster_observations(per_frame: list[list[_Obs]]) -> list[_Cluster]:
 
 def _cam_track(
     per_frame: list[list[_Obs]], n_frames: int
-) -> tuple[Optional[list[Optional[_Obs]]], float]:
+) -> tuple[Optional[list[Optional[_Obs]]], float, dict[int, list[int]]]:
     """
     Escolhe, em cada frame, qual rosto é a facecam — e devolve a trilha.
 
@@ -461,13 +724,18 @@ def _cam_track(
     de se mexer, e entram na trilha.
 
     Returns:
-        (trilha por frame — None onde não houve rosto da cam, confiança).
-        (None, 0.0) se nenhum aglomerado tem presença suficiente.
+        (trilha por frame, confiança, {aglomerado: frames dele}).
+        (None, 0.0, {}) se nenhum aglomerado tem presença suficiente.
+
+    O terceiro item é o que permite encaixar UMA caixa por cam: quem já sabe a
+    que aglomerado cada frame pertence é esta função, e redescobrir isso depois
+    por proximidade de posição criava vários grupos para a mesma cam (o rosto
+    oscila dentro dela), cada um com um encaixe ligeiramente diferente.
     """
     clusters = _cluster_observations(per_frame)
     if not clusters:
         logger.info("Facecam: no face detected in sampled frames")
-        return None, 0.0
+        return None, 0.0, {}
 
     clusters.sort(key=lambda c: (len(c.frames), c.median_area()), reverse=True)
     primary = clusters[0]
@@ -494,15 +762,22 @@ def _cam_track(
             f"Facecam: face cluster too unstable "
             f"({len(covered)}/{n_frames} frames = {confidence:.0%})"
         )
-        return None, 0.0
+        return None, 0.0, {}
 
     track: list[Optional[_Obs]] = [None] * n_frames
-    for cluster in accepted:
+    owner: list[Optional[int]] = [None] * n_frames
+    for gid, cluster in enumerate(accepted):
         for frame_idx, seen in cluster.by_frame.items():
             best = max(seen, key=lambda o: o.score)
             current = track[frame_idx]
             if current is None or best.score > current.score:
                 track[frame_idx] = best
+                owner[frame_idx] = gid
+
+    groups: dict[int, list[int]] = {}
+    for frame_idx, gid in enumerate(owner):
+        if gid is not None:
+            groups.setdefault(gid, []).append(frame_idx)
 
     if len(accepted) > 1:
         logger.info(
@@ -510,7 +785,7 @@ def _cam_track(
             f"(a cam se moveu); {len(clusters) - len(accepted)} rosto(s) concorrente(s) "
             f"descartado(s)"
         )
-    return track, confidence
+    return track, confidence, groups
 
 
 def _frame_overlap(a: "_Cluster", b: "_Cluster") -> float:
@@ -521,40 +796,49 @@ def _frame_overlap(a: "_Cluster", b: "_Cluster") -> float:
     return len(a.frames & b.frames) / smaller
 
 
-def _phase_spans(track: list[Optional[_Obs]]) -> list[tuple[int, int]]:
+def _group_spans(
+    track: list[Optional[_Obs]], groups: dict[int, list[int]]
+) -> list[tuple[int, int, int]]:
     """
-    Quebra a trilha em fases: trechos em que a cam fica parada na mesma caixa.
+    Trechos contíguos de mesmo grupo, cobrindo todos os frames.
 
-    A mudança precisa se CONFIRMAR em _PHASE_CONFIRM amostras seguidas — um
-    frame solto com o rosto deslocado é o streamer se mexendo na cadeira, não a
-    cam mudando de lugar. Frames sem rosto não quebram a fase (a cam continua
-    lá, o detector é que piscou).
+    A troca vale na primeira amostra do outro grupo, sem exigir confirmação.
+    Confirmação faz sentido quando o risco é ruído de detecção — mas o ruído já
+    foi filtrado em _cam_track, que só aceita aglomerados persistentes com
+    tamanho de cam. Dentro do que sobrou, um frame no outro enquadramento é uma
+    troca de plano de verdade.
+
+    Exigir duas amostras seguidas aqui, aliás, era o que mantinha o defeito: com
+    plano de ~4s e amostra a cada 1,7s, o POV alternativo aparece em 1 ou 2
+    amostras e qualquer frame sem detecção no meio zerava a contagem — o trecho
+    inteiro herdava o enquadramento do outro streamer.
+
+    Frame sem rosto não abre trecho novo: a cam continua onde estava e quem
+    piscou foi o detector.
 
     Returns:
-        [(primeiro índice, último índice)] cobrindo todos os frames.
+        [(primeiro índice, último índice, id do grupo)].
     """
-    spans: list[tuple[int, int]] = []
+    if not groups:
+        return []
+
+    gid_of: list[Optional[int]] = [None] * len(track)
+    for gid, indexes in groups.items():
+        for i in indexes:
+            gid_of[i] = gid
+
+    spans: list[tuple[int, int, int]] = []
+    current = next(g for g in gid_of if g is not None)
     start = 0
-    anchor: Optional[_Obs] = None
-    pending: list[int] = []
 
-    for i, obs in enumerate(track):
-        if obs is None:
+    for i, gid in enumerate(gid_of):
+        if gid is None or gid == current:
             continue
-        if anchor is None:
-            anchor = obs
-            continue
-        if _same_placement(obs, anchor):
-            pending.clear()
-            continue
-        pending.append(i)
-        if len(pending) >= _PHASE_CONFIRM:
-            cut = pending[0]
-            spans.append((start, cut - 1))
-            start, anchor, pending = cut, obs, []
+        spans.append((start, i - 1, current))
+        start, current = i, gid
 
-    spans.append((start, len(track) - 1))
-    return _merge_short_spans(spans)
+    spans.append((start, len(track) - 1, current))
+    return spans
 
 
 def _same_placement(obs: _Obs, anchor: _Obs) -> bool:
@@ -563,40 +847,6 @@ def _same_placement(obs: _Obs, anchor: _Obs) -> bool:
         return False
     ratio = (obs.w * obs.h) / max(anchor.w * anchor.h, 1e-9)
     return 1 / _PHASE_ZOOM <= ratio <= _PHASE_ZOOM
-
-
-def _merge_short_spans(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
-    """
-    Junta fases curtas demais ao vizinho e limita o total.
-
-    Fase curta não tem frames suficientes para o encaixe nas bordas funcionar, e
-    cada fase extra é mais um recorte no filtergraph — o teto protege o render
-    de um trecho com detecção instável virando dezenas de painéis.
-    """
-    def length(span: tuple[int, int]) -> int:
-        return span[1] - span[0] + 1
-
-    def absorb(index: int) -> None:
-        left = spans[index - 1] if index > 0 else None
-        right = spans[index + 1] if index + 1 < len(spans) else None
-        into = index - 1 if right is None or (left and length(left) >= length(right)) else index + 1
-        lo, hi = min(spans[index][0], spans[into][0]), max(spans[index][1], spans[into][1])
-        spans[min(index, into)] = (lo, hi)
-        spans.pop(max(index, into))
-
-    changed = True
-    while changed and len(spans) > 1:
-        changed = False
-        for i, span in enumerate(spans):
-            if length(span) < _MIN_PHASE_SAMPLES:
-                absorb(i)
-                changed = True
-                break
-
-    while len(spans) > _MAX_PHASES:
-        absorb(min(range(len(spans)), key=lambda i: length(spans[i])))
-
-    return spans
 
 
 def _fit_phase(
@@ -723,7 +973,7 @@ def _line_profile(band, axis: int, np):
     return None if band.size == 0 else band.mean(axis=axis)
 
 
-def _best_box(lefts, rights, tops, bottoms) -> Optional[tuple]:
+def _best_box(lefts, rights, tops, bottoms, frame_w: int, frame_h: int) -> Optional[tuple]:
     """
     Melhor combinação de bordas entre as candidatas de cada lado.
 
@@ -733,25 +983,38 @@ def _best_box(lefts, rights, tops, bottoms) -> Optional[tuple]:
     quatro bordas que formam um retângulo de webcam valem mais que quatro linhas
     fortes que formam um retângulo impossível.
 
-    Empate técnico fica com a MENOR caixa. O erro não é simétrico: apertar o
+    Empate técnico fica com a MENOR caixa, desde que ela seja a MESMA caixa com
+    um filete a menos (_shaves_only_a_sliver). O erro não é simétrico: apertar o
     corte come uma tira da cam que ninguém nota depois da ampliação, enquanto
     alargar traz gameplay para dentro do painel, que é o defeito visível. Sem
-    esse desempate a escolha entre duas caixas quase idênticas vira sorteio.
+    esse desempate a escolha entre duas caixas quase idênticas vira sorteio —
+    mas sem o limite de filete ele deixa de ser desempate e vira régua, elegendo
+    caixa de tamanho completamente diferente só por ser a menor da faixa.
+
+    Caixas grandes demais para ser uma cam são descartadas ANTES da pontuação,
+    não depois: assim a melhor caixa plausível ainda é eleita, em vez de o
+    encaixe inteiro falhar e cair no palpite pelo rosto.
 
     Returns:
         (x0, y0, x1, y1, score) em pixels, x1/y1 exclusivos. None se nenhuma
         combinação fecha uma caixa.
     """
+    max_w = _MAX_CAM_W * frame_w
+    max_h = _MAX_CAM_H * frame_h
+    max_area = _MAX_CAM_AREA * frame_w * frame_h
+
     boxes = []
     for left, q_left in lefts:
         for right, q_right in rights:
             width = right - left
-            if width < 16:
+            if width < 16 or width > max_w:
                 continue
             for top, q_top in tops:
                 for bottom, q_bottom in bottoms:
                     height = bottom - top
-                    if height < 16:
+                    if height < 16 or height > max_h:
+                        continue
+                    if width * height > max_area:
                         continue
                     sides = (q_left, q_right, q_top, q_bottom)
                     # Média mais um peso para a PIOR borda: uma caixa com três
@@ -764,10 +1027,44 @@ def _best_box(lefts, rights, tops, bottoms) -> Optional[tuple]:
     if not boxes:
         return None
 
-    best_score = max(box[0] for box in boxes)
-    tied = [box for box in boxes if box[0] >= best_score * (1 - _SCORE_TIE)]
+    best = max(boxes, key=lambda box: box[0])
+    tied = [
+        box
+        for box in boxes
+        if box[0] >= best[0] * (1 - _SCORE_TIE) and _shaves_only_a_sliver(box, best)
+    ]
     chosen = min(tied, key=lambda box: box[1])
     return (*chosen[2:], chosen[0])
+
+
+def _shaves_only_a_sliver(box, best) -> bool:
+    """
+    `box` é a MESMA caixa de `best` com um filete a menos em cada lado?
+
+    O desempate por menor área foi feito para escolher entre duas caixas quase
+    idênticas — a borda tem ±1px de incerteza e a moldura da cam confunde bezel
+    com conteúdo. Sem limite de quanto pode encolher, ele degenera: no job do
+    Bahiaqz a faixa de 5% juntava caixas de tamanhos completamente diferentes, e
+    a "menor" eleita tinha 45% menos área que a de maior placar (450x224 contra
+    499x368) — cortava a cam na metade da vertical e ainda assim mantinha a
+    barra de meta do gameplay dentro do painel.
+
+    Por isso só entra no desempate quem está CONTIDO na de maior placar e não
+    encolhe nenhum lado além de _TIE_MAX_SHRINK. Caixa de verdade menor continua
+    podendo vencer — pelo placar, que é onde a evidência das bordas está.
+    """
+    _, _, x0, y0, x1, y1 = box
+    _, _, bx0, by0, bx1, by1 = best
+    if x0 < bx0 or y0 < by0 or x1 > bx1 or y1 > by1:
+        return False
+    max_dx = _TIE_MAX_SHRINK * (bx1 - bx0)
+    max_dy = _TIE_MAX_SHRINK * (by1 - by0)
+    return (
+        (x0 - bx0) <= max_dx
+        and (bx1 - x1) <= max_dx
+        and (y0 - by0) <= max_dy
+        and (by1 - y1) <= max_dy
+    )
 
 
 def _local_baseline(profile, window: int, np):
@@ -870,29 +1167,47 @@ def _fit_cam_rect(
     x0, x1 = _clamp(int(fx - face_px), 0, w - 1), _clamp(int(fx + face_px), 1, w)
 
     box = None
-    for _ in range(2):
+    for refine in (False, True):
         col_band, row_band = gx[y0:y1, :], gy[:, x0:x1]
         col_profile, row_profile = _line_profile(col_band, 0, np), _line_profile(row_band, 1, np)
         col_support, row_support = _line_scores(col_band, 0, np), _line_scores(row_band, 1, np)
         if col_profile is None or row_profile is None:
             break
 
-        lefts = _border_candidates(col_profile, col_support, 0, face_l, np)
-        rights = _border_candidates(col_profile, col_support, face_r, w - 1, np)
-        tops = _border_candidates(row_profile, row_support, 0, face_t, np)
-        bottoms = _border_candidates(row_profile, row_support, face_b, h - 1, np)
+        # 1a passada: do rosto até a borda do frame, porque o palpite pelo rosto
+        # erra fácil por 30%+. 2a: só a vizinhança da borda já achada — ali a
+        # busca é para pontuar melhor, e busca larga só dá chance de a caixa
+        # inteira migrar para um overlay vizinho (ver _REFINE_WINDOW).
+        if refine and box is not None:
+            span_x = max(3, int(_REFINE_WINDOW * (x1 - x0)))
+            span_y = max(3, int(_REFINE_WINDOW * (y1 - y0)))
+            l_lo, l_hi = max(0, x0 - span_x), min(face_l, x0 + span_x)
+            r_lo, r_hi = max(face_r, x1 - span_x), min(w - 1, x1 + span_x)
+            t_lo, t_hi = max(0, y0 - span_y), min(face_t, y0 + span_y)
+            b_lo, b_hi = max(face_b, y1 - span_y), min(h - 1, y1 + span_y)
+        else:
+            l_lo, l_hi = 0, face_l
+            r_lo, r_hi = face_r, w - 1
+            t_lo, t_hi = 0, face_t
+            b_lo, b_hi = face_b, h - 1
 
-        # Índice -1 = "antes da primeira coluna/linha", ou seja, a borda do frame
-        if fx <= reach:
+        lefts = _border_candidates(col_profile, col_support, l_lo, l_hi, np)
+        rights = _border_candidates(col_profile, col_support, r_lo, r_hi, np)
+        tops = _border_candidates(row_profile, row_support, t_lo, t_hi, np)
+        bottoms = _border_candidates(row_profile, row_support, b_lo, b_hi, np)
+
+        # Índice -1 = "antes da primeira coluna/linha", ou seja, a borda do frame.
+        # Na 2a passada ela só continua valendo se estiver dentro da vizinhança.
+        if fx <= reach and l_lo <= 0:
             lefts.append((-1, _EDGE_QUALITY))
-        if (w - fx) <= reach:
+        if (w - fx) <= reach and r_hi >= w - 1:
             rights.append((w - 1, _EDGE_QUALITY))
-        if fy <= reach:
+        if fy <= reach and t_lo <= 0:
             tops.append((-1, _EDGE_QUALITY))
-        if (h - fy) <= reach:
+        if (h - fy) <= reach and b_hi >= h - 1:
             bottoms.append((h - 1, _EDGE_QUALITY))
 
-        found = _best_box(lefts, rights, tops, bottoms)
+        found = _best_box(lefts, rights, tops, bottoms, w, h)
         if found is None:
             break
 
