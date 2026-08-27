@@ -3,11 +3,10 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { SourceType } from "@/lib/types";
-import {
-  createReference,
-  createStandaloneReference,
-  getApiErrorMessage,
-} from "@/lib/api";
+import { PUBLIC_NICHES } from "@/lib/features";
+import { PERSONAL_NICHES } from "@/personal/data";
+import { getApiErrorMessage } from "@/lib/api";
+import { createReference, createStandaloneReference } from "@/personal/learning-api";
 
 const ACCEPT = ".mp4,.mov,.mkv,.webm,.avi,.m4v";
 
@@ -21,14 +20,11 @@ const ACCEPT = ".mp4,.mov,.mkv,.webm,.avi,.m4v";
  */
 type Mode = "standalone" | "aligned";
 
-const NICHES: { value: SourceType; label: string }[] = [
-  { value: "podcast", label: "Podcast" },
-  { value: "gameplay", label: "Gameplay" },
-  { value: "siege", label: "Siege X" },
-];
+// Os nichos deste build (ver src/lib/features.ts).
+const NICHES = [...PUBLIC_NICHES, ...PERSONAL_NICHES];
 
 const FIELD =
-  "w-full rounded-lg bg-gray-800 border border-gray-700 px-4 py-3 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-emerald-500 disabled:opacity-50";
+  "w-full rounded-sm bg-inset border border-line px-4 py-3 text-ink placeholder-ink-muted focus:outline-none focus:border-mint disabled:opacity-50";
 
 export default function ReferenceForm() {
   const router = useRouter();
@@ -85,9 +81,9 @@ export default function ReferenceForm() {
   }
 
   return (
-    <div className="rounded-2xl bg-gray-900 border border-gray-800 p-6">
-      <h2 className="text-base font-semibold text-gray-100">Aprender com clipe viral</h2>
-      <p className="text-sm text-gray-500 mt-1 mb-5">
+    <div className="rounded-md bg-raised border border-line p-6">
+      <h2 className="text-body font-semibold text-ink">Aprender com clipe viral</h2>
+      <p className="text-body text-ink-dim mt-1 mb-5">
         Envie um clipe que já viralizou (de outro criador). O ClipMint entende por que ele
         funcionou e passa a usar isso como referência ao cortar os seus.
       </p>
@@ -98,14 +94,14 @@ export default function ReferenceForm() {
           type="button"
           onClick={() => setMode("standalone")}
           disabled={busy}
-          className={`flex-1 rounded-lg px-4 py-3 text-left border transition-colors ${
+          className={`flex-1 rounded-sm px-4 py-3 text-left border transition-colors ${
             mode === "standalone"
-              ? "bg-emerald-500/10 border-emerald-500 text-emerald-300"
-              : "bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700"
+              ? "bg-mint-soft border-mint text-mint"
+              : "bg-inset border-line text-ink-dim hover:bg-hover"
           }`}
         >
-          <span className="block text-sm font-semibold">Só o clipe</span>
-          <span className="block text-xs opacity-80 mt-0.5">
+          <span className="block text-body font-semibold">Só o clipe</span>
+          <span className="block text-label opacity-80 mt-0.5">
             Salvou do TikTok e não sabe de onde saiu
           </span>
         </button>
@@ -113,14 +109,14 @@ export default function ReferenceForm() {
           type="button"
           onClick={() => setMode("aligned")}
           disabled={busy}
-          className={`flex-1 rounded-lg px-4 py-3 text-left border transition-colors ${
+          className={`flex-1 rounded-sm px-4 py-3 text-left border transition-colors ${
             mode === "aligned"
-              ? "bg-emerald-500/10 border-emerald-500 text-emerald-300"
-              : "bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700"
+              ? "bg-mint-soft border-mint text-mint"
+              : "bg-inset border-line text-ink-dim hover:bg-hover"
           }`}
         >
-          <span className="block text-sm font-semibold">Clipe + vídeo original</span>
-          <span className="block text-xs opacity-80 mt-0.5">
+          <span className="block text-body font-semibold">Clipe + vídeo original</span>
+          <span className="block text-label opacity-80 mt-0.5">
             Análise mais forte: vê o que ficou de fora
           </span>
         </button>
@@ -129,7 +125,7 @@ export default function ReferenceForm() {
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         {mode === "aligned" && (
           <div className="flex flex-col gap-2">
-            <label htmlFor="ref-url" className="text-sm font-medium text-gray-400">
+            <label htmlFor="ref-url" className="text-body font-medium text-ink-dim">
               URL do vídeo original (YouTube)
             </label>
             <input
@@ -145,18 +141,18 @@ export default function ReferenceForm() {
         )}
 
         <div className="flex flex-col gap-2">
-          <label className="text-sm font-medium text-gray-400">Arquivo do clipe viral</label>
+          <label className="text-body font-medium text-ink-dim">Arquivo do clipe viral</label>
           <label
-            className={`flex items-center justify-between gap-3 rounded-lg border border-dashed px-4 py-3 cursor-pointer transition-colors ${
+            className={`flex items-center justify-between gap-3 rounded-sm border border-dashed px-4 py-3 cursor-pointer transition-colors ${
               busy
-                ? "border-gray-800 cursor-wait"
-                : "border-gray-700 hover:border-emerald-500/60 bg-gray-800/40"
+                ? "border-line cursor-wait"
+                : "border-line hover:border-mint/60 bg-inset"
             }`}
           >
-            <span className={`text-sm truncate ${clip ? "text-gray-200" : "text-gray-500"}`}>
+            <span className={`text-body truncate ${clip ? "text-ink" : "text-ink-dim"}`}>
               {clip ? clip.name : "Escolher arquivo de vídeo (mp4, mov, webm...)"}
             </span>
-            <span className="text-xs text-gray-400 flex-shrink-0 rounded-md bg-gray-800 border border-gray-700 px-3 py-1.5">
+            <span className="text-label text-ink-dim flex-shrink-0 rounded-md bg-inset border border-line px-3 py-1.5">
               {clip ? "Trocar" : "Selecionar"}
             </span>
             <input
@@ -170,21 +166,21 @@ export default function ReferenceForm() {
         </div>
 
         <div className="flex flex-col gap-2">
-          <label className="text-sm font-medium text-gray-400">Conta que vai aprender com ele</label>
+          <label className="text-body font-medium text-ink-dim">Conta que vai aprender com ele</label>
           <div className="flex gap-2">
             {NICHES.map((niche) => (
               <button
-                key={niche.value}
+                key={niche.source}
                 type="button"
-                onClick={() => setSourceType(niche.value)}
+                onClick={() => setSourceType(niche.source)}
                 disabled={busy}
-                className={`rounded-lg px-4 py-2 text-sm font-medium border transition-colors ${
-                  sourceType === niche.value
-                    ? "bg-emerald-500 border-emerald-500 text-white"
-                    : "bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700"
+                className={`rounded-sm px-4 py-2 text-body font-medium border transition-colors ${
+                  sourceType === niche.source
+                    ? "bg-mint-strong border-mint text-white"
+                    : "bg-inset border-line text-ink hover:bg-hover"
                 }`}
               >
-                {niche.label}
+                {niche.title}
               </button>
             ))}
           </div>
@@ -193,9 +189,9 @@ export default function ReferenceForm() {
         {mode === "standalone" && (
           <>
             <div className="flex flex-col gap-2">
-              <label htmlFor="ref-notas" className="text-sm font-medium text-gray-400">
+              <label htmlFor="ref-notas" className="text-body font-medium text-ink-dim">
                 O que você já percebeu nesse clipe{" "}
-                <span className="font-normal text-gray-600">
+                <span className="font-normal text-ink-muted">
                   — opcional, mas entra na análise
                 </span>
               </label>
@@ -211,7 +207,7 @@ export default function ReferenceForm() {
             </div>
 
             <details className="group">
-              <summary className="cursor-pointer text-sm text-gray-500 hover:text-gray-300 transition-colors select-none">
+              <summary className="cursor-pointer text-body text-ink-dim hover:text-ink transition-colors select-none">
                 Contexto opcional (título, criador, link do post)
               </summary>
               <div className="flex flex-col gap-3 mt-3">
@@ -245,13 +241,13 @@ export default function ReferenceForm() {
         )}
 
         {error && (
-          <p className="text-sm text-red-400 bg-red-900/20 rounded px-3 py-2">{error}</p>
+          <p className="text-body text-danger bg-danger-soft rounded px-3 py-2">{error}</p>
         )}
 
         <button
           type="submit"
           disabled={busy}
-          className="w-full rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:bg-gray-700 disabled:cursor-not-allowed px-6 py-3 font-semibold text-white transition-colors"
+          className="w-full rounded-sm bg-mint-strong hover:bg-mint disabled:bg-inset disabled:cursor-not-allowed px-6 py-3 font-semibold text-white transition-colors"
         >
           {busy ? "Enviando..." : "Analisar e aprender"}
         </button>

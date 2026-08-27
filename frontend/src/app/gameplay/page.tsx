@@ -1,7 +1,5 @@
-import NichePage from "@/components/NichePage";
-
-export const metadata = { title: "Gameplay — ClipMint" };
+import NicheRedirect from "@/components/NicheRedirect";
 
 export default function GameplayPage() {
-  return <NichePage source="gameplay" />;
+  return <NicheRedirect source="gameplay" />;
 }

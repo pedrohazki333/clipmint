@@ -52,16 +52,19 @@ _BAR_TEXT_DOT = "•"
 _BAR_DOT_MIX = 0.45        # ponto separador: fração da cor do texto (resto é fundo)
 _BAR_HAIRLINE_MIX = 0.18   # fio de luz nas emendas, pela mesma mistura
 
-BAR_DEFAULT_BG_HEX = "#101014"
-# Este cinza é exatamente o que o branco a 60% de opacidade rendia sobre o fundo
-# escuro. Virou o padrão para a cor escolhida valer o que aparece: sem alfa
-# escondido, quem escolhe #FFFFFF recebe branco.
-BAR_DEFAULT_TEXT_HEX = "#9D9D9F"
+# Cores do ClipMint (as mesmas de frontend/src/app/globals.css). São o PADRÃO,
+# não uma trava: quem configura a marca do perfil escreve por cima. Antes daqui
+# o padrão era um cinza neutro que não dizia nada sobre o produto.
+BAR_DEFAULT_BG_HEX = "#121714"   # --color-raised
+BAR_DEFAULT_TEXT_HEX = "#34D399"  # --color-mint
 BAR_DEFAULT_FONT = "condensed"
-# Nome escrito na faixa. Vazio = o layout decide: no streamer entra o nome do
-# canal do vídeo; no 'cover' (podcast) não há faixa nenhuma, porque o que ela
-# escreveria seria o canal alheio, e não a conta que publica o clipe.
-BAR_DEFAULT_NAME = ""
+# Nome escrito na faixa quando ninguém configurou um.
+#
+# Era vazio, e no modo streamer isso caía no nome do canal do VÍDEO DE ORIGEM —
+# o clipe saía assinado com a marca de outra pessoa. (O modo capa já evitava
+# isso omitindo a faixa.) Um espaço reservado visível diz "configure aqui" sem
+# assinar o trabalho de ninguém com o nome errado.
+BAR_DEFAULT_NAME = "@suaconta"
 
 # Famílias oferecidas para o nome na faixa: chave → (rótulo, arquivos em ordem
 # de preferência). Só as que existem na máquina são oferecidas pela API.
@@ -176,14 +179,16 @@ class BarStyle(NamedTuple):
     customized: bool
 
 
-def load_bar_style(source_type: Optional[str] = None) -> BarStyle:
+def load_bar_style(
+    source_type: Optional[str] = None, profile_id: Optional[str] = None
+) -> BarStyle:
     """
     Estilo configurado da faixa.
 
     Lê storage/branding/<nicho>/bar_style.json; sem arquivo (ou inválido),
     padrões. Cada conta guarda o seu estilo.
     """
-    path = preset_path(source_type, BAR_STYLE_FILE)
+    path = preset_path(source_type, BAR_STYLE_FILE, profile_id)
     if path.exists():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -280,6 +285,7 @@ def generate_divider_bar(
     text_color: Optional[str] = None,
     font: Optional[str] = None,
     source_type: Optional[str] = None,
+    profile_id: Optional[str] = None,
 ) -> str:
     """
     Faixa que separa a facecam do gameplay: barra com fios de luz nas duas
@@ -295,7 +301,7 @@ def generate_divider_bar(
     faixa continua legível tanto clara quanto escura.
     """
     if bg_color is None or text_color is None or font is None:
-        stored = load_bar_style(source_type)
+        stored = load_bar_style(source_type, profile_id)
         bg_color = bg_color or stored.bg_color
         text_color = text_color or stored.text_color
         font = font or stored.font
@@ -349,10 +355,16 @@ _FONT_CANDIDATES = [
     "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
 ]
 
-_BANNER_RED = (237, 40, 40, 255)
-_BANNER_TEXT_WHITE = (255, 255, 255, 255)
-BANNER_DEFAULT_BG_HEX = "#ED2828"
-BANNER_DEFAULT_TEXT_HEX = "#FFFFFF"
+# Verde do ClipMint sobre texto quase preto — o par de maior contraste dos
+# tokens, e o que sobrevive à compressão do vídeo. O vermelho anterior não
+# dizia nada sobre o produto e competia com o vermelho de "erro" na interface.
+BANNER_DEFAULT_BG_HEX = "#34D399"  # --color-mint
+BANNER_DEFAULT_TEXT_HEX = "#0B0F0D"  # --color-base
+# Os mesmos valores em RGBA, para o parse_hex_color cair aqui quando a cor
+# configurada for ilegível. Derivados das constantes acima de propósito: dois
+# lugares com o mesmo padrão divergem na primeira troca de cor.
+_BANNER_FALLBACK_BG = (0x34, 0xD3, 0x99, 255)
+_BANNER_FALLBACK_TEXT = (0x0B, 0x0F, 0x0D, 255)
 # A condensed é a que o banner sempre usou (DejaVuSansCondensed-Bold): mantê-la
 # como padrão faz a fonte configurável não mudar nada em quem não escolheu.
 BANNER_DEFAULT_FONT = "condensed"
@@ -391,14 +403,16 @@ class BannerStyle(NamedTuple):
     customized: bool
 
 
-def load_banner_style(source_type: Optional[str] = None) -> BannerStyle:
+def load_banner_style(
+    source_type: Optional[str] = None, profile_id: Optional[str] = None
+) -> BannerStyle:
     """
     Estilo configurado do banner (cores + família da fonte).
 
     Lê storage/branding/<nicho>/banner_colors.json; sem arquivo (ou inválido),
     padrões. Cada conta guarda o seu estilo.
     """
-    path = preset_path(source_type, BANNER_COLORS_FILE)
+    path = preset_path(source_type, BANNER_COLORS_FILE, profile_id)
     if path.exists():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -467,6 +481,7 @@ def generate_banner(
     text_color: Optional[str] = None,
     font_key: Optional[str] = None,
     source_type: Optional[str] = None,
+    profile_id: Optional[str] = None,
 ) -> tuple[int, int]:
     """
     Gera o PNG do retângulo com o título — largura cheia do canvas (1080px),
@@ -479,13 +494,13 @@ def generate_banner(
         (width, height) da imagem gerada — usado para posicionar o overlay.
     """
     if bg_color is None or text_color is None or font_key is None:
-        stored = load_banner_style(source_type)
+        stored = load_banner_style(source_type, profile_id)
         bg_color = bg_color or stored.bg_color
         text_color = text_color or stored.text_color
         font_key = font_key or stored.font
 
-    box_rgba = parse_hex_color(bg_color, _BANNER_RED)
-    text_rgba = parse_hex_color(text_color, _BANNER_TEXT_WHITE)
+    box_rgba = parse_hex_color(bg_color, _BANNER_FALLBACK_BG)
+    text_rgba = parse_hex_color(text_color, _BANNER_FALLBACK_TEXT)
 
     text = _EMOJI_RE.sub("", text).strip().upper()
     if not text:
@@ -722,6 +737,7 @@ def generate_title_banner(
     text_color: Optional[str] = None,
     font_key: Optional[str] = None,
     source_type: Optional[str] = None,
+    profile_id: Optional[str] = None,
 ) -> tuple[int, int]:
     """
     Gera o PNG retangular do título que encosta na faixa do streamer.
@@ -737,14 +753,14 @@ def generate_title_banner(
         (width, height) do PNG gerado.
     """
     if bg_color is None or text_color is None:
-        stored = load_banner_style(source_type)
+        stored = load_banner_style(source_type, profile_id)
         bg_color = bg_color or stored.bg_color
         text_color = text_color or stored.text_color
     if font_key is None:
-        font_key = load_bar_style(source_type).font
+        font_key = load_bar_style(source_type, profile_id).font
 
-    bg_rgba = parse_hex_color(bg_color, _BANNER_RED)
-    text_rgba = parse_hex_color(text_color, _BANNER_TEXT_WHITE)
+    bg_rgba = parse_hex_color(bg_color, _BANNER_FALLBACK_BG)
+    text_rgba = parse_hex_color(text_color, _BANNER_FALLBACK_TEXT)
 
     # O emoji do hook é parte do gancho e fica — desde que haja fonte para
     # desenhá-lo. Sem ela sai o retângulo de caractere ausente, que é pior que

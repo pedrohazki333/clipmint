@@ -1,14 +1,27 @@
 import axios from "axios";
 import type {
+  AccountUsage,
+  AccountUser,
+  Balance,
+  Catalog,
+  Estimate,
+  LedgerEntry,
+  CostConfig,
+  OverviewComparado,
+  PaymentAdmin,
+  PaymentStatus,
+  SerieDia,
+  Subscription,
+  SubscriptionAdmin,
+  Topup,
+  UsuarioNoPeriodo,
   Job,
   JobDetail,
   Clip,
   CreateJobPayload,
-  Reference,
   SourceType,
-  UpdateReferencePayload,
-  LearnedPatterns,
-  VideoEnhanceJob,
+  Profile,
+  ProfilePayload,
 } from "./types";
 
 /** Extrai uma mensagem legível de um erro de API (detail do FastAPI ou fallback). */
@@ -22,20 +35,62 @@ export function getApiErrorMessage(err: unknown, fallback: string): string {
   return fallback;
 }
 
-const api = axios.create({
+/** Exportada para os módulos de @/personal reusarem a mesma instância. */
+export const api = axios.create({
   baseURL: "/api",
   headers: { "Content-Type": "application/json" },
 });
+
+// ─── Perfis ──────────────────────────────────────────────────────────────────
+
+export async function listProfiles(): Promise<Profile[]> {
+  const { data } = await api.get<Profile[]>("/profiles");
+  return data;
+}
+
+export async function getProfile(id: string): Promise<Profile> {
+  const { data } = await api.get<Profile>(`/profiles/${id}`);
+  return data;
+}
+
+export async function createProfile(payload: ProfilePayload): Promise<Profile> {
+  const { data } = await api.post<Profile>("/profiles", payload);
+  return data;
+}
+
+export async function updateProfile(
+  id: string,
+  payload: ProfilePayload,
+): Promise<Profile> {
+  const { data } = await api.put<Profile>(`/profiles/${id}`, payload);
+  return data;
+}
+
+export async function deleteProfile(id: string): Promise<void> {
+  await api.delete(`/profiles/${id}`);
+}
 
 export async function createJob(payload: CreateJobPayload): Promise<Job> {
   const { data } = await api.post<Job>("/jobs", payload);
   return data;
 }
 
-/** Sem `source`, traz as duas contas; com ele, só a do nicho pedido. */
-export async function listJobs(source?: SourceType): Promise<Job[]> {
+/**
+ * Os jobs do usuário.
+ *
+ * `profileId` é o filtro da nova organização; `source` é o filtro por nicho,
+ * que continua existindo porque é como os jobs anteriores aos perfis seguem
+ * alcançáveis — eles não têm perfil.
+ */
+export async function listJobs(params?: {
+  profileId?: string;
+  source?: SourceType;
+}): Promise<Job[]> {
   const { data } = await api.get<Job[]>("/jobs", {
-    params: source ? { source } : undefined,
+    params: {
+      ...(params?.profileId ? { profile_id: params.profileId } : {}),
+      ...(params?.source ? { source: params.source } : {}),
+    },
   });
   return data;
 }
@@ -67,63 +122,72 @@ export function getDownloadUrl(clipId: string): string {
   return `/api/clips/${clipId}/download`;
 }
 
-export async function uploadWatermark(source: SourceType, file: File): Promise<void> {
+/**
+ * Presets de marca — duas escalas.
+ *
+ * `profileId` presente: os presets daquele PERFIL, que são do usuário. Ausente:
+ * os do NICHO, compartilhados pela instalação e restritos a quem administra.
+ *
+ * A leitura cai no nicho quando o perfil não tem o arquivo; a escrita nunca cai
+ * (senão salvar a marca de um perfil sobrescreveria a de todo mundo).
+ */
+type Escopo = { source: SourceType; profileId?: string };
+
+function scopeParams({ source, profileId }: Escopo) {
+  return profileId ? { source, profile_id: profileId } : { source };
+}
+
+export async function uploadWatermark(escopo: Escopo, file: File): Promise<void> {
   const form = new FormData();
   form.append("file", file);
   await api.post("/settings/watermark", form, {
-    params: { source },
+    params: scopeParams(escopo),
     headers: { "Content-Type": "multipart/form-data" },
   });
 }
 
-export async function deleteWatermark(source: SourceType): Promise<void> {
-  await api.delete("/settings/watermark", { params: { source } });
+export async function deleteWatermark(escopo: Escopo): Promise<void> {
+  await api.delete("/settings/watermark", { params: scopeParams(escopo) });
 }
 
-export async function hasWatermark(source: SourceType): Promise<boolean> {
+export async function hasWatermark(escopo: Escopo): Promise<boolean> {
   try {
-    await api.get("/settings/watermark", { params: { source }, responseType: "blob" });
+    await api.get("/settings/watermark", {
+      params: scopeParams(escopo),
+      responseType: "blob",
+    });
     return true;
   } catch {
+    // 404 = nenhuma marca configurada. É resposta, não falha.
     return false;
   }
 }
 
-/**
- * URL da imagem para uso direto em `<img src>`.
- *
- * `version` entra como parâmetro daqui, e não concatenado no ponto de chamada:
- * a URL já carrega `?source=`, então quem colava `?v=` no fim gerava
- * `?source=gameplay?v=123` — o `source` chegava no backend com o sufixo colado,
- * a validação recusava com 422 e o preview ficava quebrado.
- */
-export function getWatermarkUrl(source: SourceType, version?: number): string {
-  const bust = version ? `&v=${version}` : "";
-  return `/api/settings/watermark?source=${source}${bust}`;
+/** URL da imagem para o <img>. `version` fura o cache depois de um upload. */
+export function getWatermarkUrl(escopo: Escopo, version?: number): string {
+  const q = new URLSearchParams({ source: escopo.source });
+  if (escopo.profileId) q.set("profile_id", escopo.profileId);
+  if (version) q.set("v", String(version));
+  return `/api/settings/watermark?${q}`;
 }
 
-// ─── Marca d'água do clipe (arte queimada no vídeo, modo streamer) ────────────
-
-export async function uploadClipWatermark(
-  source: SourceType,
-  file: File
-): Promise<void> {
+export async function uploadClipWatermark(escopo: Escopo, file: File): Promise<void> {
   const form = new FormData();
   form.append("file", file);
   await api.post("/settings/clip-watermark", form, {
-    params: { source },
+    params: scopeParams(escopo),
     headers: { "Content-Type": "multipart/form-data" },
   });
 }
 
-export async function deleteClipWatermark(source: SourceType): Promise<void> {
-  await api.delete("/settings/clip-watermark", { params: { source } });
+export async function deleteClipWatermark(escopo: Escopo): Promise<void> {
+  await api.delete("/settings/clip-watermark", { params: scopeParams(escopo) });
 }
 
-export async function hasClipWatermark(source: SourceType): Promise<boolean> {
+export async function hasClipWatermark(escopo: Escopo): Promise<boolean> {
   try {
     await api.get("/settings/clip-watermark", {
-      params: { source },
+      params: scopeParams(escopo),
       responseType: "blob",
     });
     return true;
@@ -132,251 +196,162 @@ export async function hasClipWatermark(source: SourceType): Promise<boolean> {
   }
 }
 
-/** Ver a nota de getWatermarkUrl sobre o `version`. */
-export function getClipWatermarkUrl(source: SourceType, version?: number): string {
-  const bust = version ? `&v=${version}` : "";
-  return `/api/settings/clip-watermark?source=${source}${bust}`;
+export function getClipWatermarkUrl(escopo: Escopo, version?: number): string {
+  const q = new URLSearchParams({ source: escopo.source });
+  if (escopo.profileId) q.set("profile_id", escopo.profileId);
+  if (version) q.set("v", String(version));
+  return `/api/settings/clip-watermark?${q}`;
 }
 
 export interface BannerColors {
   bg_color: string;
   text_color: string;
-  /** Família da fonte do banner (chave da lista de available_fonts). */
   font: string;
   customized: boolean;
-  /** Famílias instaladas na máquina do backend — a lista vem de lá. */
   available_fonts: { key: string; label: string }[];
 }
 
-export async function getBannerColors(source: SourceType): Promise<BannerColors> {
+export async function getBannerColors(escopo: Escopo): Promise<BannerColors> {
   const { data } = await api.get<BannerColors>("/settings/banner-colors", {
-    params: { source },
+    params: scopeParams(escopo),
   });
   return data;
 }
 
 export async function saveBannerColors(
-  source: SourceType,
+  escopo: Escopo,
   bg_color: string,
   text_color: string,
-  font: string
+  font: string,
 ): Promise<BannerColors> {
   const { data } = await api.put<BannerColors>(
     "/settings/banner-colors",
     { bg_color, text_color, font },
-    { params: { source } }
+    { params: scopeParams(escopo) },
   );
   return data;
 }
 
-export async function resetBannerColors(source: SourceType): Promise<void> {
-  await api.delete("/settings/banner-colors", { params: { source } });
+export async function resetBannerColors(escopo: Escopo): Promise<void> {
+  await api.delete("/settings/banner-colors", { params: scopeParams(escopo) });
 }
 
-/** Faixa com o nome repetido: divide os painéis no streamer, encosta no banner
- *  no layout do podcast. */
+/** O estilo da faixa que separa facecam de gameplay no modo streamer. */
 export interface BarStyle {
   bg_color: string;
   text_color: string;
   font: string;
-  /** Nome escrito na faixa. Vazio: o canal do vídeo no streamer, nada no podcast. */
+  /** Nome escrito na faixa. Vazio: o padrão (@suaconta) no streamer, nada no podcast. */
   name: string;
   customized: boolean;
   /** Famílias instaladas na máquina do backend — a lista vem de lá. */
   available_fonts: { key: string; label: string }[];
 }
 
-export async function getBarStyle(source: SourceType): Promise<BarStyle> {
+export async function getBarStyle(escopo: Escopo): Promise<BarStyle> {
   const { data } = await api.get<BarStyle>("/settings/bar-style", {
-    params: { source },
+    params: scopeParams(escopo),
   });
   return data;
 }
 
 export async function saveBarStyle(
-  source: SourceType,
+  escopo: Escopo,
   bg_color: string,
   text_color: string,
   font: string,
-  name: string
+  name: string,
 ): Promise<BarStyle> {
   const { data } = await api.put<BarStyle>(
     "/settings/bar-style",
     { bg_color, text_color, font, name },
-    { params: { source } }
+    { params: scopeParams(escopo) },
   );
   return data;
 }
 
-export async function resetBarStyle(source: SourceType): Promise<void> {
-  await api.delete("/settings/bar-style", { params: { source } });
-}
-
-// ─── Cronograma de postagem ──────────────────────────────────────────────────
-
-export interface ScheduleSlot {
-  time: string;
-  source_type: SourceType;
-  axis: string;
-}
-
-export interface SchedulePick {
-  clip_id: string;
-  job_id: string;
-  axis: string;
-  axis_score: number | null;
-  virality_score: number;
-  source_type: SourceType;
-  video_title: string | null;
-  channel_name: string | null;
-  start_time: number;
-  end_time: number;
-  duration: number;
-  hook: string | null;
-  suggested_title: string | null;
-  verdict: string | null;
-  file_path: string | null;
-}
-
-export async function listScheduleSlots(): Promise<ScheduleSlot[]> {
-  const { data } = await api.get<ScheduleSlot[]>("/schedule/slots");
-  return data;
-}
-
-export async function pickForSlot(
-  axis: string,
-  source: SourceType,
-  exclude: string[] = []
-): Promise<SchedulePick[]> {
-  const { data } = await api.get<SchedulePick[]>("/schedule/pick", {
-    params: { axis, source, limit: 1, exclude: exclude.join(",") || undefined },
-  });
-  return data;
-}
-
-export async function validateClip(
-  clipId: string,
-  payload: { performance: "viral" | "muito_bom" | "bom"; aprendizado: string; views?: number }
-): Promise<{ clip_id: string; example_path: string }> {
-  const { data } = await api.post(`/clips/${clipId}/validate`, payload);
-  return data;
+export async function resetBarStyle(escopo: Escopo): Promise<void> {
+  await api.delete("/settings/bar-style", { params: scopeParams(escopo) });
 }
 
 // ─── Referências (aprender com clipe viral de outro criador) ──────────────────
 
-export async function createReference(
-  sourceUrl: string,
-  clip: File,
-  sourceType: SourceType = "podcast"
-): Promise<Reference> {
-  const form = new FormData();
-  form.append("source_url", sourceUrl);
-  form.append("clip", clip);
-  form.append("source_type", sourceType);
-  const { data } = await api.post<Reference>("/references", form, {
-    headers: { "Content-Type": "multipart/form-data" },
+// ─── Conta (build público) ────────────────────────────────────────────────────
+
+/** Quem está logado, ou null. Não é erro não haver ninguém. */
+export async function getMe(): Promise<AccountUser | null> {
+  const { data } = await api.get<AccountUser | null>("/auth/me");
+  return data;
+}
+
+/** Quanto da janela de cota já foi usado. Exige sessão. */
+export async function getUsage(): Promise<AccountUsage> {
+  const { data } = await api.get<AccountUsage>("/auth/me/usage");
+  return data;
+}
+
+/** Derruba TODAS as sessões desta conta — inclusive as de outros aparelhos. */
+export async function logoutAll(): Promise<number> {
+  const { data } = await api.post<{ sessoes_encerradas: number }>(
+    "/auth/logout-all",
+  );
+  return data.sessoes_encerradas;
+}
+
+// ─── Cobrança ────────────────────────────────────────────────────────────────
+
+export async function getBalance(): Promise<Balance> {
+  const { data } = await api.get<Balance>("/billing/balance");
+  return data;
+}
+
+export async function getCatalog(): Promise<Catalog> {
+  const { data } = await api.get<Catalog>("/billing/catalog");
+  return data;
+}
+
+export async function getLedger(limit = 50, offset = 0): Promise<LedgerEntry[]> {
+  const { data } = await api.get<LedgerEntry[]>("/billing/ledger", {
+    params: { limit, offset },
   });
   return data;
 }
 
 /**
- * Aprende com um clipe viral sem ter o vídeo de origem (o caso do TikTok).
+ * Quanto este vídeo vai custar, antes de gastar qualquer coisa.
  *
- * Só o arquivo é obrigatório: o resto é contexto que entra na análise quando o
- * usuário souber. Exigir qualquer outra coisa anularia o motivo deste caminho
- * existir.
+ * Levanta os MESMOS 422 da criação do job (live, vídeo acima do teto): é assim
+ * que a tela descobre cedo o que o servidor recusaria depois.
  */
-export async function createStandaloneReference(payload: {
-  clip: File;
-  title?: string;
-  channel?: string;
-  postUrl?: string;
-  sourceType?: SourceType;
-  notas?: string;
-}): Promise<Reference> {
-  const form = new FormData();
-  form.append("clip", payload.clip);
-  form.append("title", payload.title ?? "");
-  form.append("channel", payload.channel ?? "");
-  form.append("post_url", payload.postUrl ?? "");
-  form.append("source_type", payload.sourceType ?? "podcast");
-  form.append("notas", payload.notas ?? "");
-  const { data } = await api.post<Reference>("/references/standalone", form, {
-    headers: { "Content-Type": "multipart/form-data" },
-  });
+export async function estimateJob(youtube_url: string): Promise<Estimate> {
+  const { data } = await api.post<Estimate>("/billing/estimate", { youtube_url });
   return data;
 }
 
-export async function listReferences(): Promise<Reference[]> {
-  const { data } = await api.get<Reference[]>("/references");
+export async function createTopup(creditos: number): Promise<Topup> {
+  const { data } = await api.post<Topup>("/billing/topup", { creditos });
   return data;
 }
 
-export async function getReference(id: string): Promise<Reference> {
-  const { data } = await api.get<Reference>(`/references/${id}`);
+/** Consulta o pagamento — e sincroniza com o gateway, então serve de polling. */
+export async function getPaymentStatus(id: string): Promise<PaymentStatus> {
+  const { data } = await api.get<PaymentStatus>(`/billing/payments/${id}`);
   return data;
 }
 
-export async function updateReference(
-  id: string,
-  payload: UpdateReferencePayload
-): Promise<Reference> {
-  const { data } = await api.patch<Reference>(`/references/${id}`, payload);
+/** Cria a assinatura e devolve o link do gateway onde o cartão é autorizado. */
+export async function subscribe(plan_code: string): Promise<Subscription> {
+  const { data } = await api.post<Subscription>("/billing/subscribe", { plan_code });
   return data;
 }
 
-export async function confirmReference(
-  id: string
-): Promise<{ reference_id: string; example_path: string }> {
-  const { data } = await api.post(`/references/${id}/confirm`);
+/** A assinatura viva, ou null. Sincroniza com o gateway quando está pendente. */
+export async function getSubscription(): Promise<Subscription | null> {
+  const { data } = await api.get<Subscription | null>("/billing/subscription");
   return data;
 }
 
-export async function deleteReference(id: string): Promise<void> {
-  await api.delete(`/references/${id}`);
-}
-
-// ─── Padrões aprendidos (Fase 3) ──────────────────────────────────────────────
-
-export async function getPatterns(): Promise<LearnedPatterns> {
-  const { data } = await api.get<LearnedPatterns>("/patterns");
+export async function cancelSubscription(): Promise<Subscription> {
+  const { data } = await api.post<Subscription>("/billing/subscription/cancel");
   return data;
-}
-
-export async function minePatterns(): Promise<LearnedPatterns> {
-  const { data } = await api.post<LearnedPatterns>("/patterns/mine");
-  return data;
-}
-
-export async function deletePatterns(): Promise<void> {
-  await api.delete("/patterns");
-}
-
-// ─── Melhorar vídeo ──────────────────────────────────────────────────────────
-
-export async function createVideoEnhance(video: File): Promise<VideoEnhanceJob> {
-  const form = new FormData();
-  form.append("video", video);
-  const { data } = await api.post<VideoEnhanceJob>("/video-enhance", form, {
-    headers: { "Content-Type": "multipart/form-data" },
-  });
-  return data;
-}
-
-export async function listVideoEnhance(): Promise<VideoEnhanceJob[]> {
-  const { data } = await api.get<VideoEnhanceJob[]>("/video-enhance");
-  return data;
-}
-
-export async function deleteVideoEnhance(id: string): Promise<void> {
-  await api.delete(`/video-enhance/${id}`);
-}
-
-/** Inline, para o <video>. O /download manda attachment e o player não tocaria. */
-export function getVideoEnhanceStreamUrl(id: string): string {
-  return `/api/video-enhance/${id}/video`;
-}
-
-export function getVideoEnhanceDownloadUrl(id: string): string {
-  return `/api/video-enhance/${id}/download`;
 }

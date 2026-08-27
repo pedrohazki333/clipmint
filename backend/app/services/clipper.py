@@ -75,6 +75,57 @@ COVER_BAR_H = int(CANVAS_H * 0.029) // 2 * 2
 TRACK_CMD_INTERVAL = 1 / 30
 
 
+async def _encode(
+    job_id: str,
+    clip_id: str,
+    inputs: list[str],
+    chain: str,
+    duration: float,
+    final_path: str,
+) -> tuple[str, int]:
+    """
+    Codifica o clipe final. Um lugar só, para os modos de layout não divergirem
+    em qualidade sem ninguém perceber.
+
+    Os parâmetros são os que já estavam no `cut_and_crop` — esta função foi
+    extraída sem alterar nenhum deles (ver tests/test_render_filtergraph.py,
+    escrito antes da extração justamente para provar isso).
+    """
+    await run_ffmpeg(
+        *inputs,
+        "-t", str(duration),
+        "-filter_complex", chain,
+        "-map", "[outv]",
+        "-map", "0:a?",
+        "-c:v", "libx264",
+        "-preset", "slow",
+        "-crf", "18",
+        "-maxrate", "12000k",
+        "-bufsize", "24000k",
+        "-profile:v", "high",
+        "-pix_fmt", "yuv420p",
+        # Sem estas tags o arquivo não declara em que espaço de cor foi
+        # codificado, e cada player/plataforma chuta — é o que faz o mesmo
+        # vídeo sair lavado num lugar e saturado em outro. Live do YouTube
+        # em SDR é bt709.
+        "-colorspace", "bt709",
+        "-color_primaries", "bt709",
+        "-color_trc", "bt709",
+        # Índice do MP4 no começo do arquivo. Não muda a imagem, mas é o que
+        # deixa o vídeo tocar antes de baixar inteiro e o que alguns uploaders
+        # web esperam para processar sem reler o arquivo todo.
+        "-movflags", "+faststart",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        final_path,
+        description=f"Render clip {clip_id}",
+    )
+
+    file_size = Path(final_path).stat().st_size
+    await _log_clip_quality(job_id, clip_id, final_path, file_size)
+    return final_path, file_size
+
+
 async def cut_and_crop(
     job_id: str,
     clip_id: str,
@@ -85,6 +136,9 @@ async def cut_and_crop(
     subtitle_mode: str,
     banner_text: str = "",
     source_type: str | None = None,
+    # Perfil que originou o clipe. Decide de qual pasta vêm os presets de
+    # marca; None = os do nicho, que é o comportamento de sempre.
+    profile_id: str | None = None,
 ) -> tuple[str, int]:
     """
     Corta o segmento e monta o clip final: capa + banner + vídeo com face
@@ -114,7 +168,7 @@ async def cut_and_crop(
 
     # Detecta marcas de terceiros primeiro (a capa precisa das regiões);
     # face tracking + capa rodam em paralelo na sequência
-    watermark = user_watermark_path(source_type)
+    watermark = user_watermark_path(source_type, profile_id)
     brand = await asyncio.to_thread(
         detect_brand_regions, video_path, start_time, end_time
     )
@@ -225,7 +279,8 @@ async def cut_and_crop(
     if banner_text.strip():
         banner_path = str(clip_dir / f"{clip_id}_banner.png")
         _, banner_h = await asyncio.to_thread(
-            generate_banner, banner_text, banner_path, None, None, None, source_type
+            generate_banner, banner_text, banner_path, None, None, None,
+            source_type, profile_id,
         )
         banner_y = BANNER_CENTER_Y - banner_h // 2
         bar_bottom = banner_y + banner_h
@@ -241,13 +296,13 @@ async def cut_and_crop(
     # Faixa da conta, colada na borda de baixo do banner. Só sai quando o nicho
     # tem um nome configurado: sem isso a faixa escreveria o nome do canal do
     # vídeo de origem — o dono do podcast, não a conta que publica o clipe.
-    bar_name = load_bar_style(source_type).name
+    bar_name = load_bar_style(source_type, profile_id).name
     if bar_name:
         bar_path = str(clip_dir / f"{clip_id}_bar.png")
         await asyncio.to_thread(
             generate_divider_bar,
             CANVAS_W, COVER_BAR_H, bar_path, None,
-            bar_name, None, None, None, source_type,
+            bar_name, None, None, None, source_type, profile_id,
         )
         bar_idx = n_inputs
         inputs += ["-i", bar_path]
@@ -280,40 +335,210 @@ async def cut_and_crop(
 
     # Input seeking (-ss antes de -i) é frame-accurate com re-encode e zera o
     # timestamp do filtergraph — os keyframes do tracking casam 1:1 com o sendcmd.
-    await run_ffmpeg(
-        *inputs,
-        "-t", str(duration),
-        "-filter_complex", chain,
-        "-map", "[outv]",
-        "-map", "0:a?",
-        "-c:v", "libx264",
-        "-preset", "slow",
-        "-crf", "18",
-        "-maxrate", "12000k",
-        "-bufsize", "24000k",
-        "-profile:v", "high",
-        "-pix_fmt", "yuv420p",
-        # Sem estas tags o arquivo não declara em que espaço de cor foi
-        # codificado, e cada player/plataforma chuta — é o que faz o mesmo
-        # vídeo sair lavado num lugar e saturado em outro. Live do YouTube
-        # em SDR é bt709.
-        "-colorspace", "bt709",
-        "-color_primaries", "bt709",
-        "-color_trc", "bt709",
-        # Índice do MP4 no começo do arquivo. Não muda a imagem, mas é o que
-        # deixa o vídeo tocar antes de baixar inteiro e o que alguns uploaders
-        # web esperam para processar sem reler o arquivo todo.
-        "-movflags", "+faststart",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        final_path,
-        description=f"Render clip {clip_id}",
+    return await _encode(
+        job_id, clip_id, inputs, chain, duration, final_path
     )
 
-    file_size = Path(final_path).stat().st_size
-    await _log_clip_quality(job_id, clip_id, final_path, file_size)
 
-    return final_path, file_size
+async def _brand_layers(
+    video_path: str,
+    start_time: float,
+    end_time: float,
+    source_type: str | None,
+    profile_id: str | None,
+) -> tuple[list[str], list[str], str, int]:
+    """
+    Limpeza de marcas de terceiros, aplicada nas coordenadas da FONTE.
+
+    Borra QR e logo de canal com delogo e, havendo QR, cobre cada um com a logo
+    do usuário. Devolve (inputs, partes do filtro, rótulo de saída, nº de
+    inputs) para quem chama continuar a cadeia.
+
+    Roda antes de qualquer recorte, de propósito: as regiões foram medidas no
+    frame original, e cortar antes faria a área borrada não corresponder ao que
+    está na tela.
+    """
+    watermark = user_watermark_path(source_type, profile_id)
+    brand = await asyncio.to_thread(
+        detect_brand_regions, video_path, start_time, end_time
+    )
+    qr_regions = brand["qr"]
+    all_regions = brand["qr"] + brand["static"]
+
+    inputs = ["-ss", str(start_time), "-i", video_path]
+    n_inputs = 1
+    parts: list[str] = []
+    src_label = "0:v"
+
+    if not all_regions:
+        return inputs, parts, src_label, n_inputs
+
+    src_width, src_height = await get_video_dimensions(video_path)
+    delogos = ",".join(
+        _delogo_filter(x, y, w, h, src_width, src_height)
+        for (x, y, w, h) in all_regions
+    )
+    parts.append(f"[{src_label}]{delogos}[clean]")
+    src_label = "clean"
+
+    if watermark and qr_regions:
+        from PIL import Image
+
+        logo_w, logo_h = Image.open(watermark).size
+        wm_idx = n_inputs
+        inputs += ["-i", watermark]
+        n_inputs += 1
+
+        wm_labels = [f"wm{i}" for i in range(len(qr_regions))]
+        if len(qr_regions) > 1:
+            parts.append(
+                f"[{wm_idx}:v]split={len(qr_regions)}"
+                + "".join(f"[{l}]" for l in wm_labels)
+            )
+        else:
+            parts.append(f"[{wm_idx}:v]null[{wm_labels[0]}]")
+
+        for i, (x, y, w, h) in enumerate(qr_regions):
+            scale = min(w * 0.95 / logo_w, h * 0.95 / logo_h)
+            lw = max(2, int(logo_w * scale) // 2 * 2)
+            lh = max(2, int(logo_h * scale) // 2 * 2)
+            ox = x + (w - lw) // 2
+            oy = y + (h - lh) // 2
+            parts.append(f"[{wm_labels[i]}]scale={lw}:{lh}[ws{i}]")
+            parts.append(f"[{src_label}][ws{i}]overlay={ox}:{oy}[qr{i}]")
+            src_label = f"qr{i}"
+
+    return inputs, parts, src_label, n_inputs
+
+
+def _subtitle_tail(
+    parts: list[str],
+    last_label: str,
+    clip_dir: Path,
+    clip_id: str,
+    words: list[dict],
+    start_time: float,
+    end_time: float,
+    subtitle_mode: str,
+) -> None:
+    """Fecha a cadeia com a legenda queimada (ou só o setsar, sem ela)."""
+    if subtitle_mode != "none":
+        ass_path = str(clip_dir / f"{clip_id}.ass")
+        generate_ass_subtitles(
+            words=words,
+            start_time=start_time,
+            end_time=end_time,
+            subtitle_mode=subtitle_mode,
+            output_path=ass_path,
+        )
+        parts.append(
+            f"[{last_label}]ass={_escape_filter_path(ass_path)},setsar=1[outv]"
+        )
+    else:
+        parts.append(f"[{last_label}]setsar=1[outv]")
+
+
+async def cut_vertical(
+    job_id: str,
+    clip_id: str,
+    video_path: str,
+    start_time: float,
+    end_time: float,
+    words: list[dict],
+    subtitle_mode: str,
+    source_type: str | None = None,
+    profile_id: str | None = None,
+    **_ignorados,
+) -> tuple[str, int]:
+    """
+    Crop vertical seco: 9:16 cheio, sem capa, sem banner, sem faixa.
+
+    O enquadramento é CENTRALIZADO, não segue o rosto. É o que "seco" quer
+    dizer: o recorte é previsível e igual em todo clipe, e o render não paga o
+    MediaPipe. Quem quer o rosto acompanhado usa o modo Capa + Banner.
+
+    A limpeza de marcas de terceiros e a marca d'água continuam valendo — são a
+    mesma função dos outros modos.
+    """
+    clip_dir = settings.clips_dir / job_id
+    clip_dir.mkdir(parents=True, exist_ok=True)
+    duration = end_time - start_time
+    logger.info(
+        f"[{job_id}] Crop vertical {clip_id}: "
+        f"[{start_time:.1f}s–{end_time:.1f}s] ({duration:.1f}s)"
+    )
+
+    inputs, parts, src_label, _ = await _brand_layers(
+        video_path, start_time, end_time, source_type, profile_id
+    )
+
+    src_width, src_height = await get_video_dimensions(video_path)
+    crop_w, crop_h = _crop_dimensions(src_width, src_height, CANVAS_W / CANVAS_H)
+    x0 = (src_width - crop_w) // 2
+    y0 = (src_height - crop_h) // 2
+    logger.info(
+        f"[{job_id}] Fonte {src_width}x{src_height} → recorte central "
+        f"{crop_w}x{crop_h} em ({x0},{y0})"
+    )
+
+    parts.append(
+        f"[{src_label}]crop={crop_w}:{crop_h}:{x0}:{y0},"
+        f"scale={CANVAS_W}:{CANVAS_H}:flags=lanczos[base]"
+    )
+    _subtitle_tail(
+        parts, "base", clip_dir, clip_id, words, start_time, end_time, subtitle_mode
+    )
+
+    final_path = str(clip_dir / f"{clip_id}.mp4")
+    return await _encode(job_id, clip_id, inputs, ";".join(parts), duration, final_path)
+
+
+async def cut_original(
+    job_id: str,
+    clip_id: str,
+    video_path: str,
+    start_time: float,
+    end_time: float,
+    words: list[dict],
+    subtitle_mode: str,
+    source_type: str | None = None,
+    profile_id: str | None = None,
+    **_ignorados,
+) -> tuple[str, int]:
+    """
+    Layout original: só o corte, no enquadramento e na resolução da fonte.
+
+    Nada de recorte, nada de canvas vertical — um vídeo 16:9 sai 16:9, um 4K sai
+    4K. É o modo para quem vai levar o corte para outro editor, ou publicar onde
+    o vertical não é o formato.
+
+    A legenda e a limpeza de marcas continuam valendo: elas não mexem no
+    enquadramento, que é o que este modo preserva.
+    """
+    clip_dir = settings.clips_dir / job_id
+    clip_dir.mkdir(parents=True, exist_ok=True)
+    duration = end_time - start_time
+
+    src_width, src_height = await get_video_dimensions(video_path)
+    logger.info(
+        f"[{job_id}] Layout original {clip_id}: "
+        f"[{start_time:.1f}s–{end_time:.1f}s] ({duration:.1f}s) "
+        f"em {src_width}x{src_height}"
+    )
+
+    inputs, parts, src_label, _ = await _brand_layers(
+        video_path, start_time, end_time, source_type, profile_id
+    )
+
+    # `null` só dá um rótulo à saída: sem nenhum filtro de vídeo, o
+    # filter_complex não teria como nomear a cadeia para o -map.
+    parts.append(f"[{src_label}]null[base]")
+    _subtitle_tail(
+        parts, "base", clip_dir, clip_id, words, start_time, end_time, subtitle_mode
+    )
+
+    final_path = str(clip_dir / f"{clip_id}.mp4")
+    return await _encode(job_id, clip_id, inputs, ";".join(parts), duration, final_path)
 
 
 async def cut_and_stack(
@@ -325,20 +550,22 @@ async def cut_and_stack(
     words: list[dict],
     subtitle_mode: str,
     facecam: FacecamRect | list[CamPhase],
-    streamer_name: str = "",
     source_type: str | None = None,
+    # Perfil que originou o clipe. Decide de qual pasta vêm os presets de
+    # marca; None = os do nicho, que é o comportamento de sempre.
+    profile_id: str | None = None,
     banner_text: str = "",
 ) -> tuple[str, int]:
     """
     Monta o clip no layout de live de streamer: facecam em cima, faixa com a
-    logo do usuário, gameplay embaixo — os dois painéis recortados do MESMO
+    a marca do usuário, gameplay embaixo — os dois painéis recortados do MESMO
     vídeo fonte, numa única passagem de FFmpeg.
 
       ┌──────────────┐
       │   FACECAM    │  crop da caixa da cam, preenchendo o painel
       │ ┌──────────┐ │
       │ │  TÍTULO  │ │  encostado na faixa, sai aos 4s encolhendo dentro dela
-      ├── faixa ─────┤  barra escura com o nome do streamer repetido
+      ├── faixa ─────┤  barra escura com o nome configurado, repetido
       │   GAMEPLAY   │  fatia vertical central, desviando da cam
       └──────────────┘
 
@@ -352,7 +579,6 @@ async def cut_and_stack(
     Args:
         facecam: caixa da cam em frações da fonte (detectada ou manual), ou a
             lista de fases devolvida por facecam.detect_facecam_phases.
-        streamer_name: nome repetido na faixa divisória (vazio = logo do usuário).
         banner_text: título fixo nos primeiros segundos, encostado acima da
             faixa (vazio = sem banner).
 
@@ -396,21 +622,21 @@ async def cut_and_stack(
             f"{bw}x{bh}+{bx}+{by} ({phase.rect.method}, {phase.rect.confidence:.0%})"
         )
 
-    # Faixa divisória com o nome repetido. O nome configurado no nicho ganha do
-    # canal do vídeo: quem quer a própria conta na faixa (e não a do streamer
-    # que gravou) escreve o @ nos presets.
+    # Faixa divisória com o nome repetido. Só o nome configurado entra aqui.
+    # Já caiu no canal do vídeo de origem quando ninguém tinha configurado nada,
+    # e o clipe saía assinado pelo streamer que gravou — a conta errada.
     bar_path = str(clip_dir / f"{clip_id}_bar.png")
-    bar_name = load_bar_style(source_type).name or streamer_name
+    bar_name = load_bar_style(source_type, profile_id).name
     await asyncio.to_thread(
         generate_divider_bar,
-        geo.canvas_w, geo.bar_h, bar_path, user_watermark_path(source_type),
-        bar_name, None, None, None, source_type,
+        geo.canvas_w, geo.bar_h, bar_path, user_watermark_path(source_type, profile_id),
+        bar_name, None, None, None, source_type, profile_id,
     )
 
     # Banner de título: PNG estático + os quadros da saída. Só faz sentido se
     # couber no clip — um banner que segura 4s num corte de 3s nunca sairia.
     banner = await _prepare_title_banner(
-        clip_dir, clip_id, banner_text, geo, duration, source_type
+        clip_dir, clip_id, banner_text, geo, duration, source_type, profile_id
     )
     if banner:
         logger.info(
@@ -533,7 +759,7 @@ async def cut_and_stack(
 
     # A marca da conta entra depois da faixa e ANTES da legenda: se as duas se
     # encontrarem, quem tem que continuar legível é a legenda.
-    watermark_art = clip_watermark_path(source_type)
+    watermark_art = clip_watermark_path(source_type, profile_id)
     if watermark_art:
         extra_inputs += ["-i", watermark_art]
         parts.extend(
@@ -626,6 +852,7 @@ async def _prepare_title_banner(
     geo,
     duration: float,
     source_type: str | None,
+    profile_id: str | None = None,
 ) -> Optional[TitleBanner]:
     """
     Gera o banner de título e os quadros da saída, ou None se ele não couber.

@@ -1,13 +1,28 @@
 import json
 import re
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional, List, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.features import SourceTypeField
+from app.layouts import LayoutField
 from app.utils.timecodes import TimecodeError, parse_ranges
 
+# Exige o identificador do vídeo, não só o formato do endereço. Sem isso,
+# `https://youtu.be/` passava na validação E no extract_info do yt-dlp — que o
+# resolve para uma URL sem id nenhum — e virava um job que baixava nada e
+# falhava com uma mensagem que não explicava coisa alguma. Verificado em
+# 25/08/2026 contra o yt-dlp de verdade.
+#
+# O tamanho do id NÃO é validado de propósito: hoje são 11 caracteres, mas quem
+# tem autoridade para dizer se um id existe é o YouTube, não um regex nosso. O
+# que se recusa aqui é o endereço vazio, que nunca vai a lugar nenhum.
+#
+# ESPELHO de frontend/src/lib/youtube.ts — ver tests/test_youtube_url.py, que
+# compara os dois caractere a caractere.
 _YOUTUBE_URL_RE = re.compile(
-    r"^https?://(www\.|m\.)?(youtube\.com/(watch\?|shorts/|live/)|youtu\.be/)"
+    r"^https?://(www\.|m\.)?(youtube\.com/(watch\?(\S*&)?v=[\w-]+|shorts/[\w-]+|live/[\w-]+)|youtu\.be/[\w-]+)"
 )
 
 
@@ -29,12 +44,20 @@ class FacecamRectPayload(BaseModel):
 
 
 class JobCreate(BaseModel):
+    # De qual perfil veio este job. Opcional de propósito: a API continua
+    # aceitando exatamente o payload de antes, sem perfil nenhum — o pipeline
+    # não lê este campo, quem ele lê é `source_type`.
+    profile_id: Optional[str] = None
     youtube_url: str
     subtitle_mode: Literal["word_highlight", "traditional", "none"] = "word_highlight"
-    layout_mode: Literal["cover", "streamer"] = "cover"
+    # Sem default fixo: "cover" só serve a podcast, e cravá-lo aqui fazia um
+    # pedido de gameplay sem layout ser recusado. Omitido, o layout é derivado
+    # do perfil ou da rubrica (ver routers/jobs.py).
+    layout_mode: Optional[LayoutField] = None
     # Muda a rubrica da análise e define a conta no cronograma de postagem.
     # Omitido = inferido do layout_mode (streamer→gameplay, cover→podcast).
-    source_type: Optional[Literal["podcast", "gameplay", "siege"]] = None
+    # Quais nichos são aceitos depende do build (ver app/features.py).
+    source_type: Optional[SourceTypeField] = None
     # "compilation" pede um compilado; sem material que se sustente como
     # compilado, o pipeline entrega clipes individuais do jeito de sempre.
     clip_mode: Literal["individual", "compilation"] = "individual"
@@ -80,6 +103,7 @@ class JobResponse(BaseModel):
     channel_name: Optional[str]
     duration_seconds: Optional[float]
     thumbnail_url: Optional[str]
+    profile_id: Optional[str] = None
     subtitle_mode: str
     layout_mode: str = "cover"
     source_type: str = "podcast"
@@ -89,10 +113,26 @@ class JobResponse(BaseModel):
     facecam_rect: Optional[dict] = None
     status: str
     error_message: Optional[str]
+    # Por que terminou sem clips (ver models.Job.result_note).
+    result_note: Optional[str] = None
+    # Quando cada etapa começou, para a tela mostrar o tempo real de cada uma.
+    stage_log: Optional[list] = None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+    @field_validator("stage_log", mode="before")
+    @classmethod
+    def parse_stage_log(cls, v):
+        """A coluna guarda JSON; a API entrega a lista pronta."""
+        if v is None or isinstance(v, list):
+            return v
+        try:
+            marcas = json.loads(v)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        return marcas if isinstance(marcas, list) else None
 
     @field_validator("layout_mode", mode="before")
     @classmethod
@@ -191,6 +231,13 @@ class ClipMetricsRequest(BaseModel):
 class JobDetailResponse(JobResponse):
     clips: List[ClipResponse] = []
 
+    #: Créditos deste job, para a tela dizer o que foi gasto.
+    #: `reservado` enquanto roda, `cobrado` depois que fecha. Nulos na versão
+    #: pessoal e em jobs anteriores à cobrança — lá não há o que mostrar.
+    creditos_reservados: Optional[int] = None
+    creditos_cobrados: Optional[int] = None
+    saldo: Optional[int] = None
+
     model_config = {"from_attributes": True}
 
 
@@ -277,3 +324,124 @@ class VideoEnhanceJobResponse(BaseModel):
     has_video: bool = False
     created_at: datetime
     updated_at: datetime
+
+
+# ─── Cobrança ─────────────────────────────────────────────────────────────────
+
+
+class TopupRequest(BaseModel):
+    """Compra de um pacote de créditos.
+
+    Só o número de créditos: o preço é resolvido no servidor pela
+    billing_config. Aceitar valor vindo do cliente seria deixar o comprador
+    escolher quanto paga.
+    """
+
+    creditos: int = Field(..., gt=0, description="Créditos do pacote escolhido")
+
+
+class TopupResponse(BaseModel):
+    payment_id: str
+    creditos: int
+    valor_brl: Decimal
+    status: str
+    qr_code: str | None = None
+    qr_code_base64: str | None = None
+    expires_at: datetime | None = None
+
+
+class PaymentStatusResponse(BaseModel):
+    """O que o polling da tela de recarga precisa saber."""
+
+    payment_id: str
+    status: str
+    creditos: int
+    #: O saldo DEPOIS deste pagamento, para a tela atualizar sem outra chamada.
+    saldo: int
+
+
+class BalanceResponse(BaseModel):
+    """O saldo para a navbar. Chamado em toda página, então é magro de propósito."""
+
+    saldo: int
+    #: Abaixo disto a interface avisa. Vem da billing_config, não do frontend:
+    #: "baixo" é decisão de negócio e muda sem deploy.
+    threshold: int
+    baixo: bool
+
+
+class PacoteResponse(BaseModel):
+    creditos: int
+    preco_brl: Decimal
+
+
+class PlanoResponse(BaseModel):
+    code: str
+    nome: str
+    valor_brl: Decimal
+    creditos_mes: int
+
+
+class CatalogResponse(BaseModel):
+    """O que a tela de recarga oferece. Preço sempre resolvido no servidor."""
+
+    credito_avulso_brl: Decimal
+    pacotes: List[PacoteResponse]
+    planos: List[PlanoResponse]
+
+
+class LedgerEntryResponse(BaseModel):
+    id: str
+    tipo: str
+    amount: int
+    balance_after: int
+    descricao: Optional[str] = None
+    created_at: datetime
+    ref_payment_id: Optional[str] = None
+    ref_usage_id: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class EstimateRequest(BaseModel):
+    youtube_url: str
+
+
+class EstimateResponse(BaseModel):
+    """O aviso antes de gastar: quanto este vídeo custa e se dá.
+
+    Passa pelas MESMAS guardas da criação do job (live, teto de duração), para a
+    tela não prometer um vídeo que o servidor vai recusar em seguida.
+    """
+
+    minutos: int
+    creditos: int
+    saldo: int
+    suficiente: bool
+    #: Quantos créditos faltam. 0 quando dá.
+    faltam: int
+
+
+class SubscribeRequest(BaseModel):
+    plan_code: str
+
+
+class SubscriptionResponse(BaseModel):
+    """A assinatura desta pessoa.
+
+    `init_point` é o link do gateway onde ela autoriza o cartão. Vem preenchido
+    enquanto o status é `pending` — é o que permite retomar quem fechou a aba no
+    meio, em vez de criar uma segunda assinatura.
+    """
+
+    id: str
+    plan_code: str
+    valor_brl: Decimal
+    creditos_mes: int
+    status: str
+    init_point: Optional[str] = None
+    started_at: Optional[datetime] = None
+    current_period_end: Optional[datetime] = None
+    canceled_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}

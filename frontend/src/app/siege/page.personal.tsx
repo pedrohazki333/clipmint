@@ -1,7 +1,7 @@
-import NichePage from "@/components/NichePage";
+import NicheRedirect from "@/components/NicheRedirect";
 
 export const metadata = { title: "Siege X — ClipMint" };
 
 export default function SiegePage() {
-  return <NichePage source="siege" />;
+  return <NicheRedirect source="siege" />;
 }

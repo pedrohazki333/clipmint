@@ -1,8 +1,22 @@
 export type SubtitleMode = "word_highlight" | "traditional" | "none";
 
-export type LayoutMode = "cover" | "streamer";
+/**
+ * Como o clipe é montado.
+ *
+ * `cover` e `streamer` presumem o tipo de conteúdo (rosto falando / câmera
+ * separada do jogo) e por isso só valem em certas rubricas; `crop` e `original`
+ * não presumem nada. Ver lib/layouts.ts.
+ */
+export type LayoutMode = "cover" | "streamer" | "crop" | "original";
 
-/** Muda a rubrica da análise e define a conta no cronograma de postagem. */
+/**
+ * Muda a rubrica da análise e define a conta no cronograma de postagem.
+ *
+ * "siege" continua na união mesmo no build público: tipo é apagado na
+ * compilação, então não alcança o bundle, e tirá-lo daqui obrigaria a duplicar
+ * o arquivo por variante. Quem decide os nichos que EXISTEM é a lista de
+ * src/lib/features.ts, não este tipo.
+ */
 export type SourceType = "podcast" | "gameplay" | "siege";
 
 /**
@@ -45,11 +59,55 @@ export type JobStatus =
   | "done"
   | "error";
 
-export type ClipStatus = "processing" | "ready" | "error";
+/**
+ * "expired" = o arquivo saiu do disco pelo TTL, mas a linha ficou. A nota, os
+ * eixos da rubrica e o desempenho real continuam ali — são eles que alimentam
+ * o few-shot, e apagá-los para economizar bytes destruiria o aprendizado.
+ */
+/** Uma troca de etapa do pipeline, do jeito que o backend registra. */
+export interface StageMark {
+  /** O status em que o job entrou. */
+  s: JobStatus;
+  /** Quando, em ISO-8601. */
+  at: string;
+}
+
+export type ClipStatus = "processing" | "ready" | "error" | "expired";
+
+/**
+ * Um perfil: o conjunto de configurações que se repete de vídeo para vídeo.
+ *
+ * `source_type` é a rubrica BASE — o perfil escolhe entre as que existem, não
+ * inventa uma nova. É esse valor que o perfil entrega ao job na criação, e é o
+ * job que o guarda: por isso editar um perfil não reescreve análise já feita.
+ */
+export interface Profile {
+  id: string;
+  name: string;
+  source_type: SourceType;
+  /** Chave de ícone, não arquivo (ver AVATARS em lib/avatars.tsx). */
+  avatar: string | null;
+  default_layout_mode: LayoutMode;
+  default_subtitle_mode: SubtitleMode;
+  /** Derivadas dos jobs e clipes — nenhum contador é mantido em coluna. */
+  job_count: number;
+  clip_count: number;
+  last_generated_at: string | null;
+}
+
+export interface ProfilePayload {
+  name: string;
+  source_type: SourceType;
+  avatar: string | null;
+  default_layout_mode: LayoutMode;
+  default_subtitle_mode: SubtitleMode;
+}
 
 export interface Job {
   id: string;
   youtube_url: string;
+  /** De qual perfil veio. Nulo nos jobs anteriores aos perfis. */
+  profile_id: string | null;
   video_title: string | null;
   channel_name: string | null;
   duration_seconds: number | null;
@@ -61,6 +119,10 @@ export interface Job {
   facecam_rect: FacecamRect | null;
   status: JobStatus;
   error_message: string | null;
+  /** Por que terminou sem clips. Nulo = terminou com clips. */
+  result_note: string | null;
+  /** Quando cada etapa começou. Nulo = job anterior a este registro. */
+  stage_log: StageMark[] | null;
   created_at: string;
   updated_at: string;
 }
@@ -99,9 +161,18 @@ export interface Clip {
 
 export interface JobDetail extends Job {
   clips: Clip[];
+  /**
+   * Créditos deste job. Nulos na versão pessoal e em jobs anteriores à
+   * cobrança — lá não há o que mostrar, e mostrar "0" seria mentira.
+   */
+  creditos_reservados: number | null;
+  creditos_cobrados: number | null;
+  saldo: number | null;
 }
 
 export interface CreateJobPayload {
+  /** De qual perfil parte a geração. Omitido = payload de antes, sem perfil. */
+  profile_id?: string;
   youtube_url: string;
   subtitle_mode: SubtitleMode;
   layout_mode?: LayoutMode;
@@ -239,28 +310,114 @@ export interface LearnedPatterns {
   stale: boolean;
 }
 
-// ─── Melhorar vídeo ──────────────────────────────────────────────────────────
+// ─── Conta (build público) ────────────────────────────────────────────────────
 
-export type VideoEnhanceStatus = "pending" | "processing" | "done" | "failed";
-
-export interface VideoEnhanceJob {
+export interface AccountUser {
   id: string;
-  original_filename: string | null;
-  status: VideoEnhanceStatus;
-  /** Etapa atual ("fazendo upscale"). Só vem durante o trabalho. */
-  status_detail: string | null;
-  /**
-   * Em `failed`, o motivo. Em `done`, o aviso das etapas que falharam — o vídeo
-   * existe do mesmo jeito.
-   */
-  error_message: string | null;
-  /** Antes/depois em texto, ex.: "720x1280 · 24fps · 1.9 Mbps". */
-  source_summary: string | null;
-  final_summary: string | null;
-  steps_applied: string[];
-  /** Dispensadas por já estarem no alvo — não são problema. */
-  steps_skipped: string[];
-  has_video: boolean;
+  email: string;
+  display_name: string | null;
+  /** Administra esta instalação: só ele altera os presets de marca do nicho. */
+  is_owner: boolean;
+}
+
+/** Consumo da janela de cota. Teto 0 = sem teto. */
+export interface AccountUsage {
+  window_hours: number;
+  videos_used: number;
+  videos_max: number;
+  minutes_used: number;
+  minutes_max: number;
+  /** Duração máxima de UM vídeo, em minutos. 0 = sem teto. */
+  max_source_minutes: number;
+}
+
+
+// ─── Cobrança ────────────────────────────────────────────────────────────────
+
+export interface Balance {
+  saldo: number;
+  /** Abaixo disto a interface avisa. Vem da config do servidor. */
+  threshold: number;
+  baixo: boolean;
+}
+
+export interface Pacote {
+  creditos: number;
+  /** Já resolvido pelo servidor — a tela nunca calcula preço. */
+  preco_brl: string;
+}
+
+export interface Plano {
+  code: string;
+  nome: string;
+  valor_brl: string;
+  creditos_mes: number;
+}
+
+export interface Catalog {
+  credito_avulso_brl: string;
+  pacotes: Pacote[];
+  planos: Plano[];
+}
+
+export type LedgerTipo =
+  | "topup"
+  | "debito"
+  | "estorno"
+  | "bonus"
+  | "ajuste"
+  | "hold"
+  | "release";
+
+export interface LedgerEntry {
+  id: string;
+  tipo: LedgerTipo;
+  /** Com sinal: positivo credita, negativo debita. */
+  amount: number;
+  balance_after: number;
+  descricao: string | null;
   created_at: string;
-  updated_at: string;
+  ref_payment_id: string | null;
+  ref_usage_id: string | null;
+}
+
+export interface Estimate {
+  minutos: number;
+  creditos: number;
+  saldo: number;
+  suficiente: boolean;
+  /** Quantos faltam. 0 quando dá. */
+  faltam: number;
+}
+
+export interface Topup {
+  payment_id: string;
+  creditos: number;
+  valor_brl: string;
+  status: string;
+  qr_code: string | null;
+  qr_code_base64: string | null;
+  expires_at: string | null;
+}
+
+export interface PaymentStatus {
+  payment_id: string;
+  status: string;
+  creditos: number;
+  saldo: number;
+}
+
+export type SubscriptionStatus = "pending" | "active" | "canceled" | "paused";
+
+export interface Subscription {
+  id: string;
+  plan_code: string;
+  valor_brl: string;
+  creditos_mes: number;
+  status: SubscriptionStatus;
+  /** Link do gateway onde a pessoa autoriza o cartão. Vem com `pending`. */
+  init_point: string | null;
+  started_at: string | null;
+  current_period_end: string | null;
+  canceled_at: string | null;
 }

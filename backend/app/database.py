@@ -1,15 +1,52 @@
+"""
+Conexão com o banco e aplicação das migrações.
+
+O projeto fala dois dialetos, de propósito:
+
+  - **SQLite** na versão pessoal e nos testes. É uma ferramenta local usada todo
+    dia; exigir um Postgres no laptop para clipar um vídeo seria custo sem
+    contrapartida, e os testes rodam em arquivo temporário sem serviço externo.
+  - **Postgres** no build público. Um servidor multiusuário escrevendo num
+    arquivo só corrompe sob concorrência, e é isso que o SQLite é.
+
+O build público RECUSA subir em SQLite (ver `app/main.py`) — a escolha é
+verificada, não confiada ao cuidado de quem faz o deploy.
+
+Migrações são do Alembic. Antes havia uma lista de `ALTER TABLE` à mão aqui,
+que funcionava só no SQLite: os tipos que ela emitia (`DATETIME`) nem existem no
+Postgres, e a primeira migração num servidor de verdade teria falhado.
+"""
+
+import logging
+from typing import AsyncGenerator
+
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
-from typing import AsyncGenerator
 
 from app.config import settings
 
+logger = logging.getLogger(__name__)
 
-engine = create_async_engine(
-    settings.sqlite_url,
-    echo=False,
-    connect_args={"check_same_thread": False},
-)
+
+def _engine_kwargs() -> dict:
+    """Argumentos que só fazem sentido para um dos dialetos.
+
+    `check_same_thread` é exclusivo do SQLite e o Postgres recusa a conexão se
+    ele for passado; o pool é o inverso, o SQLite não usa.
+    """
+    if settings.is_postgres:
+        return {
+            "pool_size": settings.db_pool_size,
+            "max_overflow": settings.db_max_overflow,
+            # Conexão que ficou parada em fila de proxy ou firewall morre em
+            # silêncio; o pre_ping troca um round-trip barato por um erro
+            # "server closed the connection" no meio de um job.
+            "pool_pre_ping": True,
+        }
+    return {"connect_args": {"check_same_thread": False}}
+
+
+engine = create_async_engine(settings.db_url, echo=False, **_engine_kwargs())
 
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,
@@ -24,85 +61,12 @@ class Base(DeclarativeBase):
     pass
 
 
-# Colunas adicionadas depois que a tabela já existia. create_all() só cria
-# tabelas novas — não altera as antigas — e o projeto não usa Alembic, então o
-# startup completa as que faltam. (tabela, coluna, definição SQL)
-# SQL rodado uma única vez, logo após a coluna ser criada. Serve para colunas
-# cujo DEFAULT não descreve as linhas antigas — sem isso todo job de gameplay
-# já existente viraria 'podcast' e o cronograma postaria na conta errada.
-_BACKFILL = {
-    ("jobs", "source_type"): (
-        "UPDATE jobs SET source_type = 'gameplay' WHERE layout_mode = 'streamer'"
-    ),
-}
-
-_ADDED_COLUMNS = [
-    ("jobs", "layout_mode", "VARCHAR DEFAULT 'cover'"),
-    ("jobs", "facecam_rect", "TEXT"),
-    ("jobs", "source_type", "VARCHAR DEFAULT 'podcast'"),
-    ("jobs", "clip_mode", "VARCHAR DEFAULT 'individual'"),
-    ("jobs", "manual_clips", "TEXT"),
-    ("jobs", "manual_mode", "VARCHAR DEFAULT 'only'"),
-    ("clips", "hook_score", "FLOAT"),
-    ("clips", "retention_score", "FLOAT"),
-    ("clips", "shareability_score", "FLOAT"),
-    ("clips", "loopability_score", "FLOAT"),
-    ("clips", "comment_bait_score", "FLOAT"),
-    ("clips", "verdict", "VARCHAR"),
-    ("clips", "weak_points_json", "TEXT"),
-    ("clips", "trim_reason", "TEXT"),
-    ("clips", "segments_json", "TEXT"),
-    # Desempenho real depois de postado. Sem DEFAULT de propósito: nulo
-    # significa "ainda não medido", que não é a mesma coisa que zero.
-    ("clips", "posted_at", "DATETIME"),
-    ("clips", "views", "INTEGER"),
-    ("clips", "completion_rate", "FLOAT"),
-    ("clips", "likes", "INTEGER"),
-    ("clips", "comments", "INTEGER"),
-    ("clips", "shares", "INTEGER"),
-    ("clips", "metrics_at", "DATETIME"),
-    # Aprendizado por clipe solto, sem o vídeo de origem (ver models.py).
-    # DEFAULT 'aligned' descreve corretamente as referências antigas: todas
-    # foram criadas quando esse era o único modo que existia.
-    ("reference_examples", "kind", "VARCHAR DEFAULT 'aligned'"),
-    ("reference_examples", "source_type", "VARCHAR DEFAULT 'podcast'"),
-    ("reference_examples", "forensics_json", "TEXT"),
-]
-
-
 async def init_db() -> None:
-    """Cria as tabelas e aplica as colunas adicionadas depois."""
-    from app import models  # noqa: F401 - garante que os modelos sejam registrados
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        await conn.run_sync(_add_missing_columns)
+    """Deixa o banco na versão mais recente do schema."""
+    from app import models  # noqa: F401 - registra os modelos no metadata
+    from app.db_migrations import upgrade_to_head
 
-
-def _add_missing_columns(conn) -> None:
-    """ALTER TABLE idempotente para bancos criados antes destas colunas."""
-    import logging
-
-    from sqlalchemy import inspect, text
-
-    logger = logging.getLogger(__name__)
-    inspector = inspect(conn)
-    tables = set(inspector.get_table_names())
-
-    for table, column, ddl in _ADDED_COLUMNS:
-        if table not in tables:
-            continue  # acabou de ser criada por create_all, já tem a coluna
-        existing = {c["name"] for c in inspector.get_columns(table)}
-        if column in existing:
-            continue
-        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
-        logger.info(f"Migration: {table}.{column} added")
-
-        backfill = _BACKFILL.get((table, column))
-        if backfill:
-            result = conn.execute(text(backfill))
-            logger.info(
-                f"Migration: {table}.{column} backfilled ({result.rowcount} linha(s))"
-            )
+    await upgrade_to_head()
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

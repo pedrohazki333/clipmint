@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import type { LearnedPatterns as Patterns } from "@/lib/types";
-import { deletePatterns, getApiErrorMessage, getPatterns, minePatterns } from "@/lib/api";
+import { getApiErrorMessage } from "@/lib/api";
+import { deletePatterns, getPatterns, minePatterns } from "@/personal/learning-api";
 
 function fmtDate(iso: string | null): string {
   if (!iso) return "";
@@ -61,11 +62,11 @@ export default function LearnedPatterns() {
   const canMine = available > 0;
 
   return (
-    <div className="rounded-2xl bg-gray-900 border border-gray-800 p-6">
+    <div className="rounded-md bg-raised border border-line p-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-base font-semibold text-gray-100">Padrões aprendidos</h2>
-          <p className="text-sm text-gray-500 mt-1">
+          <h2 className="text-body font-semibold text-ink">Padrões aprendidos</h2>
+          <p className="text-body text-ink-dim mt-1">
             Heurísticas destiladas do conjunto de exemplos validados. Uma vez calculadas, guiam
             todas as próximas análises de viralidade.
           </p>
@@ -74,14 +75,14 @@ export default function LearnedPatterns() {
           onClick={handleMine}
           disabled={busy || !canMine}
           title={!canMine ? "Confirme ao menos uma referência ou clipe primeiro" : ""}
-          className="flex-shrink-0 rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700 px-4 py-2 text-sm text-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex-shrink-0 rounded-sm bg-inset hover:bg-hover border border-line px-4 py-2 text-body text-ink transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {busy ? "Processando..." : hasPatterns ? "Recalcular" : "Minerar padrões"}
         </button>
       </div>
 
       {!canMine && !hasPatterns && (
-        <p className="mt-4 text-xs text-gray-600 bg-gray-800/40 rounded px-3 py-2">
+        <p className="mt-4 text-label text-ink-muted bg-inset rounded px-3 py-2">
           Ainda não há exemplos validados. Confirme uma referência (ou valide um clipe) para poder
           minerar padrões.
         </p>
@@ -91,29 +92,29 @@ export default function LearnedPatterns() {
         <>
           <ul className="mt-4 flex flex-col gap-2">
             {data!.patterns.map((p, i) => (
-              <li key={i} className="flex gap-2 text-sm text-gray-300 leading-relaxed">
-                <span className="text-emerald-500 flex-shrink-0">▹</span>
+              <li key={i} className="flex gap-2 text-body text-ink leading-relaxed">
+                <span className="text-mint flex-shrink-0">▹</span>
                 <span>{p}</span>
               </li>
             ))}
           </ul>
 
           <div className="mt-4 flex items-center justify-between gap-4">
-            <p className="text-xs text-gray-600">
+            <p className="text-label text-ink-muted">
               De {data!.n_examples} exemplo{data!.n_examples !== 1 ? "s" : ""}
               {data!.generated_at && ` · ${fmtDate(data!.generated_at)}`}
             </p>
             <button
               onClick={handleClear}
               disabled={busy}
-              className="text-xs text-gray-600 hover:text-red-400 transition-colors disabled:opacity-50"
+              className="text-label text-ink-muted hover:text-red-400 transition-colors disabled:opacity-50"
             >
               Remover
             </button>
           </div>
 
           {data!.stale && (
-            <p className="mt-3 text-xs text-amber-500/90 bg-amber-900/15 rounded px-3 py-2">
+            <p className="mt-3 text-label text-amber-500/90 bg-amber-900/15 rounded px-3 py-2">
               Há {available} exemplo{available !== 1 ? "s" : ""} validado
               {available !== 1 ? "s" : ""} agora ({data!.n_examples} usado
               {data!.n_examples !== 1 ? "s" : ""} no cálculo atual). Recalcule para incorporar os
@@ -124,7 +125,7 @@ export default function LearnedPatterns() {
       )}
 
       {error && (
-        <p className="mt-3 text-xs text-red-400 bg-red-900/20 rounded px-3 py-2">{error}</p>
+        <p className="mt-3 text-label text-danger bg-danger-soft rounded px-3 py-2">{error}</p>
       )}
     </div>
   );

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { ClipMode, LayoutMode, ManualMode, SourceType, SubtitleMode } from "@/lib/types";
+import { INVALID_YOUTUBE_URL_MESSAGE, isValidYouTubeUrl } from "@/lib/youtube";
 import SubtitleModeSelector from "./SubtitleModeSelector";
 import LayoutModeSelector from "./LayoutModeSelector";
 import SourceTypeSelector from "./SourceTypeSelector";
@@ -23,11 +24,24 @@ interface Props {
   lockedSource?: SourceType;
   /** Layout inicial sugerido pela página. */
   defaultLayout?: LayoutMode;
+  /** Modo de legenda com que o formulário abre. Vem do perfil; segue editável. */
+  defaultSubtitle?: SubtitleMode;
 }
 
-/** O layout escolhido é o melhor palpite do tipo de conteúdo. */
-function inferSourceType(layout: LayoutMode): SourceType {
-  return layout === "streamer" ? "gameplay" : "podcast";
+/**
+ * O palpite de rubrica a partir do layout — só onde ele existe.
+ *
+ * `cover` e `streamer` presumem o tipo de conteúdo, então dizem algo sobre a
+ * rubrica. `crop` e `original` não presumem nada: escolher um deles não é razão
+ * para trocar a rubrica, e por isso devolvem `null`.
+ *
+ * Desde os perfis, a direção normal é a inversa (a rubrica decide os layouts).
+ * Isto só age quando não há perfil travando o nicho.
+ */
+function inferSourceType(layout: LayoutMode): SourceType | null {
+  if (layout === "streamer") return "gameplay";
+  if (layout === "cover") return "podcast";
+  return null;
 }
 
 export default function UrlInput({
@@ -35,9 +49,12 @@ export default function UrlInput({
   isLoading,
   lockedSource,
   defaultLayout = "cover",
+  defaultSubtitle,
 }: Props) {
   const [url, setUrl] = useState("");
-  const [subtitleMode, setSubtitleMode] = useState<SubtitleMode>("word_highlight");
+  const [subtitleMode, setSubtitleMode] = useState<SubtitleMode>(
+    defaultSubtitle ?? "word_highlight",
+  );
   const [layoutMode, setLayoutMode] = useState<LayoutMode>(defaultLayout);
   const [sourceType, setSourceType] = useState<SourceType>(lockedSource ?? "podcast");
   // Enquanto o usuário não escolher à mão, o tipo acompanha o layout.
@@ -50,16 +67,15 @@ export default function UrlInput({
   function handleLayoutChange(mode: LayoutMode) {
     setLayoutMode(mode);
     // Com o nicho travado pela página, o layout não pode arrastá-lo junto.
-    if (!lockedSource && !sourceTouched) setSourceType(inferSourceType(mode));
+    if (!lockedSource && !sourceTouched) {
+      const palpite = inferSourceType(mode);
+      if (palpite) setSourceType(palpite);
+    }
   }
 
   function handleSourceChange(type: SourceType) {
     setSourceType(type);
     setSourceTouched(true);
-  }
-
-  function isValidYouTubeUrl(u: string): boolean {
-    return /(?:youtube\.com\/watch\?v=|youtu\.be\/)/.test(u);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -71,7 +87,7 @@ export default function UrlInput({
       return;
     }
     if (!isValidYouTubeUrl(url)) {
-      setError("URL inválida. Use um link do YouTube (youtube.com/watch?v= ou youtu.be/).");
+      setError(INVALID_YOUTUBE_URL_MESSAGE);
       return;
     }
 
@@ -90,7 +106,7 @@ export default function UrlInput({
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
       <div className="flex flex-col gap-2">
-        <label htmlFor="url" className="text-sm font-medium text-gray-400">
+        <label htmlFor="url" className="text-body font-medium text-ink-dim">
           URL do YouTube
         </label>
         <input
@@ -100,12 +116,16 @@ export default function UrlInput({
           onChange={(e) => setUrl(e.target.value)}
           placeholder="https://www.youtube.com/watch?v=..."
           disabled={isLoading}
-          className="w-full rounded-lg bg-gray-800 border border-gray-700 px-4 py-3 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-emerald-500 disabled:opacity-50"
+          className="w-full rounded-sm bg-inset border border-line px-4 py-3 text-ink placeholder-ink-muted focus:outline-none focus:border-mint disabled:opacity-50"
         />
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {error && <p className="text-body text-danger">{error}</p>}
       </div>
 
-      <LayoutModeSelector value={layoutMode} onChange={handleLayoutChange} />
+      <LayoutModeSelector
+          value={layoutMode}
+          onChange={handleLayoutChange}
+          source={sourceType}
+        />
 
       {!lockedSource && (
         <SourceTypeSelector
@@ -130,7 +150,7 @@ export default function UrlInput({
       <button
         type="submit"
         disabled={isLoading}
-        className="w-full rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:bg-gray-700 disabled:cursor-not-allowed px-6 py-3 font-semibold text-white transition-colors"
+        className="w-full rounded-sm bg-mint-strong hover:bg-mint disabled:bg-inset disabled:cursor-not-allowed px-6 py-3 font-semibold text-white transition-colors"
       >
         {isLoading
           ? "Processando..."

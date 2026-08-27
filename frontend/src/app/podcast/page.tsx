@@ -1,7 +1,5 @@
-import NichePage from "@/components/NichePage";
-
-export const metadata = { title: "Podcast — ClipMint" };
+import NicheRedirect from "@/components/NicheRedirect";
 
 export default function PodcastPage() {
-  return <NichePage source="podcast" />;
+  return <NicheRedirect source="podcast" />;
 }

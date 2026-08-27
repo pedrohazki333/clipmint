@@ -23,13 +23,13 @@ export default function ColorField({ label, value, onChange, disabled, fallback 
   const valid = HEX_RE.test(value);
   return (
     <div className="flex items-center gap-2">
-      <span className="text-xs text-gray-500 w-16">{label}</span>
+      <span className="text-label text-ink-dim w-16">{label}</span>
       <input
         type="color"
         value={toFullHex(value, fallback)}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value.toUpperCase())}
-        className="h-8 w-10 rounded cursor-pointer bg-transparent border border-gray-700 disabled:opacity-50"
+        className="h-8 w-10 rounded cursor-pointer bg-transparent border border-line disabled:opacity-50"
       />
       <input
         type="text"
@@ -38,8 +38,8 @@ export default function ColorField({ label, value, onChange, disabled, fallback 
         onChange={(e) => onChange(e.target.value)}
         placeholder="#RRGGBB"
         maxLength={7}
-        className={`w-24 rounded-lg bg-gray-800 border px-2 py-1.5 text-sm font-mono text-gray-200 outline-none transition-colors ${
-          valid ? "border-gray-700 focus:border-gray-500" : "border-red-700"
+        className={`w-24 rounded-sm bg-inset border px-2 py-1.5 text-body font-mono text-ink outline-none transition-colors ${
+          valid ? "border-line focus:border-mint" : "border-red-700"
         }`}
       />
     </div>

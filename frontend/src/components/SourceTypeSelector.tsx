@@ -1,27 +1,12 @@
 "use client";
 
 import type { SourceType } from "@/lib/types";
+import { PUBLIC_NICHES } from "@/lib/features";
+import { PERSONAL_NICHES } from "@/personal";
 
-const TYPES: { value: SourceType; label: string; description: string }[] = [
-  {
-    value: "podcast",
-    label: "Podcast",
-    description:
-      "Avalia gancho verbal, arco de resolução, frase-momento e potencial de debate",
-  },
-  {
-    value: "gameplay",
-    label: "Gameplay",
-    description:
-      "Avalia pico visual, reviravolta, legibilidade sem som e reação do jogador",
-  },
-  {
-    value: "siege",
-    label: "Siege X",
-    description:
-      "Avalia sequência de eliminações, abate rápido de um tiro, clutch e treta na call",
-  },
-];
+// A lista de nichos é a do build: no público, PERSONAL_NICHES vem vazio e o
+// seletor mostra só as contas que o backend aceita (ver src/lib/features.ts).
+const TYPES = [...PUBLIC_NICHES, ...PERSONAL_NICHES];
 
 interface Props {
   value: SourceType;
@@ -33,28 +18,30 @@ interface Props {
 export default function SourceTypeSelector({ value, onChange, isInferred }: Props) {
   return (
     <div className="flex flex-col gap-2">
-      <label className="text-sm font-medium text-gray-400">Tipo de conteúdo</label>
+      <label className="text-body font-medium text-ink-dim">Tipo de conteúdo</label>
       <div className="flex gap-2 flex-wrap">
         {TYPES.map((type) => (
           <button
-            key={type.value}
+            key={type.source}
             type="button"
-            onClick={() => onChange(type.value)}
+            onClick={() => onChange(type.source)}
             title={type.description}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors border ${
-              value === type.value
-                ? "bg-emerald-500 border-emerald-500 text-white"
-                : "bg-gray-800 border-gray-700 text-gray-300 hover:border-emerald-600"
+            className={`px-4 py-2 rounded-sm text-body font-medium transition-colors border ${
+              value === type.source
+                ? "bg-mint-strong border-mint text-white"
+                : "bg-inset border-line text-ink hover:border-mint"
             }`}
           >
-            {type.label}
+            {type.title}
           </button>
         ))}
       </div>
-      <p className="text-xs text-gray-500">
+      {/* A menção ao cronograma saiu daqui: a fila de postagem é da versão
+          pessoal, e no build público este texto prometia algo que não existe. O
+          que a rubrica faz — decidir os critérios da análise — vale nos dois. */}
+      <p className="text-label text-ink-dim">
         {isInferred ? "Sugerido pelo layout. " : ""}
-        Define os critérios da análise e em qual conta o clipe entra no cronograma de
-        postagem.
+        Define os critérios que a análise usa para escolher os melhores trechos.
       </p>
     </div>
   );

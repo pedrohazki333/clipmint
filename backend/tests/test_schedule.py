@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.database import Base, get_db
 from app.main import app
 from app.models import Clip, Job
-from app.routers.schedule import POSTING_SLOTS
+from app.routers.schedule import ALL_POSTING_SLOTS
 
 
 @pytest.fixture
@@ -144,7 +144,7 @@ def test_slots_cover_the_full_grid(client):
     slots = resp.json()
 
     assert len(slots) == 18
-    assert len(POSTING_SLOTS) == 18
+    assert len(ALL_POSTING_SLOTS) == 18
     for conta in ("podcast", "gameplay", "siege"):
         assert sum(1 for s in slots if s["source_type"] == conta) == 6, conta
     # Todo eixo da grade tem que ser um eixo que o /pick aceita
@@ -155,38 +155,24 @@ def test_slots_cover_the_full_grid(client):
         assert picked.status_code == 200, slot
 
 
-def test_migration_backfills_source_type_from_layout(tmp_path):
+def test_layout_streamer_implica_conta_de_gameplay():
     """
-    Job de gameplay que existia antes da coluna não pode virar 'podcast'.
+    Um job de layout streamer não pode cair na conta de podcast.
 
-    O DEFAULT do ALTER TABLE preencheria tudo com 'podcast' e o cronograma
-    passaria a postar corte de gameplay na conta de podcast.
+    Errar isto posta corte de gameplay na conta de podcast. A proteção original
+    era um backfill na migração manual de `source_type`, para os jobs que já
+    existiam quando a coluna nasceu; esse backfill foi aposentado junto com a
+    migração manual (Fatia 5) depois de confirmado que não tinha mais trabalho a
+    fazer — 0 linhas pendentes tanto no banco atual quanto no backup de
+    13/08/2026, e os dois já com a coluna.
+
+    O que continua vivo é a REGRA, aplicada na criação de todo job novo
+    (routers/jobs.py). É ela que este teste guarda agora.
     """
-    import sqlite3
+    from app.prompts.viral_analysis import default_source_type
 
-    from app.database import _add_missing_columns
-    from sqlalchemy import create_engine
-
-    db_file = tmp_path / "legado.db"
-    raw = sqlite3.connect(db_file)
-    raw.execute(
-        "CREATE TABLE jobs (id VARCHAR PRIMARY KEY, youtube_url VARCHAR, "
-        "layout_mode VARCHAR)"
-    )
-    raw.executemany(
-        "INSERT INTO jobs (id, youtube_url, layout_mode) VALUES (?, ?, ?)",
-        [("a", "u", "streamer"), ("b", "u", "cover"), ("c", "u", "streamer")],
-    )
-    raw.commit()
-    raw.close()
-
-    engine = create_engine(f"sqlite:///{db_file}")
-    with engine.begin() as conn:
-        _add_missing_columns(conn)
-    engine.dispose()
-
-    raw = sqlite3.connect(db_file)
-    got = dict(raw.execute("SELECT id, source_type FROM jobs").fetchall())
-    raw.close()
-
-    assert got == {"a": "gameplay", "b": "podcast", "c": "gameplay"}
+    assert default_source_type("streamer") == "gameplay"
+    assert default_source_type("cover") == "podcast"
+    # Sem layout informado, o palpite seguro é o formato de podcast.
+    assert default_source_type(None) == "podcast"
+    assert default_source_type("") == "podcast"

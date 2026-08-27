@@ -75,6 +75,30 @@ clipmint/
 └── .env.example
 ```
 
+## Duas versões, um codebase
+
+O ClipMint sai em duas versões da mesma árvore, controladas por `PUBLIC_BUILD`
+no `.env` da raiz:
+
+- **pessoal** (padrão): tudo ligado, incluindo o nicho Siege X e a aba Melhorar
+  vídeo, em SQLite, com uma senha compartilhada;
+- **pública**: sem essas duas features — nem as rotas, nem o código no bundle —
+  em PostgreSQL, com contas de usuário, cota por usuário e TTL nos arquivos.
+
+```bash
+make dev            # versão pessoal
+make serve-public   # versão pública, em portas próprias (3001/8002)
+```
+
+## Documentação
+
+| | |
+|---|---|
+| [`docs/DEPLOY.md`](docs/DEPLOY.md) | Subir numa VPS: pacotes, variáveis, systemd, nginx |
+| [`docs/POSTGRES.md`](docs/POSTGRES.md) | Banco: criar, migrar, levar os dados, backup |
+| [`docs/RESUMO.md`](docs/RESUMO.md) | O que mudou na preparação para produto, e o que falta |
+| [`docs/DECISOES.md`](docs/DECISOES.md) | Cada decisão e o porquê — leia antes de desfazer algo |
+
 ## Requirements
 
 - Python 3.11+

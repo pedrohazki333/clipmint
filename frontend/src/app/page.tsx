@@ -1,176 +1,188 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import type { Job, Reference, SourceType, VideoEnhanceJob } from "@/lib/types";
-import { listJobs, listReferences, listVideoEnhance } from "@/lib/api";
-import ReferenceForm from "@/components/ReferenceForm";
-import ReferenceCard from "@/components/ReferenceCard";
-import LearnedPatterns from "@/components/LearnedPatterns";
 
-const ACTIVE_POLLING_INTERVAL = 5000; // ms — só roda enquanto houver job em andamento
-// "error" é o terminal dos jobs de clipe; "failed", o dos tratamentos de vídeo.
-const TERMINAL_STATUSES = new Set(["done", "error", "failed"]);
+import { AvatarIcon } from "@/lib/avatars";
+import { PUBLIC_NICHES } from "@/lib/features";
+import { LearningSection, PERSONAL_NICHES, PERSONAL_TOOLS } from "@/personal";
+import { getApiErrorMessage, listProfiles } from "@/lib/api";
+import type { Profile } from "@/lib/types";
+import type { ToolCount } from "@/lib/features";
 
-const NICHES: {
-  source: SourceType;
-  href: string;
-  title: string;
-  blurb: string;
-  accent: string;
-}[] = [
-  {
-    source: "podcast",
-    href: "/podcast",
-    title: "Podcast",
-    blurb: "Gancho verbal, arco de resolução, frase-momento",
-    accent: "hover:border-emerald-500",
-  },
-  {
-    source: "gameplay",
-    href: "/gameplay",
-    title: "Gameplay",
-    blurb: "Pico visual, reviravolta, legibilidade sem som",
-    accent: "hover:border-sky-500",
-  },
-  {
-    source: "siege",
-    href: "/siege",
-    title: "Siege X",
-    blurb: "Sequência de abates, clutch, reflexo e treta na call",
-    accent: "hover:border-orange-500",
-  },
-];
+/**
+ * Meus perfis — a entrada do sistema.
+ *
+ * Antes esta tela listava "contas", que eram um enum fixo no código: dava para
+ * entrar nelas, mas não para criar, renomear ou ter duas do mesmo tipo. O perfil
+ * é a mesma ideia com lugar para morar.
+ */
+
+const ACTIVE_POLLING_INTERVAL = 5000; // ms — só enquanto houver trabalho rodando
+const NICHES = [...PUBLIC_NICHES, ...PERSONAL_NICHES];
+
+function tempoRelativo(iso: string | null): string {
+  if (!iso) return "Ainda não gerou nada";
+  const dias = Math.floor((Date.now() - Date.parse(iso)) / 86_400_000);
+  if (dias <= 0) return "Última geração hoje";
+  if (dias === 1) return "Última geração ontem";
+  if (dias < 30) return `Última geração há ${dias} dias`;
+  return "Última geração há mais de um mês";
+}
 
 export default function Home() {
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [references, setReferences] = useState<Reference[]>([]);
-  const [enhanceJobs, setEnhanceJobs] = useState<VideoEnhanceJob[]>([]);
+  const [profiles, setProfiles] = useState<Profile[] | null>(null);
+  const [toolCounts, setToolCounts] = useState<Record<string, ToolCount>>({});
+  const [erro, setErro] = useState("");
 
-  const fetchJobs = useCallback(async () => {
+  const carregarPerfis = useCallback(async () => {
     try {
-      setJobs(await listJobs());
-    } catch {
-      // silencioso — o hub é só um resumo; o erro real aparece na página da conta
+      setProfiles(await listProfiles());
+      setErro("");
+    } catch (err) {
+      setProfiles([]);
+      setErro(getApiErrorMessage(err, "Não foi possível carregar seus perfis."));
     }
   }, []);
 
-  const fetchReferences = useCallback(async () => {
-    try {
-      setReferences(await listReferences());
-    } catch {
-      // silencioso — a lista de referências é secundária
-    }
-  }, []);
-
-  const fetchEnhanceJobs = useCallback(async () => {
-    try {
-      setEnhanceJobs(await listVideoEnhance());
-    } catch {
-      // silencioso — o card mostra só a contagem; o erro real aparece na página
+  const carregarFerramentas = useCallback(async () => {
+    const entradas = await Promise.all(
+      PERSONAL_TOOLS.map(async (tool) => {
+        try {
+          return [tool.key, await tool.loadCount()] as const;
+        } catch {
+          return null;
+        }
+      }),
+    );
+    const achadas = entradas.filter((e): e is readonly [string, ToolCount] => e !== null);
+    if (achadas.length) {
+      setToolCounts((prev) => ({ ...prev, ...Object.fromEntries(achadas) }));
     }
   }, []);
 
   useEffect(() => {
-    fetchJobs();
-    fetchReferences();
-    fetchEnhanceJobs();
-  }, [fetchJobs, fetchReferences, fetchEnhanceJobs]);
+    carregarPerfis();
+    carregarFerramentas();
+  }, [carregarPerfis, carregarFerramentas]);
 
-  const hasActiveWork =
-    jobs.some((j) => !TERMINAL_STATUSES.has(j.status)) ||
-    references.some((r) => !TERMINAL_STATUSES.has(r.status)) ||
-    enhanceJobs.some((v) => !TERMINAL_STATUSES.has(v.status));
+  const rodando = Object.values(toolCounts).some((c) => c.running > 0);
   useEffect(() => {
-    if (!hasActiveWork) return;
-    const interval = setInterval(() => {
-      fetchJobs();
-      fetchReferences();
-      fetchEnhanceJobs();
+    if (!rodando) return;
+    const t = setInterval(() => {
+      carregarPerfis();
+      carregarFerramentas();
     }, ACTIVE_POLLING_INTERVAL);
-    return () => clearInterval(interval);
-  }, [hasActiveWork, fetchJobs, fetchReferences, fetchEnhanceJobs]);
-
-  function summary(source: SourceType) {
-    const mine = jobs.filter((j) => j.source_type === source);
-    return {
-      total: mine.length,
-      running: mine.filter((j) => !TERMINAL_STATUSES.has(j.status)).length,
-    };
-  }
+    return () => clearInterval(t);
+  }, [rodando, carregarPerfis, carregarFerramentas]);
 
   return (
     <div className="flex flex-col gap-8">
       <div>
-        <h1 className="text-xl font-bold text-gray-100 mb-1">Suas contas</h1>
-        <p className="text-sm text-gray-500">
-          Cada conta tem os próprios presets de marca e a própria fila de postagem.
+        <h1 className="text-display font-semibold text-ink">Meus perfis</h1>
+        <p className="mt-1 text-body text-ink-dim">
+          Cada perfil guarda a rubrica, a marca e o padrão de geração dos seus
+          clipes.
         </p>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {NICHES.map((niche) => {
-          const { total, running } = summary(niche.source);
-          return (
-            <Link
-              key={niche.source}
-              href={niche.href}
-              className={`rounded-2xl bg-gray-900 border border-gray-800 p-6 transition-colors ${niche.accent}`}
-            >
-              <h2 className="text-lg font-semibold text-gray-100">{niche.title}</h2>
-              <p className="mt-1 text-sm text-gray-500">{niche.blurb}</p>
-              <div className="mt-4 flex items-center gap-3 text-sm">
-                <span className="text-gray-300">
-                  {total} {total === 1 ? "vídeo" : "vídeos"}
-                </span>
-                {running > 0 && (
-                  <span className="rounded-full bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 text-xs text-amber-400">
-                    {running} processando
-                  </span>
-                )}
-              </div>
-            </Link>
-          );
-        })}
+      {erro && (
+        <p className="rounded-sm border border-danger/40 bg-danger-soft px-3 py-2 text-body text-danger">
+          {erro}
+        </p>
+      )}
 
-        {/* Melhorar vídeo não é uma conta: não tem source_type nem fila de
-            postagem, então a contagem vem da própria API, não de `summary`. */}
-        <Link
-          href="/melhorar-video"
-          className="rounded-2xl bg-gray-900 border border-gray-800 p-6 transition-colors hover:border-fuchsia-500"
-        >
-          <h2 className="text-lg font-semibold text-gray-100">Melhorar vídeo</h2>
-          <p className="mt-1 text-sm text-gray-500">
-            Vídeo do Gemini sai em 1080p com bitrate limpo
+      {profiles === null ? (
+        <p className="py-12 text-center text-ink-dim">Carregando...</p>
+      ) : profiles.length === 0 && !erro ? (
+        <div className="rounded-md border border-dashed border-line bg-raised px-6 py-16 text-center">
+          <p className="text-title font-medium text-ink">Ainda não há perfis</p>
+          <p className="mt-1 text-body text-ink-dim">
+            Crie o primeiro perfil para começar a gerar clipes.
           </p>
-          <div className="mt-4 flex items-center gap-3 text-sm">
-            <span className="text-gray-300">
-              {enhanceJobs.length} {enhanceJobs.length === 1 ? "vídeo" : "vídeos"}
+          <Link
+            href="/perfis/novo"
+            className="mt-5 inline-block rounded-sm bg-mint-strong px-5 py-2.5 text-body font-medium text-base transition-colors hover:bg-mint"
+          >
+            Criar primeiro perfil
+          </Link>
+        </div>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
+          {profiles.map((p) => {
+            const nicho = NICHES.find((n) => n.source === p.source_type);
+            return (
+              <Link
+                key={p.id}
+                href={`/perfis/${p.id}`}
+                className={`flex flex-col rounded-md border border-line bg-raised p-5 transition-colors ${
+                  nicho?.accent ?? "hover:border-line-strong"
+                }`}
+              >
+                <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-sm border border-line bg-inset text-mint">
+                  <AvatarIcon name={p.avatar} className="h-5 w-5" />
+                </div>
+                <h2 className="truncate text-title font-semibold text-ink">
+                  {p.name}
+                </h2>
+                <p className="text-body text-ink-dim">
+                  {nicho?.title ?? p.source_type}
+                </p>
+                <dl className="mt-4 flex flex-col gap-1 text-label text-ink-muted">
+                  <div className="flex items-center gap-1.5">
+                    <span className="tabular text-ink-dim">{p.job_count}</span>
+                    <span>{p.job_count === 1 ? "vídeo gerado" : "vídeos gerados"}</span>
+                  </div>
+                  <div>{tempoRelativo(p.last_generated_at)}</div>
+                </dl>
+              </Link>
+            );
+          })}
+
+          <Link
+            href="/perfis/novo"
+            className="flex flex-col items-center justify-center gap-2 rounded-md border border-dashed border-line bg-raised p-5 text-center transition-colors hover:border-mint"
+          >
+            <span className="flex h-11 w-11 items-center justify-center rounded-sm border border-line bg-inset text-mint">
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" aria-hidden="true">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
             </span>
-            {enhanceJobs.some((v) => !TERMINAL_STATUSES.has(v.status)) && (
-              <span className="rounded-full bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 text-xs text-amber-400">
-                {enhanceJobs.filter((v) => !TERMINAL_STATUSES.has(v.status)).length} processando
-              </span>
-            )}
-          </div>
-        </Link>
-      </div>
+            <span className="text-body font-medium text-ink">Criar novo perfil</span>
+            <span className="text-label text-ink-muted">
+              Configure um novo padrão de geração.
+            </span>
+          </Link>
 
-      {/* Aprender com clipe viral de outro criador — vale para as três contas */}
-      <ReferenceForm />
-
-      {references.length > 0 && (
-        <div>
-          <h2 className="text-lg font-semibold text-gray-300 mb-4">Referências</h2>
-          <div className="flex flex-col gap-3">
-            {references.map((r) => (
-              <ReferenceCard key={r.id} reference={r} />
-            ))}
-          </div>
+          {/* Ferramentas que não são perfis: sem rubrica, sem fila de postagem. */}
+          {PERSONAL_TOOLS.map((tool) => {
+            const c = toolCounts[tool.key] ?? { total: 0, running: 0 };
+            return (
+              <Link
+                key={tool.key}
+                href={tool.href}
+                className={`flex flex-col rounded-md border border-line bg-raised p-5 transition-colors ${tool.accent}`}
+              >
+                <h2 className="text-title font-semibold text-ink">{tool.title}</h2>
+                <p className="mt-1 text-body text-ink-dim">{tool.blurb}</p>
+                <div className="mt-4 flex items-center gap-3 text-label">
+                  <span className="tabular text-ink-dim">
+                    {c.total} {c.total === 1 ? "vídeo" : "vídeos"}
+                  </span>
+                  {c.running > 0 && (
+                    <span className="rounded-full border border-running/30 bg-running-soft px-2 py-0.5 text-running">
+                      {c.running} processando
+                    </span>
+                  )}
+                </div>
+              </Link>
+            );
+          })}
         </div>
       )}
 
-      <LearnedPatterns />
+      {/* Aprender com clipe viral e padrões — só na versão pessoal. */}
+      {LearningSection && <LearningSection />}
     </div>
   );
 }

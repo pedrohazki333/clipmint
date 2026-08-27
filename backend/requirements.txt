@@ -4,6 +4,12 @@ pydantic==2.10.3
 pydantic-settings==2.6.1
 sqlalchemy==2.0.36
 aiosqlite==0.20.0
+# Migrações de schema. Substituiu o ALTER TABLE manual do database.py, que só
+# falava SQLite (o tipo DATETIME que ele emitia nem existe no Postgres).
+alembic==1.14.0
+# Driver do Postgres. O psycopg 3 fala síncrono E assíncrono, então serve ao
+# app (async) e ao Alembic (sync) sem precisar de dois drivers.
+psycopg[binary]==3.2.3
 python-dotenv==1.0.1
 httpx==0.28.0
 anthropic==0.40.0
@@ -24,6 +30,13 @@ ffmpeg-python==0.2.0
 mediapipe==0.10.18
 opencv-python-headless==4.10.0.84
 python-multipart==0.0.19
+# Hash de senha. Argon2id é a primeira escolha da OWASP e, ao contrário do
+# bcrypt, não trunca em 72 bytes — um limite silencioso que faria senha longa
+# valer só pelo começo.
+argon2-cffi==23.1.0
+# EmailStr do pydantic. Valida o formato do e-mail no cadastro, em vez de
+# aceitar qualquer string e descobrir o problema quando o login não funciona.
+email-validator==2.2.0
 aiofiles==24.1.0
 pillow>=10.4.0
 google-genai>=1.0.0

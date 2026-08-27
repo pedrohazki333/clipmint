@@ -42,12 +42,12 @@ export default function FontField({ value, onChange, disabled, fonts, label = "F
   const options = fonts.length ? fonts : [{ key: DEFAULT_FONT, label: "Padrão" }];
   return (
     <div className="flex items-center gap-2">
-      <span className="text-xs text-gray-500">{label}</span>
+      <span className="text-label text-ink-dim">{label}</span>
       <select
         value={value}
         disabled={disabled || fonts.length === 0}
         onChange={(e) => onChange(e.target.value)}
-        className="rounded-lg bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm text-gray-200 outline-none focus:border-gray-500 disabled:opacity-50"
+        className="rounded-sm bg-inset border border-line px-2 py-1.5 text-body text-ink outline-none focus:border-mint disabled:opacity-50"
       >
         {options.map((f) => (
           <option key={f.key} value={f.key}>

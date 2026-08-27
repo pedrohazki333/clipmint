@@ -1,18 +1,14 @@
 "use client";
-import type { SourceType } from "@/lib/types";
 
-import { useEffect, useState } from "react";
-import {
-  getApiErrorMessage,
-  getBarStyle,
-  resetBarStyle,
-  saveBarStyle,
-} from "@/lib/api";
 import ColorField, { HEX_RE, toFullHex } from "@/components/ColorField";
-import FontField, { DEFAULT_FONT, fontStack } from "@/components/FontField";
+import FontField, { fontStack } from "@/components/FontField";
+import { BAR_PADRAO, type BarDraft, type FontOption } from "@/lib/brand";
+import {
+  BAR_DEFAULT_BG as DEFAULT_BG,
+  BAR_DEFAULT_NAME,
+  BAR_DEFAULT_TEXT as DEFAULT_TEXT,
+} from "@/lib/branding";
 
-const DEFAULT_BG = "#101014";
-const DEFAULT_TEXT = "#9D9D9F";
 const MAX_NAME = 40;
 
 /** Mistura duas cores hex (amount = quanto de fg). Espelha _mix() do backend. */
@@ -26,108 +22,60 @@ function mix(fg: string, bg: string, amount: number): string {
 }
 
 interface Props {
-  /** Conta cujos presets estão sendo editados. */
-  source: SourceType;
+  value: BarDraft;
+  onChange: (v: BarDraft) => void;
+  fonts: FontOption[];
+  disabled?: boolean;
 }
 
-export default function BarStyleSettings({ source }: Props) {
-  const [bgColor, setBgColor] = useState(DEFAULT_BG);
-  const [textColor, setTextColor] = useState(DEFAULT_TEXT);
-  const [font, setFont] = useState(DEFAULT_FONT);
-  const [name, setName] = useState("");
-  const [fonts, setFonts] = useState<{ key: string; label: string }[]>([]);
-  const [customized, setCustomized] = useState(false);
-  const [dirty, setDirty] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [saved, setSaved] = useState(false);
+export function barValida(v: BarDraft): boolean {
+  return HEX_RE.test(v.bg) && HEX_RE.test(v.text);
+}
 
-  useEffect(() => {
-    getBarStyle(source)
-      .then((s) => {
-        setBgColor(s.bg_color);
-        setTextColor(s.text_color);
-        setFont(s.font);
-        setName(s.name);
-        setFonts(s.available_fonts);
-        setCustomized(s.customized);
-      })
-      .catch(() => {
-        /* backend fora do ar — mantém padrões */
-      });
-  }, [source]);
-
-  function touch<T>(setter: (v: T) => void) {
-    return (v: T) => {
-      setter(v);
-      setDirty(true);
-      setSaved(false);
-    };
-  }
-
-  const valid = HEX_RE.test(bgColor) && HEX_RE.test(textColor);
-
-  async function handleSave() {
-    setBusy(true);
-    setError("");
-    try {
-      const s = await saveBarStyle(source, bgColor, textColor, font, name);
-      setBgColor(s.bg_color);
-      setTextColor(s.text_color);
-      setFont(s.font);
-      setName(s.name);
-      setCustomized(true);
-      setDirty(false);
-      setSaved(true);
-    } catch (err) {
-      setError(getApiErrorMessage(err, "Não foi possível salvar o estilo da faixa."));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleReset() {
-    setBusy(true);
-    setError("");
-    try {
-      await resetBarStyle(source);
-      setBgColor(DEFAULT_BG);
-      setTextColor(DEFAULT_TEXT);
-      setFont(DEFAULT_FONT);
-      setName("");
-      setCustomized(false);
-      setDirty(false);
-      setSaved(false);
-    } catch (err) {
-      setError(getApiErrorMessage(err, "Não foi possível restaurar o padrão."));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const previewBg = toFullHex(bgColor, DEFAULT_BG);
-  const previewText = toFullHex(textColor, DEFAULT_TEXT);
+export default function BarStyleSettings({
+  value,
+  onChange,
+  fonts,
+  disabled = false,
+}: Props) {
+  const previewBg = toFullHex(value.bg, DEFAULT_BG);
+  const previewText = toFullHex(value.text, DEFAULT_TEXT);
   const previewDot = mix(previewText, previewBg, 0.45);
   const previewHairline = mix(previewText, previewBg, 0.18);
-  const stack = fontStack(font);
-  // Sem nome salvo, a faixa escreve o canal do vídeo (streamer). O exemplo no
-  // preview deixa isso visível em vez de mostrar uma faixa vazia.
-  const previewName = (name || "ALANZOKA").toUpperCase();
+  const stack = fontStack(value.font);
+  // Sem nome preenchido a faixa escreve o padrão, e é ele que o preview mostra.
+  const previewName = (value.name || BAR_DEFAULT_NAME).toUpperCase();
+  const noPadrao =
+    value.bg === BAR_PADRAO.bg &&
+    value.text === BAR_PADRAO.text &&
+    value.font === BAR_PADRAO.font &&
+    value.name === BAR_PADRAO.name;
 
   return (
-    <div className="rounded-2xl bg-gray-900 border border-gray-800 p-6">
-      <div>
-        <h2 className="text-base font-semibold text-gray-100">Faixa com o nome</h2>
-        <p className="text-sm text-gray-500 mt-1">
-          No streamer ela divide a facecam da gameplay; no podcast fica colada na
-          borda de baixo do banner. Sem nome preenchido ela só aparece no
-          streamer, com o nome do canal do vídeo.
-        </p>
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-body font-medium text-ink">Faixa com o nome</p>
+          <p className="mt-1 text-label text-ink-muted">
+            No streamer ela divide facecam e gameplay; no podcast fecha o banner.
+            Sem nome, sai <code>{BAR_DEFAULT_NAME}</code>.
+          </p>
+        </div>
+        {!noPadrao && (
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => onChange({ ...BAR_PADRAO })}
+            className="text-label text-ink-dim transition-colors hover:text-ink disabled:opacity-50"
+          >
+            Restaurar padrão
+          </button>
+        )}
       </div>
 
-      {/* Preview da faixa em proporção parecida com a do clip */}
+      {/* Preview da faixa em proporção parecida com a do clipe */}
       <div
-        className="mt-4 overflow-hidden rounded select-none"
+        className="select-none overflow-hidden rounded"
         style={{
           backgroundColor: previewBg,
           borderTop: `1px solid ${previewHairline}`,
@@ -135,7 +83,7 @@ export default function BarStyleSettings({ source }: Props) {
         }}
       >
         <div
-          className="flex items-center justify-center gap-6 whitespace-nowrap py-2.5 text-xs"
+          className="flex items-center justify-center gap-6 whitespace-nowrap py-2.5 text-label"
           style={{
             color: previewText,
             fontFamily: stack.family,
@@ -152,74 +100,50 @@ export default function BarStyleSettings({ source }: Props) {
         </div>
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-6">
+      <div className="flex flex-wrap items-center gap-6">
         <ColorField
           label="Fundo"
-          value={bgColor}
-          onChange={touch(setBgColor)}
-          disabled={busy}
+          value={value.bg}
+          onChange={(bg) => onChange({ ...value, bg })}
+          disabled={disabled}
           fallback={DEFAULT_BG}
         />
         <ColorField
           label="Fonte"
-          value={textColor}
-          onChange={touch(setTextColor)}
-          disabled={busy}
+          value={value.text}
+          onChange={(text) => onChange({ ...value, text })}
+          disabled={disabled}
           fallback={DEFAULT_TEXT}
         />
-
         <FontField
-          value={font}
-          onChange={touch<string>(setFont)}
-          disabled={busy}
+          value={value.font}
+          onChange={(font: string) => onChange({ ...value, font })}
+          disabled={disabled}
           fonts={fonts}
         />
-
         <div className="flex items-center gap-2">
-          <span className="text-xs text-gray-500">Nome</span>
+          <span className="text-label text-ink-dim">Nome</span>
           <input
             type="text"
-            value={name}
-            disabled={busy}
+            value={value.name}
+            disabled={disabled}
             maxLength={MAX_NAME}
-            onChange={(e) => touch<string>(setName)(e.target.value)}
-            placeholder="@suaconta"
-            className="w-40 rounded-lg bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm text-gray-200 outline-none focus:border-gray-500 disabled:opacity-50"
+            onChange={(e) => onChange({ ...value, name: e.target.value })}
+            placeholder={BAR_DEFAULT_NAME}
+            className="w-40 rounded-sm border border-line bg-inset px-2 py-1.5 text-body text-ink outline-none focus:border-mint disabled:opacity-50"
           />
-        </div>
-
-        <div className="flex items-center gap-3 ml-auto">
-          {(customized || dirty) && (
-            <button
-              onClick={handleReset}
-              disabled={busy}
-              className="text-xs text-gray-500 hover:text-gray-300 transition-colors disabled:opacity-50"
-            >
-              Restaurar padrão
-            </button>
-          )}
-          <button
-            onClick={handleSave}
-            disabled={busy || !dirty || !valid}
-            className="rounded-lg px-4 py-2 text-sm font-medium transition-colors bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {busy ? "Salvando..." : saved ? "Salvo ✓" : "Salvar"}
-          </button>
         </div>
       </div>
 
-      <p className="mt-3 text-xs text-gray-600">
-        Vale para os próximos clips gerados. O preview aproxima a fonte com o que o
-        navegador tem — o render usa a fonte instalada no servidor.
+      <p className="text-label text-ink-muted">
+        O preview aproxima a fonte com o que o navegador tem — o render usa a
+        fonte instalada no servidor.
       </p>
 
-      {!valid && (
-        <p className="mt-3 text-xs text-amber-500/80 bg-amber-900/15 rounded px-3 py-2">
-          Use hexadecimal no formato #RRGGBB (ex: #101014).
+      {!barValida(value) && (
+        <p className="rounded-sm bg-amber-900/15 px-3 py-2 text-label text-amber-500/80">
+          Use hexadecimal no formato #RRGGBB (ex: {DEFAULT_BG}).
         </p>
-      )}
-      {error && (
-        <p className="mt-3 text-xs text-red-400 bg-red-900/20 rounded px-3 py-2">{error}</p>
       )}
     </div>
   );

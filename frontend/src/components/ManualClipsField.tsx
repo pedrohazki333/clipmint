@@ -37,9 +37,9 @@ export default function ManualClipsField({
 
   return (
     <div className="flex flex-col gap-2">
-      <label htmlFor="manual-clips" className="text-sm font-medium text-gray-400">
+      <label htmlFor="manual-clips" className="text-body font-medium text-ink-dim">
         Trechos indicados por você{" "}
-        <span className="text-gray-600 font-normal">(opcional)</span>
+        <span className="text-ink-muted font-normal">(opcional)</span>
       </label>
       <textarea
         id="manual-clips"
@@ -47,9 +47,9 @@ export default function ManualClipsField({
         onChange={(e) => onChange(e.target.value)}
         rows={2}
         placeholder="3:24 - 4:10, 12:05 - 12:40"
-        className="w-full rounded-lg bg-gray-800 border border-gray-700 px-4 py-3 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-emerald-500 font-mono text-sm"
+        className="w-full rounded-sm bg-inset border border-line px-4 py-3 text-ink placeholder-ink-muted focus:outline-none focus:border-mint font-mono text-body"
       />
-      <p className="text-xs text-gray-500">
+      <p className="text-label text-ink-dim">
         Um por linha ou separados por vírgula. Aceita <code>3:24</code>,{" "}
         <code>1:02:03</code> ou segundos puros.
         {isCompilation && hasRanges
@@ -66,17 +66,17 @@ export default function ManualClipsField({
                 type="button"
                 onClick={() => onModeChange(m.value)}
                 title={m.description}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors border ${
+                className={`px-4 py-2 rounded-sm text-body font-medium transition-colors border ${
                   mode === m.value
-                    ? "bg-emerald-500 border-emerald-500 text-white"
-                    : "bg-gray-800 border-gray-700 text-gray-300 hover:border-emerald-600"
+                    ? "bg-mint-strong border-mint text-white"
+                    : "bg-inset border-line text-ink hover:border-mint"
                 }`}
               >
                 {m.label}
               </button>
             ))}
           </div>
-          <p className="text-xs text-gray-500">
+          <p className="text-label text-ink-dim">
             {MODES.find((m) => m.value === mode)?.description}.
           </p>
         </div>

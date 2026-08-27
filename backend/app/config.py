@@ -8,13 +8,33 @@ _ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=str(_ENV_FILE), env_file_encoding="utf-8")
 
+    # ── Qual build é este ─────────────────────────────────────────────────────
+    # false (default) = versão pessoal, com tudo ligado. true = build público,
+    # sem o nicho Siege X e sem a aba Melhorar vídeo. Quem decide o que cada
+    # valor desliga é app/features.py — não compare esta flag diretamente.
+    public_build: bool = False
+
     # API Keys
     assemblyai_api_key: str = ""
     anthropic_api_key: str = ""
 
     # Claude
     claude_model: str = "claude-sonnet-4-6"
-    claude_max_tokens: int = 8192
+    # Teto de SAÍDA da análise.
+    #
+    # 8192 era baixo demais e quebrava vídeo longo: um vídeo de 3h28 (29.223
+    # palavras) rende dezenas de candidatos, e o JSON com os cinco eixos da
+    # rubrica mais o `trim_reason` de cada um passa folgado dos 8k — a resposta
+    # vinha cortada no meio e o job falhava DEPOIS de já ter pago download,
+    # transcrição e a própria análise.
+    #
+    # 32000 cobre com folga o pior caso medido. O Sonnet 4.6 aceita até 128k de
+    # saída, mas acima de ~16k o SDK precisa de streaming para não estourar o
+    # timeout de HTTP — e é por isso que a chamada da análise passou a ser
+    # streaming (ver services/analyzer.py). Sem streaming, aumentar este número
+    # trocaria "resposta cortada" por "timeout", que é o que já se suspeitava
+    # estar acontecendo.
+    claude_max_tokens: int = 32000
 
     # ── Visão (services/vision.py) ────────────────────────────────────────────
     # Modelo próprio, separado do da análise: ler uma cena de jogo e uma
@@ -73,10 +93,58 @@ class Settings(BaseSettings):
     # Vazio = deixa a AssemblyAI detectar o idioma.
     assemblyai_language: str = "pt"
 
+    # ── Escolha do provedor de transcrição ────────────────────────────────────
+    # "assemblyai" (padrão) | "deepgram". Trocar isto é decisão a tomar com o
+    # relatório do modo de comparação na mão:
+    #   cd backend && .venv/bin/python -m app.scripts.compare_transcribers <job_id>
+    transcription_provider: str = "assemblyai"
+
+    # ── Deepgram (services/transcription/deepgram.py) ─────────────────────────
+    deepgram_api_key: str = ""
+    # nova-3 atende português direto (pt, pt-BR, pt-PT) no modelo monolíngue —
+    # não precisa do multilíngue, que é mais caro.
+    deepgram_model: str = "nova-3"
+    # Vazio = pede detecção automática de idioma.
+    deepgram_language: str = "pt"
+    # Teto de leitura da resposta. Transcrever uma hora leva minutos; o teto é
+    # para a chamada pendurada, não para a lenta.
+    deepgram_timeout: float = 1800.0
+
+    # ── Tarifas para a estimativa de custo ────────────────────────────────────
+    # Preços de tabela pay-as-you-go consultados em 25/08/2026, em USD por hora
+    # de áudio. Ficam em configuração porque preço de fornecedor muda e um
+    # número cravado no código vira mentira silenciosa no relatório.
+    #
+    #   AssemblyAI universal-3-pro / universal-3-5-pro : US$ 0,21/h
+    #   AssemblyAI universal-2                         : US$ 0,15/h
+    #   Deepgram nova-3 monolíngue  : US$ 0,0043/min = US$ 0,258/h
+    #   Deepgram nova-3 multilíngue : US$ 0,0052/min = US$ 0,312/h
+    #
+    # Vale notar para a decisão: no modelo que o projeto usa, o Deepgram é ~23%
+    # MAIS CARO que o AssemblyAI. A troca só se justifica por qualidade.
+    assemblyai_cost_per_hour: float = 0.21
+    deepgram_cost_per_hour: float = 0.258
+
     # Acesso remoto: senha única compartilhada. Vazia = sem checagem (uso
     # puramente local). Preenchida, exige o header X-ClipMint-Token nas
     # requisições que não vêm do próprio host — ver app/main.py.
     clipmint_password: str = ""
+
+    # ── Contas e sessão ───────────────────────────────────────────────────────
+    # Quanto tempo um login dura. 30 dias é o mesmo da senha única que existia
+    # antes — não faz sentido o produto público ser mais impaciente que a
+    # ferramenta pessoal.
+    session_days: int = 30
+    # E-mail do usuário-dono. Na versão pessoal é a conta única, dona de todos
+    # os jobs; no build público é quem administra a instalação.
+    owner_email: str = "dono@clipmint.local"
+    # Tamanho mínimo de senha no cadastro. 12 é a recomendação atual da OWASP
+    # para senha sem exigência de composição — regra de "1 maiúscula e 1
+    # símbolo" empurra as pessoas para senhas curtas e previsíveis.
+    min_password_length: int = 12
+    # Cadastro aberto. Desligado, só quem já tem conta entra — é o modo para
+    # abrir o produto para um grupo fechado antes de abrir para todos.
+    registration_open: bool = True
 
     # Porta em que o uvicorn sobe. Quem lê de verdade são o Makefile e o
     # next.config (para o proxy); aqui existe para o pydantic não recusar a
@@ -101,11 +169,141 @@ class Settings(BaseSettings):
     # movimento é de longe a mais cara e trava o job se algo der errado.
     enhance_step_timeout: int = 1800
 
+    # ── Tetos de tempo do FFmpeg (utils/ffmpeg.py) ────────────────────────────
+    # Sem teto, um FFmpeg travado deixa o job em "clipping" para sempre: o
+    # DELETE não interrompe o pipeline, o retry responde 409 enquanto o lock
+    # estiver vivo e o reconcile do startup poupa job com lock — só reiniciar o
+    # servidor resolvia. A aba Melhorar vídeo já fazia isso certo desde sempre
+    # (enhance_step_timeout); aqui é a mesma ideia para o pipeline principal.
+    #
+    # 1800s é folga larga: o render mais caro medido (clip de 90s, modo
+    # streamer com facecam por frame) fica na casa dos minutos. O teto existe
+    # para o caso patológico, não para apertar o caso normal.
+    ffmpeg_timeout: int = 1800
+    # O ffprobe só lê cabeçalho — se demora, o arquivo ou o disco estão ruins.
+    ffprobe_timeout: int = 120
+
+    # ── Travas de custo e de abuso ────────────────────────────────────────────
+    # Estas existem por um motivo só: transcrição e análise são pagas por
+    # minuto de áudio, e um bug ou um usuário mal-intencionado transformam isso
+    # numa fatura. Todos os tetos são por USUÁRIO e por janela de tempo.
+    #
+    # Janela deslizante, não "por dia": com dia-calendário, quem estoura a cota
+    # às 23h volta a ter tudo às 00h, e o pico de abuso cabe em duas horas.
+    quota_window_hours: int = 24
+    # Vídeos e minutos por janela. 0 = aquele teto está desligado, e é o padrão
+    # da VERSÃO PESSOAL: lá é uma pessoa, na própria conta de API, processando
+    # uma live de 6h de propósito — uma cota ali atrapalharia o trabalho em vez
+    # de proteger alguém. Preencher aqui liga o teto nas duas versões.
+    quota_max_videos: int = 0
+    quota_max_minutes: int = 0
+    # Os tetos do build público, usados quando os de cima estão em 0. Lá quem
+    # paga a conta não é quem manda o link, e é isso que muda tudo.
+    # Os dois valem ao mesmo tempo e o que estourar primeiro barra: 10 vídeos de
+    # 2h custam 20x mais que 10 de 6min, então contar só a quantidade não
+    # protegeria a conta.
+    public_quota_max_videos: int = 10
+    public_quota_max_minutes: int = 300
+
+    # Teto de duração de UM vídeo. Medido: a transcrição inteira entra no
+    # prompt sem truncagem, e 12h dão ~252k tokens — acima dos 200k de contexto
+    # do Sonnet, ou seja, o job falharia depois de já ter pago o download e a
+    # transcrição. 120min ≈ 43k tokens, com folga larga.
+    # A conferência é feita ANTES do download, com uma chamada de metadados.
+    # 0 = sem teto (o padrão da versão pessoal, onde quem paga escolhe).
+    max_source_minutes: int = 0
+    # Teto do build público, aplicado quando max_source_minutes é 0.
+    public_max_source_minutes: int = 120
+    # Tempo máximo da consulta de metadados. Ela roda na frente do usuário, na
+    # resposta do POST /jobs, então não pode pendurar a tela.
+    probe_timeout: float = 30.0
+
+    # Jobs processando ao mesmo tempo, no servidor inteiro. Cada um roda FFmpeg
+    # e MediaPipe; sem teto, dez jobs simultâneos derrubam a máquina e todos
+    # ficam lentos em vez de uns poucos ficarem rápidos. Os que passarem do
+    # limite esperam a vez em "queued".
+    max_concurrent_jobs: int = 2
+
+    # ── Retenção (TTL) ────────────────────────────────────────────────────────
+    # Depois de quantos dias o ARQUIVO do clipe é apagado. A linha no banco
+    # fica: nota, eixos da rubrica e desempenho real alimentam o few-shot, e
+    # apagá-los destruiria o aprendizado para economizar bytes que não são deles.
+    clip_ttl_days: int = 14
+    # O vídeo de ORIGEM sai bem antes: é o que ocupa GB de verdade e só serve
+    # para re-renderizar. Depois disso, "Retomar" ainda funciona — só volta a
+    # baixar.
+    download_ttl_days: int = 3
+    # 0 em qualquer um dos dois desliga aquela limpeza.
+    # De quanto em quanto tempo a faxina roda dentro do servidor. 0 desliga —
+    # é o que se faz quando ela vira um cron (ver docs/DEPLOY.md).
+    cleanup_interval_hours: int = 6
+
     # Storage
     storage_dir: str = "./storage"
 
-    # Database
-    sqlite_url: str = "sqlite+aiosqlite:///./clipmint.db"
+    # ── Banco ─────────────────────────────────────────────────────────────────
+    # Um só endereço para os dois bancos que o projeto usa:
+    #
+    #   sqlite+aiosqlite:///./clipmint.db          — versão pessoal e testes
+    #   postgresql+psycopg://user:senha@host/base  — build público
+    #
+    # Manter o SQLite não é preguiça: a versão pessoal roda no WSL2 e é usada
+    # todo dia; exigir um Postgres no laptop para clipar um vídeo seria custo
+    # sem contrapartida. O build público, esse, RECUSA subir em SQLite (ver
+    # app/main.py) — servidor multiusuário com um arquivo só dá corrupção sob
+    # escrita concorrente.
+    database_url: str = "sqlite+aiosqlite:///./clipmint.db"
+
+    # Nome antigo da mesma coisa. Continua lido para um .env existente não
+    # parar de funcionar, e VENCE quando os dois estão preenchidos: um .env que
+    # já funcionava não pode trocar de banco porque uma variável nova apareceu.
+    # A consequência prática, na hora de migrar para Postgres: definir
+    # DATABASE_URL não basta, é preciso APAGAR o SQLITE_URL do .env. Ver a
+    # propriedade `db_url` abaixo e test_sqlite_url_antigo_continua_valendo.
+    sqlite_url: str = ""
+
+    # Banco do build PÚBLICO quando ele roda NESTA máquina, ao lado da versão
+    # pessoal (`make serve-public`). Quem consome esta variável é o Makefile,
+    # que a passa como DATABASE_URL só para o processo público — o app nunca a
+    # lê. Ela está declarada aqui porque o Settings recusa chave desconhecida no
+    # .env, e sem o campo o backend nem chega a subir. No servidor, onde só
+    # existe o build público, ela fica vazia e vale a DATABASE_URL de cima.
+    public_database_url: str = ""
+
+    # ── Mercado Pago ──────────────────────────────────────────────────────────
+    # Credenciais do gateway. NUNCA no código: as duas saem do .env, e sem elas
+    # o build público recusa criar cobrança (ver services/mercadopago.py).
+    #
+    # O access token começa com APP_USR no ambiente de produção e com TEST no
+    # sandbox — é a mesma variável, e é ela que decide contra qual ambiente as
+    # chamadas vão. Não existe flag separada de sandbox de propósito: uma flag
+    # que discordasse do token seria uma forma nova de cobrar de verdade
+    # achando que era teste.
+    mercadopago_access_token: str = ""
+    # Segredo da assinatura do webhook, gerado no painel do Mercado Pago em
+    # "Suas integrações > Webhooks > Configurar notificação". Sem ele o endpoint
+    # de webhook recusa TUDO — é a única coisa que separa uma notificação do
+    # gateway de alguém postando "pagamento aprovado" na sua API.
+    mercadopago_webhook_secret: str = ""
+    mercadopago_api_base: str = "https://api.mercadopago.com"
+    mercadopago_timeout: float = 20.0
+
+    # Endereço público desta instalação, ex.: https://clipmint.com.br
+    #
+    # É para onde o Mercado Pago devolve a pessoa depois de ela autorizar a
+    # assinatura no site dele (`back_url`). Sem isto configurado, assinar é
+    # RECUSADO com mensagem clara — mandar alguém para o gateway sem caminho de
+    # volta deixaria a pessoa presa lá com o cartão já autorizado.
+    public_base_url: str = ""
+
+    # Minutos até a cobrança Pix expirar. Curto o bastante para o QR não ficar
+    # vivo eternamente, longo o bastante para quem foi buscar o celular.
+    pix_expiration_minutes: int = 30
+
+    # Tamanho do pool de conexões. Só vale no Postgres — o SQLite não usa pool.
+    # 10 cobre com folga a concorrência de jobs que o servidor vai permitir.
+    db_pool_size: int = 10
+    db_max_overflow: int = 5
 
     # Pipeline
     virality_threshold: float = 7.0
@@ -161,6 +359,15 @@ class Settings(BaseSettings):
     clip_watermark_width: float = 0.185     # largura, em frações da largura
     clip_watermark_center_y: float = 0.794  # centro vertical, em frações da altura
     clip_watermark_opacity: float = 0.70    # 1.0 = opaca; multiplica o alfa da arte
+
+    @property
+    def db_url(self) -> str:
+        """O endereço do banco, respeitando o nome antigo da variável."""
+        return self.sqlite_url or self.database_url
+
+    @property
+    def is_postgres(self) -> bool:
+        return self.db_url.startswith("postgresql")
 
     @property
     def downloads_dir(self) -> Path:

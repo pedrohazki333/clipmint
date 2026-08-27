@@ -61,7 +61,9 @@ def test_banner_uses_the_niche_colors(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         "app.services.layout.load_banner_style",
-        lambda st: (
+        # `profile_id` entrou ao lado do nicho quando a marca passou a poder ser
+        # por perfil; o stub aceita os dois e continua decidindo pelo nicho.
+        lambda st, profile_id=None: (
             BannerStyle("#FF6C3D", "#FFFFFF", "condensed", True)
             if st == "gameplay"
             else BannerStyle("#525EA7", "#FFC349", "condensed", True)

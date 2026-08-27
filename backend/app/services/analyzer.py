@@ -629,11 +629,50 @@ async def analyze_virality(
 
         client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
-        message = await client.messages.create(
+        # Streaming, e não `create`, por causa do tamanho da resposta.
+        #
+        # Uma análise de vídeo longo devolve dezenas de candidatos com cinco
+        # eixos e uma justificativa cada: passa de 16k tokens de saída com
+        # facilidade. Acima disso o SDK precisa de streaming para a conexão não
+        # estourar o timeout de HTTP enquanto o modelo ainda escreve — sem ele,
+        # subir `claude_max_tokens` só trocaria "resposta cortada" por
+        # "timeout". `get_final_message()` devolve a mensagem montada, então
+        # daqui para baixo nada muda.
+        async with client.messages.stream(
             model=settings.claude_model,
             max_tokens=settings.claude_max_tokens,
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
+        ) as stream:
+            message = await stream.get_final_message()
+
+        # O teto de saída é um modo de falha CONHECIDO e tem sintoma próprio:
+        # a resposta vem cortada no meio e o JSON não fecha. Sem esta checagem
+        # ela caía no except de JSONDecodeError logo abaixo e virava "Claude
+        # returned invalid JSON" — que manda investigar o parser quando o
+        # problema é o `claude_max_tokens`.
+        if message.stop_reason == "max_tokens":
+            raise RuntimeError(
+                f"Resposta cortada no teto de {settings.claude_max_tokens} tokens "
+                f"de saída. Aumente CLAUDE_MAX_TOKENS ou reduza o tamanho do "
+                f"vídeo analisado."
+            )
+        logger.info(
+            f"[{job_id}] Análise: {message.usage.input_tokens} tokens de entrada, "
+            f"{message.usage.output_tokens} de saída "
+            f"(teto {settings.claude_max_tokens})"
+        )
+        # Estes números só existem AQUI: a API devolve `usage` na resposta e ele
+        # não volta depois. Sem gravar agora, o custo de análise viraria
+        # estimativa por contagem de caracteres. A chamada tem sessão própria e
+        # engole exceção — medir não pode derrubar a análise que já deu certo.
+        from app.services import usage_monitor
+
+        await usage_monitor.registrar_analise_job(
+            job_id,
+            model=settings.claude_model,
+            input_tokens=message.usage.input_tokens,
+            output_tokens=message.usage.output_tokens,
         )
 
         text_blocks = [b.text for b in message.content if b.type == "text"]

@@ -3,7 +3,7 @@ Seleção de clipes para o cronograma de postagem.
 
 Cada horário do dia posta o clipe que lidera um eixo específico da rubrica —
 07:00 o maior hook_score, 22:30 o maior loopability_score — e alterna entre as
-contas (podcast, gameplay e siege). Este router é a ponte entre a análise e o
+contas. Este router é a ponte entre a análise e o
 agendador: ele ordena os clipes prontos pelo eixo pedido.
 
 O estado de "já postei esse" fica com o agendador; aqui basta mandar os ids já
@@ -11,7 +11,7 @@ usados em `exclude` para eles saírem da fila.
 """
 
 import logging
-from typing import List, Literal, Optional
+from typing import Annotated, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.features import SourceTypeField, allowed_source_types
 from app.models import Clip, Job
 
 logger = logging.getLogger(__name__)
@@ -37,7 +38,6 @@ _AXIS_COLUMNS = {
 }
 
 Axis = Literal["hook", "retention", "shareability", "loopability", "comment_bait", "overall"]
-SourceType = Literal["podcast", "gameplay", "siege"]
 
 # Grade de postagem: horário → (conta, eixo que escolhe o clipe).
 # Fica aqui para o agendador não manter uma cópia divergente do mapa.
@@ -46,7 +46,7 @@ SourceType = Literal["podcast", "gameplay", "siege"]
 # manhã, retenção no meio, comentários no almoço, equilíbrio à tarde,
 # compartilhamento no pico da noite, loop no fecho —, escalonadas para não
 # publicar duas de uma vez.
-POSTING_SLOTS = [
+ALL_POSTING_SLOTS = [
     ("07:00", "podcast", "hook"),
     ("08:30", "gameplay", "hook"),
     ("09:30", "siege", "hook"),
@@ -66,6 +66,17 @@ POSTING_SLOTS = [
     ("23:30", "gameplay", "loopability"),
     ("00:15", "siege", "loopability"),
 ]
+
+
+def posting_slots() -> list[tuple[str, str, str]]:
+    """A grade deste build.
+
+    No build público os horários de Siege X somem da grade em vez de apontarem
+    para uma conta que não existe — um agendador que lesse a grade completa
+    ficaria pedindo clipes de um nicho sem nenhum job.
+    """
+    permitidos = allowed_source_types()
+    return [slot for slot in ALL_POSTING_SLOTS if slot[1] in permitidos]
 
 
 class SlotResponse(BaseModel):
@@ -99,18 +110,21 @@ async def list_slots() -> List[SlotResponse]:
     """A grade de horários e o eixo que decide o clipe de cada um."""
     return [
         SlotResponse(time=time, source_type=source, axis=axis)
-        for time, source, axis in POSTING_SLOTS
+        for time, source, axis in posting_slots()
     ]
 
 
 @router.get("/schedule/pick", response_model=List[PickResponse])
 async def pick_clips(
-    axis: Axis = Query(..., description="Eixo que ordena a fila"),
-    source: SourceType = Query(..., description="Conta: podcast, gameplay ou siege"),
-    limit: int = Query(1, ge=1, le=50),
-    exclude: Optional[str] = Query(
-        None, description="IDs de clipes já postados, separados por vírgula"
-    ),
+    # O Query vai DENTRO do Annotated: como valor default ele faria o FastAPI
+    # descartar a validação de nicho que vem no SourceTypeField.
+    axis: Annotated[Axis, Query(description="Eixo que ordena a fila")],
+    source: Annotated[SourceTypeField, Query(description="Conta de destino do clipe")],
+    limit: Annotated[int, Query(ge=1, le=50)] = 1,
+    exclude: Annotated[
+        Optional[str],
+        Query(description="IDs de clipes já postados, separados por vírgula"),
+    ] = None,
     db: AsyncSession = Depends(get_db),
 ) -> List[PickResponse]:
     """

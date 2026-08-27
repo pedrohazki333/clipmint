@@ -1,1 +1,115 @@
 @import "tailwindcss";
+
+/**
+ * Tokens do ClipMint.
+ *
+ * Antes desta passada havia 14 cinzas soltos em ~380 usos, 5 raios de borda
+ * para o mesmo papel e nenhuma fonte definida — o app rodava na fonte padrão do
+ * navegador. Tudo que decide a aparência agora mora aqui.
+ *
+ * Os neutros não são o cinza do Tailwind: levam um traço de verde do próprio
+ * acento, então a interface parece tingida pela marca em vez de "tema escuro
+ * padrão". É sutil de propósito — quem usa não deve notar a escolha, só sentir
+ * que o app tem dono.
+ */
+@theme {
+  /* ── Superfícies ─────────────────────────────────────────────────────────
+     Três profundidades, e só três: página, o que está sobre ela, e o que está
+     afundado nela (campo de texto, poço). Uma quarta só criaria dúvida. */
+  --color-base: #0b0f0d;
+  --color-raised: #121714;
+  --color-inset: #1a211d;
+  /* Um degrau acima do raised, para o que está em foco ou sob o cursor. */
+  --color-hover: #1c2420;
+
+  /* ── Fios ────────────────────────────────────────────────────────────────
+     `line` é a borda normal; `line-strong` só onde a separação precisa ser
+     lida como estrutura, não como sugestão. */
+  --color-line: #232b27;
+  --color-line-strong: #35403a;
+
+  /* ── Texto ───────────────────────────────────────────────────────────────
+     Três níveis. `muted` é o piso: abaixo dele o contraste cai do mínimo
+     legível em fundo escuro. */
+  --color-ink: #e6ede9;
+  --color-ink-dim: #93a29b;
+  --color-ink-muted: #6b7a73;
+
+  /* ── Acento ──────────────────────────────────────────────────────────────
+     O verde que já era a identidade (o antigo emerald-400). */
+  --color-mint: #34d399;
+  --color-mint-strong: #10b981;
+  --color-mint-soft: #34d3991a;
+
+  /* ── Estados ─────────────────────────────────────────────────────────────
+     Um trio, sempre com o mesmo par: cor da tinta e cor do fundo suave. */
+  --color-running: #fbbf24;
+  --color-running-soft: #fbbf241a;
+  --color-danger: #f87171;
+  --color-danger-soft: #f871711a;
+  --color-ok: #34d399;
+  --color-ok-soft: #34d3991a;
+
+  /* ── Raio ────────────────────────────────────────────────────────────────
+     Três, no lugar dos cinco que havia. `sm` para o que se clica, `md` para o
+     que contém, `full` para pílula e ponto. */
+  --radius-sm: 8px;
+  --radius-md: 14px;
+
+  /* ── Tipografia ──────────────────────────────────────────────────────────
+     As variáveis vêm do next/font (ver app/layout.tsx), que hospeda as fontes
+     junto do app — sem requisição a terceiros. */
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "SF Mono", monospace;
+
+  /* Escala de 5 degraus. Antes, 212 dos 244 usos eram text-sm ou text-xs: tudo
+     tinha o mesmo peso e nada guiava o olho. */
+  --text-display: 1.75rem;      /* 28px — título de página */
+  --text-display--line-height: 2rem;
+  --text-title: 1.125rem;       /* 18px — título de card */
+  --text-title--line-height: 1.5rem;
+  --text-body: 0.875rem;        /* 14px — corpo */
+  --text-body--line-height: 1.25rem;
+  --text-label: 0.75rem;        /* 12px — rótulo, eyebrow */
+  --text-label--line-height: 1rem;
+  --text-data: 0.8125rem;       /* 13px — número e timecode, em mono */
+  --text-data--line-height: 1rem;
+}
+
+/**
+ * Números em coluna.
+ *
+ * Este app mostra timecode, duração, cinco notas de rubrica e contagem de views
+ * em cards repetidos. Com dígitos de largura proporcional eles dançam de uma
+ * linha para outra e a nota `8.4` pula de posição a cada card. `tabular-nums`
+ * resolve, e é por isso que o mono existe aqui: não é estética, é leitura em
+ * coluna.
+ */
+.tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/**
+ * Foco visível, sempre.
+ *
+ * O `outline-none` estava espalhado pelos campos sem nada no lugar — quem
+ * navega por teclado ficava sem saber onde está.
+ */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-mint);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/** Quem pediu menos movimento ao sistema não deve receber movimento. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

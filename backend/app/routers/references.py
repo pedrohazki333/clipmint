@@ -21,6 +21,7 @@ Daí em diante o fluxo é o mesmo para os dois:
 import json
 import logging
 import shutil
+import tempfile
 
 import anthropic
 from dataclasses import asdict
@@ -34,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
+from app.features import source_type_allowed
 from app.models import ReferenceExample
 from app.schemas import ReferenceConfirmResponse, ReferenceResponse, ReferenceUpdateRequest
 from app.services.reference_analyzer import analyze_reference
@@ -59,13 +61,15 @@ _ALLOWED_CLIP_EXT = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 _MAX_CLIP_BYTES = 500 * 1024 * 1024  # 500MB
 
 
-_SOURCE_TYPES = {"podcast", "gameplay", "siege"}
-
-
 def _valid_source_type(value: str) -> str:
-    """Nicho informado, ou 'podcast' quando vier algo que não existe."""
+    """Nicho informado, ou 'podcast' quando vier algo que não existe.
+
+    A lista permitida depende do build (ver app/features.py): no público, uma
+    referência marcada como "siege" cai no default em vez de criar um nicho
+    que a interface não tem como mostrar.
+    """
     value = (value or "").strip().lower()
-    return value if value in _SOURCE_TYPES else "podcast"
+    return value if source_type_allowed(value) else "podcast"
 
 
 def _load_json(raw: Optional[str]) -> Optional[dict]:
@@ -119,8 +123,21 @@ async def _get_or_404(reference_id: str, db: AsyncSession) -> ReferenceExample:
     return ref
 
 
-async def _read_clip(clip: UploadFile) -> tuple[bytes, str]:
-    """Valida formato e tamanho do upload e devolve (bytes, extensão)."""
+#: Tamanho do pedaço lido por vez. 1MB é grande o bastante para o custo por
+#: pedaço ser irrelevante e pequeno o bastante para o pico de memória não pesar.
+_CHUNK = 1024 * 1024
+
+
+async def _stage_clip(clip: UploadFile) -> tuple[Path, str]:
+    """
+    Valida o upload e o grava num arquivo temporário. Devolve (caminho, extensão).
+
+    Em pedaços, e não com um `await clip.read()` de uma vez. Aquela versão
+    carregava o arquivo INTEIRO na memória do processo e só DEPOIS comparava
+    com o teto de 500MB — ou seja, o teto não protegia de nada: um upload de
+    2GB já tinha sido lido antes de ser recusado. Num VPS pequeno com mais de
+    um usuário, é o caminho mais curto para o OOM.
+    """
     ext = Path(clip.filename or "").suffix.lower()
     if ext not in _ALLOWED_CLIP_EXT:
         raise HTTPException(
@@ -128,33 +145,57 @@ async def _read_clip(clip: UploadFile) -> tuple[bytes, str]:
             detail=f"Formato de clipe inválido ({ext or 'sem extensão'}). Aceitos: {', '.join(sorted(_ALLOWED_CLIP_EXT))}",
         )
 
-    data = await clip.read()
-    if len(data) > _MAX_CLIP_BYTES:
-        raise HTTPException(status_code=413, detail="Clipe muito grande (máx. 500MB)")
-    if not data:
-        raise HTTPException(status_code=422, detail="Arquivo de clipe vazio")
-    return data, ext
+    settings.references_dir.mkdir(parents=True, exist_ok=True)
+    handle = tempfile.NamedTemporaryFile(
+        dir=settings.references_dir, suffix=ext, delete=False
+    )
+    staged = Path(handle.name)
+    total = 0
+    try:
+        with handle:
+            while pedaco := await clip.read(_CHUNK):
+                total += len(pedaco)
+                if total > _MAX_CLIP_BYTES:
+                    # Aborta no pedaço em que o limite estoura: o resto do
+                    # corpo nem chega a ser lido nem gravado.
+                    raise HTTPException(
+                        status_code=413, detail="Clipe muito grande (máx. 500MB)"
+                    )
+                handle.write(pedaco)
+        if not total:
+            raise HTTPException(status_code=422, detail="Arquivo de clipe vazio")
+    except BaseException:
+        staged.unlink(missing_ok=True)
+        raise
+
+    return staged, ext
 
 
-async def _persist_clip(db: AsyncSession, ref: ReferenceExample, data: bytes, ext: str) -> None:
+async def _persist_clip(
+    db: AsyncSession, ref: ReferenceExample, staged: Path, ext: str
+) -> None:
     """
-    Grava a linha e o arquivo do clipe.
+    Grava a linha e move o arquivo já recebido para o nome definitivo.
 
     O registro é criado antes do arquivo porque é o ID dele que nomeia o
     arquivo — e é esse mesmo ID que o DELETE usa depois para achar tudo que
-    ficou no storage.
+    ficou no storage. O upload já está em disco (ver _stage_clip), então aqui é
+    só um rename dentro do mesmo diretório: não passa pela memória.
     """
-    db.add(ref)
-    await db.commit()
-    await db.refresh(ref)
+    try:
+        db.add(ref)
+        await db.commit()
+        await db.refresh(ref)
 
-    settings.references_dir.mkdir(parents=True, exist_ok=True)
-    clip_path = settings.references_dir / f"{ref.id}_clip{ext}"
-    clip_path.write_bytes(data)
+        clip_path = settings.references_dir / f"{ref.id}_clip{ext}"
+        staged.replace(clip_path)
 
-    ref.clip_path = str(clip_path)
-    await db.commit()
-    await db.refresh(ref)
+        ref.clip_path = str(clip_path)
+        await db.commit()
+        await db.refresh(ref)
+    except BaseException:
+        staged.unlink(missing_ok=True)  # não deixa temporário para trás
+        raise
 
 
 @router.post("/references", response_model=ReferenceResponse, status_code=201)
@@ -173,7 +214,7 @@ async def create_reference(
             detail="URL inválida: forneça o link do YouTube do vídeo ORIGINAL (youtube.com ou youtu.be)",
         )
 
-    data, ext = await _read_clip(clip)
+    staged, ext = await _stage_clip(clip)
 
     ref = ReferenceExample(
         kind="aligned",
@@ -182,7 +223,7 @@ async def create_reference(
         clip_path="",
         status="queued",
     )
-    await _persist_clip(db, ref, data, ext)
+    await _persist_clip(db, ref, staged, ext)
 
     logger.info(f"Reference {ref.id} created (source={source_url}, clip={ref.clip_path})")
     background_tasks.add_task(run_reference_pipeline, ref.id)
@@ -212,7 +253,7 @@ async def create_standalone_reference(
     `notas` vale a pena preencher: o que o usuário já percebeu sobre o clipe vai
     junto no prompt da síntese, e vira o "aprendizado" do exemplo few-shot.
     """
-    data, ext = await _read_clip(clip)
+    staged, ext = await _stage_clip(clip)
 
     ref = ReferenceExample(
         kind="standalone",
@@ -225,7 +266,7 @@ async def create_standalone_reference(
         clip_path="",
         status="queued",
     )
-    await _persist_clip(db, ref, data, ext)
+    await _persist_clip(db, ref, staged, ext)
 
     logger.info(f"Standalone reference {ref.id} created (clip={ref.clip_path})")
     background_tasks.add_task(run_standalone_pipeline, ref.id)

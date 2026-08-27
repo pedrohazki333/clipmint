@@ -18,6 +18,7 @@ from app.routers.settings import BarStyle
 from app.services.layout import (
     BAR_DEFAULT_BG_HEX,
     BAR_DEFAULT_FONT,
+    BAR_DEFAULT_NAME,
     BAR_DEFAULT_TEXT_HEX,
     BAR_FONTS,
     available_bar_fonts,
@@ -40,7 +41,8 @@ def test_bar_style_defaults_without_config(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "storage_dir", str(tmp_path))
 
     assert load_bar_style() == (
-        BAR_DEFAULT_BG_HEX, BAR_DEFAULT_TEXT_HEX, BAR_DEFAULT_FONT, "", False
+        BAR_DEFAULT_BG_HEX, BAR_DEFAULT_TEXT_HEX, BAR_DEFAULT_FONT,
+        BAR_DEFAULT_NAME, False
     )
 
 
@@ -49,7 +51,9 @@ def test_bar_style_reads_saved_config(tmp_path, monkeypatch):
         "bg_color": "#123456", "text_color": "#ABCDEF", "font": "inter",
     }))
 
-    assert load_bar_style() == ("#123456", "#ABCDEF", "inter", "", True)
+    assert load_bar_style() == (
+        "#123456", "#ABCDEF", "inter", BAR_DEFAULT_NAME, True
+    )
 
 
 def test_bar_style_survives_a_corrupt_config(tmp_path, monkeypatch):
@@ -57,7 +61,8 @@ def test_bar_style_survives_a_corrupt_config(tmp_path, monkeypatch):
     _write_style(tmp_path, monkeypatch, "{isso não é json")
 
     assert load_bar_style() == (
-        BAR_DEFAULT_BG_HEX, BAR_DEFAULT_TEXT_HEX, BAR_DEFAULT_FONT, "", False
+        BAR_DEFAULT_BG_HEX, BAR_DEFAULT_TEXT_HEX, BAR_DEFAULT_FONT,
+        BAR_DEFAULT_NAME, False
     )
 
 
@@ -67,7 +72,7 @@ def test_bar_style_completes_a_partial_config(tmp_path, monkeypatch):
 
     bg, text, font, name, customized = load_bar_style()
     assert (bg, text, font, name, customized) == (
-        "#000000", BAR_DEFAULT_TEXT_HEX, BAR_DEFAULT_FONT, "", True
+        "#000000", BAR_DEFAULT_TEXT_HEX, BAR_DEFAULT_FONT, BAR_DEFAULT_NAME, True
     )
 
 
@@ -157,8 +162,8 @@ def test_bar_style_is_per_niche(tmp_path, monkeypatch):
         "bg_color": "#992200", "text_color": "#FFCC00", "font": "condensed",
     }), source="gameplay")
 
-    assert load_bar_style("podcast") == ("#111111", "#EEEEEE", "inter", "", True)
-    assert load_bar_style("gameplay") == ("#992200", "#FFCC00", "condensed", "", True)
+    assert load_bar_style("podcast") == ("#111111", "#EEEEEE", "inter", BAR_DEFAULT_NAME, True)
+    assert load_bar_style("gameplay") == ("#992200", "#FFCC00", "condensed", BAR_DEFAULT_NAME, True)
 
 
 def test_bar_style_unknown_niche_falls_back(tmp_path, monkeypatch):
@@ -188,8 +193,8 @@ def test_legacy_branding_is_copied_to_both_niches(tmp_path, monkeypatch):
 
     migrate_legacy_branding()
 
-    assert load_bar_style("podcast") == ("#ABCABC", "#FFFFFF", "inter", "", True)
-    assert load_bar_style("gameplay") == ("#ABCABC", "#FFFFFF", "inter", "", True)
+    assert load_bar_style("podcast") == ("#ABCABC", "#FFFFFF", "inter", BAR_DEFAULT_NAME, True)
+    assert load_bar_style("gameplay") == ("#ABCABC", "#FFFFFF", "inter", BAR_DEFAULT_NAME, True)
 
     # Rodar de novo não sobrescreve o que o usuário já diferenciou
     preset_path("gameplay", BAR_STYLE_FILE).write_text(
@@ -215,11 +220,19 @@ def test_bar_name_is_read_from_the_niche_preset(tmp_path, monkeypatch):
     assert load_bar_style().name == "@hzpodclips"
 
 
-def test_bar_name_defaults_to_empty(tmp_path, monkeypatch):
-    """Sem nome salvo o layout decide: canal do vídeo no streamer, nada no cover."""
+def test_bar_name_defaults_to_a_placeholder(tmp_path, monkeypatch):
+    """
+    Sem nome salvo, a faixa escreve um espaço reservado — nunca o canal alheio.
+
+    Era vazio, e no modo streamer isso caía no nome do canal do VÍDEO DE ORIGEM
+    (`load_bar_style().name or streamer_name`): o clipe saía assinado com a
+    marca de outra pessoa. O modo capa já evitava isso omitindo a faixa; os dois
+    discordavam.
+    """
     _write_style(tmp_path, monkeypatch, json.dumps({"bg_color": "#000000"}))
 
-    assert load_bar_style().name == ""
+    assert load_bar_style().name == BAR_DEFAULT_NAME
+    assert BAR_DEFAULT_NAME == "@suaconta"
 
 
 def test_bar_name_is_trimmed_and_bounded():

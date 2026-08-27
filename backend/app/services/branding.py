@@ -13,11 +13,13 @@ lados até o usuário diferenciá-los.
 """
 
 import logging
+import re
 import shutil
 from pathlib import Path
 
 from app.config import settings
-from app.prompts.viral_analysis import DEFAULT_SOURCE_TYPE, SOURCE_TYPES
+from app.features import allowed_source_types, public_build
+from app.prompts.viral_analysis import DEFAULT_SOURCE_TYPE
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +40,13 @@ _PRESET_FILES = (WATERMARK_FILE, BANNER_COLORS_FILE, BAR_STYLE_FILE)
 
 
 def normalize_source(source_type: str | None) -> str:
-    """Nicho válido, caindo no default quando vier vazio ou desconhecido."""
+    """Nicho válido, caindo no default quando vier vazio ou desconhecido.
+
+    A lista de nichos válidos é a do build (ver app/features.py): o público não
+    pode criar storage/branding/siege/ nem escrever nele.
+    """
     value = (source_type or DEFAULT_SOURCE_TYPE).lower()
-    return value if value in SOURCE_TYPES else DEFAULT_SOURCE_TYPE
+    return value if value in allowed_source_types() else DEFAULT_SOURCE_TYPE
 
 
 def branding_dir(source_type: str | None) -> Path:
@@ -50,8 +56,112 @@ def branding_dir(source_type: str | None) -> Path:
     return path
 
 
-def preset_path(source_type: str | None, filename: str) -> Path:
+#: Os padrões do PRODUTO — a marca do próprio ClipMint.
+#: Começa com "_" para não colidir com nicho nenhum: os nichos ocupam este
+#: mesmo nível do diretório e são validados contra `allowed_source_types()`,
+#: que nunca devolve um nome começando com underscore.
+_CLIPMINT_SUBDIR = "_clipmint"
+
+
+def clipmint_defaults_dir() -> Path:
+    """Pasta dos presets do próprio ClipMint, criada sob demanda.
+
+    É o que um perfil sem marca própria usa no build público. Arquivo que não
+    existir aqui simplesmente não vira preset — o clipe sai sem marca d'água,
+    com as cores padrão de `layout.py`, e não com a marca de outra pessoa.
+    """
+    path = settings.branding_dir / _CLIPMINT_SUBDIR
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+#: Onde ficam os presets de cada perfil, separados dos do nicho.
+_PROFILES_SUBDIR = "profiles"
+
+#: Um id de perfil: 32 hexadecimais (uuid4 sem hífens). Validado antes de virar
+#: caminho — este valor chega de um parâmetro de request, e um `../` ali sairia
+#: do diretório de branding.
+_ID_DE_PERFIL = re.compile(r"^[0-9a-f]{32}$")
+
+
+def profile_dir(profile_id: str | None) -> Path | None:
+    """Pasta de presets de um perfil, ou None se o id não for de um perfil.
+
+    Não cria o diretório: quem cria é quem escreve (ver `ensure_profile_dir`).
+    Ler não deve deixar pasta vazia para trás em todo clipe renderizado.
+    """
+    if not profile_id or not _ID_DE_PERFIL.match(profile_id):
+        return None
+    return settings.branding_dir / _PROFILES_SUBDIR / profile_id
+
+
+def ensure_profile_dir(profile_id: str) -> Path:
+    """Pasta de presets do perfil, criada sob demanda. Levanta se o id for inválido."""
+    path = profile_dir(profile_id)
+    if path is None:
+        raise ValueError(f"Id de perfil inválido: {profile_id!r}")
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def preset_path(
+    source_type: str | None, filename: str, profile_id: str | None = None
+) -> Path:
+    """
+    Onde está este preset, para este perfil.
+
+    Precedência: o arquivo do PERFIL, se existir; senão o do NICHO. É essa
+    queda que mantém tudo funcionando como antes — perfil sem logo própria usa
+    a do nicho, e job antigo (sem perfil) nem chega a olhar a pasta de perfil.
+
+    O motivo de existir: os presets eram gravados só por nicho, num diretório
+    compartilhado. Num produto multiusuário isso faz a logo de um aparecer no
+    clipe do outro — e dois perfis da MESMA rubrica ("HZ Pod Clips" e "Cortes de
+    Entrevistas", ambos podcast) não teriam como ter marcas diferentes.
+    """
+    do_perfil = profile_dir(profile_id)
+    if do_perfil is not None:
+        candidato = do_perfil / filename
+        if candidato.exists():
+            return candidato
+    if public_build():
+        # No público a queda NÃO pode ser no nicho: aquela pasta é da instalação
+        # inteira e guarda a marca de quem administra. Um perfil recém-criado
+        # herdava a logo, as cores e o @ do dono — a pessoa gerava o primeiro
+        # clipe assinado por outro. Aqui a queda é a marca do próprio produto.
+        return clipmint_defaults_dir() / filename
     return branding_dir(source_type) / filename
+
+
+#: Presets que o PRODUTO traz de fábrica. Ficam no repositório (storage/ é
+#: ignorado pelo git), e são copiados para dentro do storage no startup.
+_ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "branding"
+
+
+def seed_clipmint_defaults() -> None:
+    """
+    Põe os presets de fábrica no storage, se faltarem.
+
+    Idempotente e não-destrutiva: arquivo que já existe não é tocado, então
+    trocar a marca do produto é substituir o asset e apagar a cópia — e nunca
+    sobrescreve o que alguém ajustou.
+
+    Sem isto, `clipmint_defaults_dir()` fica vazia numa instalação nova e o
+    perfil sem marca própria sai sem marca nenhuma. Que é melhor do que sair
+    com a marca do dono da instalação (era o que acontecia), mas pior do que
+    sair com a do ClipMint.
+    """
+    if not _ASSETS_DIR.is_dir():
+        return
+    destino = clipmint_defaults_dir()
+    for arquivo in sorted(_ASSETS_DIR.iterdir()):
+        if not arquivo.is_file():
+            continue
+        alvo = destino / arquivo.name
+        if alvo.exists():
+            continue
+        shutil.copy2(arquivo, alvo)
+        logger.info(f"Preset de fábrica instalado: {alvo.name}")
 
 
 def migrate_legacy_branding() -> None:
@@ -70,7 +180,7 @@ def migrate_legacy_branding() -> None:
         legacy_file = legacy_dir / filename
         if not legacy_file.is_file():
             continue
-        for source in SOURCE_TYPES:
+        for source in allowed_source_types():
             target = branding_dir(source) / filename
             if target.exists():
                 continue

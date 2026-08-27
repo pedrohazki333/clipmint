@@ -22,22 +22,22 @@ function Section({
 }) {
   return (
     <div>
-      <p className="text-xs text-gray-500 mb-1">{title}</p>
+      <p className="text-label text-ink-dim mb-1">{title}</p>
       {children}
     </div>
   );
 }
 
 function Prose({ text }: { text: string }) {
-  return <p className="text-sm text-gray-300 leading-relaxed">{text}</p>;
+  return <p className="text-body text-ink leading-relaxed">{text}</p>;
 }
 
 function Bullets({ items, tone = "gray" }: { items: string[]; tone?: "gray" | "emerald" }) {
   return (
     <ul className="flex flex-col gap-1.5">
       {items.map((item, i) => (
-        <li key={i} className="text-sm text-gray-300 leading-relaxed flex gap-2">
-          <span className={tone === "emerald" ? "text-emerald-500" : "text-gray-600"}>—</span>
+        <li key={i} className="text-body text-ink leading-relaxed flex gap-2">
+          <span className={tone === "emerald" ? "text-mint" : "text-ink-muted"}>—</span>
           <span>{item}</span>
         </li>
       ))}
@@ -46,10 +46,10 @@ function Bullets({ items, tone = "gray" }: { items: string[]; tone?: "gray" | "e
 }
 
 const ROLE_COLOR: Record<string, string> = {
-  setup: "bg-gray-800 border-gray-700 text-gray-400",
-  escalada: "bg-amber-900/30 border-amber-800/60 text-amber-400",
+  setup: "bg-inset border-line text-ink-dim",
+  escalada: "bg-amber-900/30 border-amber-800/60 text-running",
   virada: "bg-fuchsia-900/30 border-fuchsia-800/60 text-fuchsia-400",
-  payoff: "bg-emerald-900/30 border-emerald-800/60 text-emerald-400",
+  payoff: "bg-mint-soft border-mint/30 text-mint",
   arremate: "bg-sky-900/30 border-sky-800/60 text-sky-400",
 };
 
@@ -71,20 +71,20 @@ export default function ClipForensicsPanel({ forensics }: { forensics: ClipForen
     <div className="flex flex-col gap-6">
       {/* Gancho */}
       {hook && (
-        <div className="rounded-2xl bg-gray-900 border border-gray-800 p-6 flex flex-col gap-4">
-          <h2 className="text-base font-semibold text-gray-100">
+        <div className="rounded-md bg-raised border border-line p-6 flex flex-col gap-4">
+          <h2 className="text-body font-semibold text-ink">
             Os primeiros segundos
             {hook.seconds_to_promise != null && (
-              <span className="ml-2 text-xs font-normal text-gray-500">
+              <span className="ml-2 text-label font-normal text-ink-dim">
                 promessa fechada em {hook.seconds_to_promise.toFixed(1)}s
               </span>
             )}
           </h2>
 
           {hook.on_screen_text && (
-            <div className="rounded-lg bg-black/40 border border-gray-800 px-4 py-3">
-              <p className="text-xs text-gray-500 mb-1">Texto queimado na tela</p>
-              <p className="text-base font-bold text-gray-100 leading-snug">
+            <div className="rounded-sm bg-black/40 border border-line px-4 py-3">
+              <p className="text-label text-ink-dim mb-1">Texto queimado na tela</p>
+              <p className="text-body font-bold text-ink leading-snug">
                 {hook.on_screen_text}
               </p>
             </div>
@@ -98,7 +98,7 @@ export default function ClipForensicsPanel({ forensics }: { forensics: ClipForen
             )}
             {hook.first_line && (
               <Section title="Primeira fala">
-                <p className="text-sm text-gray-300 italic leading-relaxed">
+                <p className="text-body text-ink italic leading-relaxed">
                   “{hook.first_line}”
                 </p>
               </Section>
@@ -115,22 +115,22 @@ export default function ClipForensicsPanel({ forensics }: { forensics: ClipForen
 
       {/* Estrutura */}
       {beats.length > 0 && (
-        <div className="rounded-2xl bg-gray-900 border border-gray-800 p-6 flex flex-col gap-3">
-          <h2 className="text-base font-semibold text-gray-100">Como o clipe é montado</h2>
+        <div className="rounded-md bg-raised border border-line p-6 flex flex-col gap-3">
+          <h2 className="text-body font-semibold text-ink">Como o clipe é montado</h2>
           <div className="flex flex-col gap-2">
             {beats.map((beat, i) => (
               <div key={i} className="flex gap-3 items-start">
-                <span className="text-xs text-gray-600 font-mono pt-1 w-20 flex-shrink-0 tabular-nums">
+                <span className="text-label text-ink-muted font-mono pt-1 w-20 flex-shrink-0 tabular-nums">
                   {beat.start?.toFixed(1)}–{beat.end?.toFixed(1)}s
                 </span>
                 <span
-                  className={`text-xs rounded-full border px-2 py-0.5 flex-shrink-0 ${
+                  className={`text-label rounded-full border px-2 py-0.5 flex-shrink-0 ${
                     ROLE_COLOR[beat.role] ?? ROLE_COLOR.setup
                   }`}
                 >
                   {beat.role}
                 </span>
-                <span className="text-sm text-gray-300 leading-relaxed">{beat.what}</span>
+                <span className="text-body text-ink leading-relaxed">{beat.what}</span>
               </div>
             ))}
           </div>
@@ -138,7 +138,7 @@ export default function ClipForensicsPanel({ forensics }: { forensics: ClipForen
       )}
 
       {/* As camadas */}
-      <div className="rounded-2xl bg-gray-900 border border-gray-800 p-6 grid gap-5 sm:grid-cols-2">
+      <div className="rounded-md bg-raised border border-line p-6 grid gap-5 sm:grid-cols-2">
         {f.audio_role && (
           <Section title="O que o som faz">
             <Prose text={f.audio_role} />
@@ -183,8 +183,8 @@ export default function ClipForensicsPanel({ forensics }: { forensics: ClipForen
 
       {/* O que isso ensina */}
       {(rules.length > 0 || production.length > 0 || doNotCopy.length > 0) && (
-        <div className="rounded-2xl bg-gray-900 border border-gray-800 p-6 flex flex-col gap-5">
-          <h2 className="text-base font-semibold text-gray-100">O que isso ensina</h2>
+        <div className="rounded-md bg-raised border border-line p-6 flex flex-col gap-5">
+          <h2 className="text-body font-semibold text-ink">O que isso ensina</h2>
 
           {rules.length > 0 && (
             <Section title="Regras de corte — entram no prompt ao confirmar">
@@ -205,13 +205,13 @@ export default function ClipForensicsPanel({ forensics }: { forensics: ClipForen
       )}
 
       {gaps.length > 0 && (
-        <div className="rounded-xl bg-amber-900/15 border border-amber-900/40 px-4 py-3">
-          <p className="text-xs text-amber-500/90 mb-1.5">
+        <div className="rounded-md bg-amber-900/15 border border-amber-900/40 px-4 py-3">
+          <p className="text-label text-amber-500/90 mb-1.5">
             O que as evidências não permitiram concluir
           </p>
           <ul className="flex flex-col gap-1">
             {gaps.map((gap, i) => (
-              <li key={i} className="text-xs text-amber-200/70 leading-relaxed">
+              <li key={i} className="text-label text-amber-200/70 leading-relaxed">
                 {gap}
               </li>
             ))}

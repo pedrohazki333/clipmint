@@ -33,13 +33,19 @@ from sqlalchemy import delete, select, update
 
 from app.config import settings
 from app.database import AsyncSessionLocal
+from app.errors import user_message
 from app.models import Job, Transcript, Clip
 from app.services.downloader import VideoMetadata, download_video, ensure_media
 from app.services.transcriber import transcribe_audio
 from app.services.analyzer import AnalysisResult, ViralClip, analyze_virality
 from app.services.audio_events import detect_gaps
 from app.services.scene_events import describe_events
-from app.services.clipper import cut_and_crop, cut_and_stack
+from app.services.clipper import (
+    cut_and_crop,
+    cut_and_stack,
+    cut_original,
+    cut_vertical,
+)
 from app.services.facecam import (
     CamPhase,
     default_rect,
@@ -50,6 +56,7 @@ from app.services.facecam import (
 from app.prompts.viral_analysis import default_source_type
 from app.services.layout import streamer_geometry
 from app.services import r6_hud
+from app.services import usage as usage_service
 from app.services import segments as segments_service
 from app.services.segments import compact_segments, remap_words
 from app.workers import joblock
@@ -59,6 +66,24 @@ logger = logging.getLogger(__name__)
 # Status em que alguém está ativamente trabalhando no job. Se o processo morre,
 # ninguém está — e o job fica preso nesse status para sempre.
 RUNNING_STATUSES = ("queued", "downloading", "transcribing", "analyzing", "clipping")
+
+#: Quantos jobs processam ao mesmo tempo neste servidor.
+#:
+#: Cada job roda FFmpeg e MediaPipe, que competem por CPU e disco. Sem teto, dez
+#: jobs simultâneos deixam TODOS lentos, em vez de alguns ficarem rápidos e os
+#: outros esperarem — e no meio disso o servidor pode não conseguir nem
+#: responder a API, porque o pipeline roda dentro do processo dela.
+#:
+#: Criado tarde, e não no import: `asyncio.Semaphore` se prende ao event loop em
+#: que é criado, e no import ainda não existe loop nenhum.
+_semaforo: asyncio.Semaphore | None = None
+
+
+def _limite_de_concorrencia() -> asyncio.Semaphore:
+    global _semaforo
+    if _semaforo is None:
+        _semaforo = asyncio.Semaphore(max(1, settings.max_concurrent_jobs))
+    return _semaforo
 
 # Acima disto o trecho é o streamer assistindo, não jogando. Medido no job
 # do Nesk: o clipe ruim deu 82% e os dois bons deram 0% — o limiar fica no
@@ -70,6 +95,22 @@ INTERRUPTED_MESSAGE = (
     "Use 'Retomar' — o download, a transcrição e a análise já feitos são "
     "reaproveitados, só os clips que faltam são renderizados."
 )
+
+
+class JobDeleted(RuntimeError):
+    """O job sumiu do banco enquanto o pipeline trabalhava nele.
+
+    Acontece quando alguém apaga um job em andamento — o que é permitido de
+    propósito, porque é a saída para um job travado. O pipeline precisa
+    PERCEBER: antes disto ele seguia até o fim, recriava os diretórios que o
+    DELETE tinha acabado de apagar e inseria linhas de Clip apontando para um
+    job inexistente (o SQLite não recusa, as FKs não são aplicadas). Sobravam
+    linhas órfãs e arquivos sem dono no disco.
+    """
+
+    def __init__(self, job_id: str) -> None:
+        super().__init__(f"Job {job_id} foi excluído durante o processamento")
+        self.job_id = job_id
 
 
 @dataclass
@@ -85,16 +126,56 @@ class _ClipTask:
     segments: list = field(default_factory=list)
 
 
+#: Teto de marcas guardadas. Um job retomado várias vezes acumula transições, e
+#: a coluna não pode crescer sem fim; as mais recentes são as que a tela usa.
+_MAX_STAGE_MARKS = 40
+
+
+def _append_stage(bruto: str | None, status: str, quando: datetime) -> str:
+    """Acrescenta uma marca de troca de etapa ao registro do job."""
+    try:
+        marcas = json.loads(bruto) if bruto else []
+        if not isinstance(marcas, list):
+            marcas = []
+    except json.JSONDecodeError:
+        marcas = []  # ilegível: recomeça em vez de derrubar o pipeline
+    marcas.append({"s": status, "at": quando.isoformat()})
+    return json.dumps(marcas[-_MAX_STAGE_MARKS:])
+
+
+async def _job_exists(job_id: str) -> bool:
+    """O job ainda está no banco?
+
+    Consultado nos pontos caros do pipeline: o trabalho pode durar minutos e o
+    usuário pode ter desistido no meio.
+    """
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Job.id).where(Job.id == job_id))
+        return result.scalar_one_or_none() is not None
+
+
+async def _abort_if_deleted(job_id: str) -> None:
+    """Interrompe o pipeline se o job já não existir."""
+    if not await _job_exists(job_id):
+        raise JobDeleted(job_id)
+
+
 async def _update_job_status(job_id: str, status: str, **kwargs) -> None:
-    """Atualiza status e campos opcionais do job no banco."""
+    """Atualiza status e campos opcionais do job no banco.
+
+    Levanta JobDeleted se o job sumiu: continuar depois disso recria no disco o
+    que o DELETE apagou e grava linhas órfãs.
+    """
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Job).where(Job.id == job_id))
         job = result.scalar_one_or_none()
         if not job:
-            logger.error(f"[{job_id}] Job not found when updating status to '{status}'")
-            return
+            raise JobDeleted(job_id)
+        agora = datetime.now(timezone.utc)
+        if job.status != status:
+            job.stage_log = _append_stage(job.stage_log, status, agora)
         job.status = status
-        job.updated_at = datetime.now(timezone.utc)
+        job.updated_at = agora
         if status != "error" and "error_message" not in kwargs:
             # Sair de um erro limpa a mensagem: um resume bem-sucedido não pode
             # deixar o job 'done' exibindo o erro da tentativa anterior.
@@ -156,6 +237,12 @@ async def reconcile_interrupted_jobs() -> list[str]:
             .values(status="error")
         )
         await db.commit()
+
+    # Estes jobs morreram com a reserva de pé — o processo que devolveria já não
+    # existe. Sem isto, todo restart durante um job deixaria crédito preso, e o
+    # usuário perderia saldo por um reinício do servidor.
+    for jid in job_ids:
+        await usage_service.reconciliar_job(jid, sucesso=False)
 
     logger.warning(
         f"{len(job_ids)} job(s) interrompido(s) por restart marcado(s) como erro: "
@@ -556,7 +643,14 @@ async def run_pipeline(job_id: str, resume: bool = False) -> None:
     # exclusivo: dois pipelines no mesmo job corrompem os arquivos um do outro.
     try:
         with joblock.held(job_id):
-            await _execute_pipeline(job_id, resume)
+            limite = _limite_de_concorrencia()
+            if limite.locked():
+                logger.info(
+                    f"[{job_id}] Aguardando vaga "
+                    f"({settings.max_concurrent_jobs} job(s) em processamento)"
+                )
+            async with limite:
+                await _execute_pipeline(job_id, resume)
     except joblock.JobAlreadyRunning as exc:
         # Quem já está trabalhando segue em frente; este processo sai sem tocar
         # em nada — nem no status do job, que pertence ao outro.
@@ -578,6 +672,9 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
             subtitle_mode = job.subtitle_mode
             layout_mode = job.layout_mode or "cover"
             source_type = job.source_type or default_source_type(layout_mode)
+            # De qual perfil vieram os presets de marca. O pipeline não decide
+            # nada com isso — só repassa ao render, que escolhe a pasta.
+            profile_id = job.profile_id
             clip_mode = job.clip_mode or "individual"
             manual_ranges = _parse_segments_json(job.manual_clips)
             manual_mode = job.manual_mode or "only"
@@ -638,6 +735,23 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
 
             words = [asdict(w) for w in transcription.words]
 
+        # Vídeo sem fala nenhuma (só música, só ruído) não tem o que analisar.
+        # Antes disto, uma transcrição vazia montava um prompt válido e ia para
+        # a API — chamada paga para perguntar sobre um texto que não existe — e
+        # a tela ainda dizia "nenhum trecho atingiu o threshold", que é uma
+        # explicação falsa.
+        if not words:
+            await _update_job_status(
+                job_id,
+                "done",
+                result_note=(
+                    "Nenhuma fala foi detectada neste vídeo. O ClipMint escolhe "
+                    "os cortes pelo que é dito, então não há o que analisar aqui."
+                ),
+            )
+            logger.info(f"[{job_id}] Transcrição vazia — análise dispensada")
+            return
+
         # ── 4. Análise de viralidade ──────────────────────────────────────────
         tasks = await _tasks_from_db(job_id) if resume else []
         if tasks:
@@ -656,6 +770,10 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
             # E o que a tela mostrava nesses momentos. O áudio diz quando; a
             # imagem diz o quê — e só olha as janelas que o áudio apontou.
             await describe_events(job_id, metadata.video_path, gaps)
+
+            # A varredura de áudio e a visão levam minutos: se o usuário
+            # desistiu nesse meio-tempo, não há motivo para pagar a análise.
+            await _abort_if_deleted(job_id)
 
             manual = _manual_clips(manual_ranges, clip_mode)
             if manual and manual_mode == "only":
@@ -697,7 +815,14 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
             )
 
             if not analysis.clips:
-                await _update_job_status(job_id, "done")
+                await _update_job_status(
+                    job_id,
+                    "done",
+                    result_note=(
+                        "Nenhum trecho deste vídeo atingiu a nota mínima de "
+                        f"viralidade ({settings.virality_threshold:.0f}/10)."
+                    ),
+                )
                 logger.info(f"[{job_id}] No viral clips found. Pipeline complete.")
                 return
 
@@ -710,11 +835,22 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                     job_id, metadata.video_path, analysis.clips
                 )
                 if not analysis.clips:
-                    await _update_job_status(job_id, "done")
+                    await _update_job_status(
+                        job_id,
+                        "done",
+                        result_note=(
+                            "Os trechos candidatos foram descartados: em todos "
+                            "eles o streamer passa a maior parte do tempo morto."
+                        ),
+                    )
                     logger.info(
                         f"[{job_id}] Todos os candidatos eram com o streamer morto."
                     )
                     return
+
+            # A análise pode ter levado minutos; não grave clips de um job
+            # que já foi excluído.
+            await _abort_if_deleted(job_id)
 
             tasks = await _create_clip_records(
                 job_id, analysis.clips, words, subtitle_mode
@@ -744,6 +880,11 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
         # Processa cada clip pendente
         failures: list[str] = []
         for index, task in enumerate(pending):
+            # Renderizar um clip leva minutos; entre um e outro dá tempo de o
+            # job ser excluído. Sem esta checagem o laço seguia até o fim
+            # recriando storage/clips/<job_id>/ depois do DELETE.
+            await _abort_if_deleted(job_id)
+
             compacted: str | None = None
             try:
                 # Clip costurado (Siege): os trechos viram um arquivo só, e o
@@ -766,7 +907,24 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                     clip_start, clip_end = 0.0, total
                     clip_words = remap_words(words, task.segments)
 
-                if layout_mode == "streamer":
+                # Os dois modos sem camada nenhuma não precisam de facecam
+                # nem de capa — vão direto ao render.
+                if layout_mode in ("crop", "original"):
+                    render = (
+                        cut_vertical if layout_mode == "crop" else cut_original
+                    )
+                    file_path, file_size = await render(
+                        job_id=job_id,
+                        clip_id=task.clip_id,
+                        video_path=source_path,
+                        start_time=clip_start,
+                        end_time=clip_end,
+                        words=clip_words,
+                        subtitle_mode=subtitle_mode,
+                        source_type=source_type,
+                        profile_id=profile_id,
+                    )
+                elif layout_mode == "streamer":
                     # O layout da live muda ao longo do vídeo: cada clip tem a
                     # sua própria linha do tempo de facecam.
                     facecam, stored_rect = await _resolve_facecam(
@@ -792,8 +950,8 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                         words=clip_words,
                         subtitle_mode=subtitle_mode,
                         facecam=facecam,
-                        streamer_name=metadata.channel,
                         source_type=source_type,
+                        profile_id=profile_id,
                         banner_text=task.banner_text,
                     )
                 else:
@@ -807,6 +965,7 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                         subtitle_mode=subtitle_mode,
                         banner_text=task.banner_text,
                         source_type=source_type,
+                        profile_id=profile_id,
                     )
 
                 await _update_clip(
@@ -816,6 +975,10 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                     file_size_bytes=file_size,
                 )
                 logger.info(f"[{job_id}] Clip {task.clip_id} ready: {file_path}")
+
+            except JobDeleted:
+                segments_service.cleanup(compacted)
+                raise  # não é falha do clip: o job inteiro deixou de existir
 
             except Exception as e:
                 logger.error(
@@ -844,9 +1007,39 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                 f"[{job_id}] {len(failures)} of {len(pending)} clip(s) failed to render"
             )
 
-        await _update_job_status(job_id, "done")
+        await _update_job_status(job_id, "done", result_note=None)
+        # Fecha a conta: devolve a reserva e cobra os minutos que rodaram. Nunca
+        # levanta — contabilidade não derruba um job que já terminou bem.
+        await usage_service.reconciliar_job(job_id, sucesso=True)
         logger.info(f"[{job_id}] Pipeline complete!")
+
+    except JobDeleted:
+        # Saída limpa: não há job para marcar como erro, e o que este processo
+        # criou depois do DELETE tem que sair do disco junto.
+        logger.info(f"[{job_id}] Job excluído durante o processamento — encerrando")
+        _discard_storage(job_id)
 
     except Exception as e:
         logger.error(f"[{job_id}] Pipeline failed: {e}", exc_info=True)
-        await _update_job_status(job_id, "error", error_message=str(e))
+        try:
+            await _update_job_status(job_id, "error", error_message=user_message(e))
+        except JobDeleted:
+            logger.info(f"[{job_id}] Job excluído antes de registrar o erro")
+            _discard_storage(job_id)
+        # Devolve a reserva: o usuário não recebeu clip nenhum. Fora do try
+        # acima de propósito — mesmo que registrar o erro falhe, o crédito não
+        # pode ficar preso. Num job já excluído não faz nada: a exclusão
+        # devolveu.
+        await usage_service.reconciliar_job(job_id, sucesso=False)
+
+
+def _discard_storage(job_id: str) -> None:
+    """Apaga o que o pipeline deixou no disco para um job que não existe mais.
+
+    O DELETE já tinha limpado esses diretórios; foi este processo que os
+    recriou, então é ele que desfaz. Sem isso ficavam GB de vídeo baixado e de
+    clips renderizados sem nenhum registro que os apontasse.
+    """
+    shutil.rmtree(settings.downloads_dir / job_id, ignore_errors=True)
+    shutil.rmtree(settings.clips_dir / job_id, ignore_errors=True)
+    (settings.transcripts_dir / f"{job_id}_words.json").unlink(missing_ok=True)

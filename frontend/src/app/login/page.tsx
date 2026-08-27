@@ -3,7 +3,11 @@
 import { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-function LoginForm() {
+import AccountForm from "@/components/AccountForm";
+import { IS_PUBLIC_BUILD } from "@/lib/build";
+
+/** Senha única compartilhada — a porta da versão pessoal. */
+function PasswordForm() {
   const router = useRouter();
   const params = useSearchParams();
   const [password, setPassword] = useState("");
@@ -38,8 +42,8 @@ function LoginForm() {
   return (
     <form onSubmit={handleSubmit} className="mx-auto mt-16 max-w-sm space-y-4">
       <div>
-        <h1 className="text-xl font-bold text-gray-100">Acesso restrito</h1>
-        <p className="mt-1 text-sm text-gray-500">
+        <h1 className="text-title font-bold text-ink">Acesso restrito</h1>
+        <p className="mt-1 text-body text-ink-dim">
           Informe a senha para usar o ClipMint.
         </p>
       </div>
@@ -50,15 +54,15 @@ function LoginForm() {
         onChange={(e) => setPassword(e.target.value)}
         autoFocus
         placeholder="Senha"
-        className="w-full rounded-lg border border-gray-800 bg-gray-900 px-4 py-2.5 text-gray-100 placeholder-gray-600 outline-none focus:border-emerald-500"
+        className="w-full rounded-sm border border-line bg-raised px-4 py-2.5 text-ink placeholder-ink-muted outline-none focus:border-mint"
       />
 
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <p className="text-body text-danger">{error}</p>}
 
       <button
         type="submit"
         disabled={submitting || !password}
-        className="w-full rounded-lg bg-emerald-600 px-4 py-2.5 font-medium text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+        className="w-full rounded-sm bg-mint-strong px-4 py-2.5 font-medium text-white transition hover:bg-mint disabled:cursor-not-allowed disabled:opacity-50"
       >
         {submitting ? "Entrando..." : "Entrar"}
       </button>
@@ -67,10 +71,11 @@ function LoginForm() {
 }
 
 export default function LoginPage() {
-  // useSearchParams exige Suspense no App Router
+  // As duas versões entram por portas diferentes: o produto público tem contas,
+  // a ferramenta pessoal tem uma senha compartilhada. O resto do app não sabe
+  // disso — daqui para dentro, existe um usuário nos dois casos.
+  // useSearchParams exige Suspense no App Router.
   return (
-    <Suspense>
-      <LoginForm />
-    </Suspense>
+    <Suspense>{IS_PUBLIC_BUILD ? <AccountForm /> : <PasswordForm />}</Suspense>
   );
 }

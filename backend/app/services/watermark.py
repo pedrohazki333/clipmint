@@ -45,13 +45,13 @@ _OVERLAY_STABLE_FRAC = 0.35   # fração mínima de pixels estáveis nos cortes
 _OVERLAY_STABLE_DIFF = 12     # |diff| máximo para um pixel contar como estável
 
 
-def user_watermark_path(source_type: Optional[str] = None) -> Optional[str]:
+def user_watermark_path(source_type: Optional[str] = None, profile_id: str | None = None) -> Optional[str]:
     """Caminho da logo do nicho, ou None se não configurada."""
-    path = preset_path(source_type, WATERMARK_FILE)
+    path = preset_path(source_type, WATERMARK_FILE, profile_id)
     return str(path) if path.exists() else None
 
 
-def clip_watermark_path(source_type: Optional[str] = None) -> Optional[str]:
+def clip_watermark_path(source_type: Optional[str] = None, profile_id: str | None = None) -> Optional[str]:
     """
     Caminho da arte queimada no clipe, ou None se a conta não configurou uma.
 
@@ -59,7 +59,7 @@ def clip_watermark_path(source_type: Optional[str] = None) -> Optional[str]:
     arte ganham a marca, e é isso que impede uma conta de sair assinada com a
     logo que outra escolheu.
     """
-    path = preset_path(source_type, CLIP_WATERMARK_FILE)
+    path = preset_path(source_type, CLIP_WATERMARK_FILE, profile_id)
     return str(path) if path.exists() else None
 
 

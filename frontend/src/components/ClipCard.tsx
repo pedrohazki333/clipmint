@@ -1,10 +1,9 @@
 "use client";
 
-import { useState } from "react";
 import type { Clip } from "@/lib/types";
 import { SCORE_AXES } from "@/lib/types";
 import { getDownloadUrl } from "@/lib/api";
-import ValidateModal from "@/components/ValidateModal";
+import { SaveExampleButton } from "@/personal";
 
 interface Props {
   clip: Clip;
@@ -30,10 +29,11 @@ function parseTags(tagsJson: string | null): string[] {
   }
 }
 
+/** Faixas da nota. O verde é o acento do produto; o resto sinaliza atenção. */
 const SCORE_COLOR = (score: number) => {
-  if (score >= 9) return "text-emerald-400";
-  if (score >= 7.5) return "text-yellow-400";
-  return "text-orange-400";
+  if (score >= 9) return "text-mint";
+  if (score >= 7.5) return "text-running";
+  return "text-ink-dim";
 };
 
 /** Quantos trechos foram emendados neste clipe (1 = corte contínuo). */
@@ -49,28 +49,29 @@ function countSegments(segmentsJson: string | null): number {
 
 export default function ClipCard({ clip }: Props) {
   const segmentCount = countSegments(clip.segments_json);
-  const [modalOpen, setModalOpen] = useState(false);
   const tags = parseTags(clip.tags_json);
   const isReady = clip.status === "ready";
   const isError = clip.status === "error";
+  // O arquivo saiu do disco pelo prazo de retenção; a análise continua aqui.
+  const isExpired = clip.status === "expired";
 
   return (
-    <div className="rounded-xl bg-gray-900 border border-gray-800 p-5 flex flex-col gap-3">
+    <div className="flex flex-col gap-3 rounded-md border border-line bg-raised p-5">
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
-          <p className="font-semibold text-gray-100 truncate">
+          <p className="truncate text-title font-semibold text-ink">
             {clip.suggested_title ?? `Clip ${formatTime(clip.start_time)}–${formatTime(clip.end_time)}`}
           </p>
           {clip.part_number && (
-            <span className="text-xs text-gray-500">Parte {clip.part_number}</span>
+            <span className="text-label text-ink-muted">Parte {clip.part_number}</span>
           )}
         </div>
         <div className="flex-shrink-0 text-center">
-          <div className={`text-2xl font-bold ${SCORE_COLOR(clip.virality_score)}`}>
+          <div className={`tabular text-2xl font-semibold ${SCORE_COLOR(clip.virality_score)}`}>
             {clip.virality_score.toFixed(1)}
           </div>
-          <div className="text-xs text-gray-500">score</div>
+          <div className="text-label text-ink-muted">nota</div>
         </div>
       </div>
 
@@ -84,12 +85,12 @@ export default function ClipCard({ clip }: Props) {
               <div
                 key={axis.key}
                 title={axis.hint}
-                className="rounded bg-gray-800 px-1 py-1.5 text-center"
+                className="rounded-sm bg-inset px-1 py-1.5 text-center"
               >
-                <div className={`text-sm font-semibold ${SCORE_COLOR((value ?? 0))}`}>
+                <div className={`tabular text-body font-medium ${SCORE_COLOR(value ?? 0)}`}>
                   {value === null ? "–" : value.toFixed(0)}
                 </div>
-                <div className="text-[10px] leading-tight text-gray-500">{axis.label}</div>
+                <div className="text-[10px] leading-tight text-ink-muted">{axis.label}</div>
               </div>
             );
           })}
@@ -97,31 +98,31 @@ export default function ClipCard({ clip }: Props) {
       )}
 
       {segmentCount > 1 && (
-        <p className="text-xs text-sky-400">
+        <p className="text-label text-sky-400">
           Costurado de {segmentCount} trechos — o tempo morto entre os momentos foi removido.
         </p>
       )}
 
       {clip.verdict === "revisar_corte" && (
-        <p className="text-xs text-amber-400">
+        <p className="text-label text-running">
           A análise sugeriu revisar o corte antes de postar.
         </p>
       )}
 
       {/* Hook */}
       {clip.hook && (
-        <div className="bg-gray-800 rounded-lg px-3 py-2 text-sm text-yellow-300 font-medium">
+        <div className="rounded-sm border-l-2 border-mint bg-inset px-3 py-2 text-body font-medium text-ink">
           "{clip.hook}"
         </div>
       )}
 
       {/* Reason */}
       {clip.reason && (
-        <p className="text-sm text-gray-400 leading-relaxed">{clip.reason}</p>
+        <p className="text-body leading-relaxed text-ink-dim">{clip.reason}</p>
       )}
 
       {/* Meta */}
-      <div className="flex items-center gap-3 text-xs text-gray-500">
+      <div className="tabular flex flex-wrap items-center gap-x-2 gap-y-1 text-label text-ink-muted">
         <span>{formatTime(clip.start_time)} → {formatTime(clip.end_time)}</span>
         <span>·</span>
         <span>{clip.duration.toFixed(0)}s</span>
@@ -139,7 +140,7 @@ export default function ClipCard({ clip }: Props) {
           {tags.map((tag) => (
             <span
               key={tag}
-              className="px-2 py-0.5 rounded-full bg-gray-800 text-xs text-gray-400 border border-gray-700"
+              className="rounded-full border border-line bg-inset px-2 py-0.5 text-label text-ink-dim"
             >
               #{tag}
             </span>
@@ -149,42 +150,43 @@ export default function ClipCard({ clip }: Props) {
 
       {/* Transcript excerpt */}
       {clip.transcript_excerpt && (
-        <p className="text-xs text-gray-600 italic line-clamp-2">
+        <p className="line-clamp-2 text-label italic text-ink-muted">
           "{clip.transcript_excerpt}"
         </p>
       )}
 
       {/* Action */}
       {isError && (
-        <div className="text-xs text-red-400 bg-red-900/20 rounded px-2 py-1">
-          Falha ao processar este clip.
+        <div className="rounded-sm border border-danger/40 bg-danger-soft px-3 py-2 text-label text-danger">
+          Este clipe não pôde ser gerado. Use &ldquo;Retomar&rdquo; no topo da página
+          para tentar de novo.
         </div>
       )}
-      {!isReady && !isError && (
-        <div className="text-xs text-gray-500 animate-pulse">Processando...</div>
+      {isExpired && (
+        <div className="rounded-sm border border-line bg-inset px-3 py-2 text-label text-ink-dim">
+          O arquivo deste clipe foi apagado depois do prazo de retenção. A
+          análise continua salva.
+        </div>
+      )}
+      {!isReady && !isError && !isExpired && (
+        <div className="flex items-center gap-2 text-label text-ink-dim">
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-running" />
+          Gerando este clipe
+        </div>
       )}
       {isReady && (
         <div className="flex gap-2">
           <a
             href={getDownloadUrl(clip.id)}
             download
-            className="flex-1 text-center rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-semibold text-white transition-colors"
+            className="flex-1 rounded-sm bg-mint-strong px-4 py-2 text-center text-body font-medium text-base transition-colors hover:bg-mint"
           >
             Download MP4
           </a>
-          <button
-            onClick={() => setModalOpen(true)}
-            title="Salvar como exemplo para few-shot learning"
-            className="rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700 px-3 py-2 text-sm text-gray-400 hover:text-gray-200 transition-colors"
-          >
-            Salvar exemplo
-          </button>
+          {SaveExampleButton && <SaveExampleButton clipId={clip.id} />}
         </div>
       )}
 
-      {modalOpen && (
-        <ValidateModal clipId={clip.id} onClose={() => setModalOpen(false)} />
-      )}
     </div>
   );
 }
