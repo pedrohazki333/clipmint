@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { cookies } from "next/headers";
 import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
 
@@ -56,20 +57,44 @@ export default async function RootLayout({
       <body className="min-h-screen bg-base font-sans text-body text-ink antialiased">
         <header className="border-b border-line px-4 py-4 sm:px-6">
           <div className="mx-auto flex max-w-4xl items-center gap-3">
-            <span className="text-title font-semibold text-mint">ClipMint</span>
+            <Link href="/" className="text-title font-semibold text-mint">
+              ClipMint
+            </Link>
             <span className="hidden text-label text-ink-muted sm:inline">
               cortes verticais a partir de vídeos longos
             </span>
-            {/* Público: saldo sempre à vista + botão de conta. Pessoal: não há
-                conta nem crédito, só a porta de saída da senha única.
+            {/* Só existe landing e tutorial no build público — a versão
+                pessoal não ganha este link, pois nunca mostra a landing. */}
+            {IS_PUBLIC_BUILD && (
+              <Link
+                href="/como-funciona"
+                className="text-label text-ink-dim transition-colors hover:text-ink"
+              >
+                Como usar
+              </Link>
+            )}
+            {/* Público: saldo sempre à vista + botão de conta, ou CTA de
+                cadastro para quem ainda não entrou. Pessoal: não há conta nem
+                crédito, só a porta de saída da senha única.
                 O saldo vem ANTES da conta porque é o que se consulta com
                 frequência — a conta se abre uma vez por semana. */}
-            {loggedIn && (
-              <div className="ml-auto flex items-center gap-2">
-                {IS_PUBLIC_BUILD && <CreditBalance />}
-                {IS_PUBLIC_BUILD ? <UserMenu /> : <LogoutButton />}
-              </div>
-            )}
+            <div className="ml-auto flex items-center gap-2">
+              {loggedIn ? (
+                <>
+                  {IS_PUBLIC_BUILD && <CreditBalance />}
+                  {IS_PUBLIC_BUILD ? <UserMenu /> : <LogoutButton />}
+                </>
+              ) : (
+                IS_PUBLIC_BUILD && (
+                  <Link
+                    href="/login"
+                    className="rounded-sm bg-mint-strong px-3 py-1.5 text-label font-medium text-base transition-colors hover:bg-mint"
+                  >
+                    Criar conta
+                  </Link>
+                )
+              )}
+            </div>
           </div>
         </header>
         <main className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">

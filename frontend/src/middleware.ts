@@ -6,6 +6,14 @@ import { IS_PUBLIC_BUILD, SESSION_COOKIE } from "@/lib/build";
 /** Rotas que precisam ficar abertas para a própria tela de login funcionar. */
 const PUBLIC_PATHS = new Set(["/login", "/auth/login", "/auth/logout"]);
 
+/**
+ * Landing e tutorial: abertas para visitante sem sessão, mas só no build
+ * público. Entram apenas em `guardaPublica` — o build pessoal nunca deve
+ * mostrar nada antes da senha, então esta lista não participa do branch
+ * pessoal abaixo.
+ */
+const MARKETING_PATHS = new Set(["/", "/como-funciona"]);
+
 /** Rotas de API da autenticação: sem elas ninguém consegue nem tentar entrar. */
 const AUTH_API = new Set([
   "/api/auth/login",
@@ -42,6 +50,7 @@ function guardaPublica(req: NextRequest): NextResponse {
 
   if (
     PUBLIC_PATHS.has(pathname) ||
+    MARKETING_PATHS.has(pathname) ||
     AUTH_API.has(pathname) ||
     WEBHOOK_PATHS.has(pathname)
   ) {
