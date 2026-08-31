@@ -255,9 +255,18 @@ link de live baixar 18 GB.
 ## 6. Build
 
 ```bash
-cd /opt/clipmint/app
-sudo -u clipmint make build-public
+cd /opt/clipmint/app/frontend
+sudo -u clipmint env PUBLIC_BUILD=true BACKEND_PORT=8001 npm run build
 ```
+
+> **Por que não `make build-public` aqui.** Aquele alvo existe para o
+> `serve-public`, que sobe a versão pública ao lado da pessoal na sua máquina, e
+> por isso força `BACKEND_PORT=8002` (`PUBLIC_BACKEND_PORT` no Makefile). No
+> servidor, onde a API roda na 8001, o build sairia com o proxy `/api/*`
+> apontando para uma porta onde não há ninguém — e o sintoma é o app carregar e
+> nenhuma chamada funcionar. Passar a porta explicitamente resolve; o `distDir`
+> continua indo para `.next-public` sozinho, porque quem decide isso é o
+> `PUBLIC_BUILD`.
 
 > ### Duas coisas ficam CONGELADAS no build do frontend
 >
@@ -291,8 +300,14 @@ User=clipmint
 WorkingDirectory=/opt/clipmint/app/backend
 # 127.0.0.1: quem vem de fora entra pelo frontend, que faz o proxy por
 # localhost. Uma porta exposta em vez de duas.
+#
+# --no-proxy-headers NÃO é sobra. O uvicorn liga proxy-headers por padrão e,
+# confiando no peer loopback, troca request.client.host pelo X-Forwarded-For
+# que o proxy do Next injeta — o IP do NAVEGADOR. A cerca de perímetro de
+# main.py passa a ver o proxy como externo e exige o x-clipmint-token, que o
+# build público não tem para dar. Sem a flag: 401 em tudo que não seja login.
 ExecStart=/opt/clipmint/app/backend/.venv/bin/uvicorn app.main:app \
-    --host 127.0.0.1 --port 8001 --proxy-headers
+    --host 127.0.0.1 --port 8001 --no-proxy-headers
 Restart=always
 RestartSec=5
 # O pipeline roda dentro deste processo: um render de vídeo pode levar minutos,
