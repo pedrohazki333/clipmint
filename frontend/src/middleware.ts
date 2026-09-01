@@ -14,12 +14,22 @@ const PUBLIC_PATHS = new Set(["/login", "/auth/login", "/auth/logout"]);
  */
 const MARKETING_PATHS = new Set(["/", "/como-funciona"]);
 
+/**
+ * Recuperação de senha. Fora de PUBLIC_PATHS porque estas duas telas só existem
+ * no build público: no pessoal a entrada é uma senha única compartilhada, que
+ * não tem dono nem e-mail para onde mandar link.
+ */
+const RESET_PATHS = new Set(["/esqueci-senha", "/redefinir-senha"]);
+
 /** Rotas de API da autenticação: sem elas ninguém consegue nem tentar entrar. */
 const AUTH_API = new Set([
   "/api/auth/login",
   "/api/auth/register",
   "/api/auth/me",
   "/api/auth/logout",
+  // Quem esqueceu a senha não tem sessão — é o estado inteiro do problema.
+  "/api/auth/forgot-password",
+  "/api/auth/reset-password",
 ]);
 
 /**
@@ -51,6 +61,7 @@ function guardaPublica(req: NextRequest): NextResponse {
   if (
     PUBLIC_PATHS.has(pathname) ||
     MARKETING_PATHS.has(pathname) ||
+    RESET_PATHS.has(pathname) ||
     AUTH_API.has(pathname) ||
     WEBHOOK_PATHS.has(pathname)
   ) {

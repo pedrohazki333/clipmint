@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { getApiErrorMessage } from "@/lib/api";
@@ -116,6 +117,16 @@ export default function AccountForm() {
       >
         {criando ? "Já tenho conta" : "Criar uma conta"}
       </button>
+
+      {/* Só em "entrar": quem está criando conta não tem senha para esquecer. */}
+      {!criando && (
+        <Link
+          href="/esqueci-senha"
+          className="block text-center text-body text-ink-dim transition hover:text-ink"
+        >
+          Esqueci minha senha
+        </Link>
+      )}
     </form>
   );
 }

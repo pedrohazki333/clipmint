@@ -146,6 +146,27 @@ class Settings(BaseSettings):
     # abrir o produto para um grupo fechado antes de abrir para todos.
     registration_open: bool = True
 
+    # ── E-mail transacional ───────────────────────────────────────────────────
+    # Só a recuperação de senha usa isto. SMTP, e não a API de um provedor, de
+    # propósito: Resend, SendGrid e SES falam SMTP, então trocar de provedor é
+    # trocar quatro linhas do .env em vez de reescrever o serviço.
+    #
+    # `smtp_host` VAZIO desliga a recuperação de senha inteira — a rota passa a
+    # responder 503 dizendo que o servidor não manda e-mail, em vez de aceitar
+    # o pedido e sumir com ele. Falhar visível é melhor que falhar calado
+    # quando o assunto é a única porta de volta para a conta.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    # Remetente. Precisa ser de um domínio com SPF/DKIM configurados, senão o
+    # e-mail chega no spam e a recuperação é pior que inexistente: o usuário
+    # acha que pediu e ficou sem resposta.
+    smtp_from: str = ""
+    # Quanto tempo o link de redefinição vale. Curto de propósito: é um token
+    # que troca a senha de uma conta com créditos comprados dentro.
+    password_reset_ttl_minutes: int = 60
+
     # Porta em que o uvicorn sobe. Quem lê de verdade são o Makefile e o
     # next.config (para o proxy); aqui existe para o pydantic não recusar a
     # chave do .env, e para o valor ficar documentado junto dos outros.

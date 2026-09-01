@@ -20,7 +20,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models import Session, User
+from app.models import PasswordReset, Session, User
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +151,67 @@ async def purge_expired_sessions(db: AsyncSession) -> int:
 
 
 # ─── O dono da instalação ──────────────────────────────────────────────────────
+
+# ─── Redefinição de senha ──────────────────────────────────────────────────────
+
+async def create_password_reset(db: AsyncSession, user: User) -> str:
+    """Abre um pedido de redefinição e devolve o token que vai no e-mail.
+
+    O token só existe aqui e no e-mail — a tabela guarda o hash. Pedir de novo
+    NÃO invalida o pedido anterior: quem clicou no primeiro e-mail que chegou
+    ainda consegue entrar, que é o que não surpreende ninguém.
+    """
+    token = secrets.token_urlsafe(32)
+    db.add(
+        PasswordReset(
+            token_hash=_hash_token(token),
+            user_id=user.id,
+            expires_at=datetime.now(timezone.utc)
+            + timedelta(minutes=settings.password_reset_ttl_minutes),
+        )
+    )
+    await db.commit()
+    return token
+
+
+async def consume_password_reset(db: AsyncSession, token: str) -> User | None:
+    """Gasta o token e devolve o dono. `None` se inválido, vencido ou já usado.
+
+    Marca `used_at` ANTES de o chamador trocar a senha: se a troca falhar, o
+    usuário pede outro link — o que não pode acontecer é o token sobreviver a
+    uma troca bem-sucedida.
+    """
+    pedido = await db.scalar(
+        select(PasswordReset).where(PasswordReset.token_hash == _hash_token(token))
+    )
+    if pedido is None or pedido.used_at is not None:
+        return None
+
+    vence = pedido.expires_at
+    if vence.tzinfo is None:  # SQLite devolve ingênuo; Postgres, ciente
+        vence = vence.replace(tzinfo=timezone.utc)
+    if vence <= datetime.now(timezone.utc):
+        return None
+
+    usuario = await db.scalar(select(User).where(User.id == pedido.user_id))
+    if usuario is None or not usuario.is_active:
+        return None
+
+    pedido.used_at = datetime.now(timezone.utc)
+    await db.commit()
+    return usuario
+
+
+async def purge_expired_password_resets(db: AsyncSession) -> int:
+    """Faxina dos pedidos vencidos. Eles já não trocam senha nenhuma."""
+    resultado = await db.execute(
+        delete(PasswordReset).where(
+            PasswordReset.expires_at <= datetime.now(timezone.utc)
+        )
+    )
+    await db.commit()
+    return resultado.rowcount or 0
+
 
 async def get_or_create_owner(db: AsyncSession) -> User:
     """

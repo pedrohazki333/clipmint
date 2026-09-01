@@ -34,7 +34,7 @@ from sqlalchemy import delete, select, update
 from app.config import settings
 from app.database import AsyncSessionLocal
 from app.errors import user_message
-from app.models import Job, Profile, Transcript, Clip
+from app.models import Job, Transcript, Clip
 from app.services.downloader import VideoMetadata, download_video, ensure_media
 from app.services.transcriber import transcribe_audio
 from app.services.analyzer import AnalysisResult, ViralClip, analyze_virality
@@ -681,19 +681,6 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
             manual_ranges = _parse_segments_json(job.manual_clips)
             manual_mode = job.manual_mode or "only"
             facecam_json = job.facecam_rect
-            # Caixa congelada no perfil, quando o job não traz uma informada à
-            # mão. A ordem é vídeo → canal → palpite: quem pediu esta geração
-            # manda mais que o preset do canal, e os dois mandam mais que a
-            # detecção. `_manual_rect` filtra as duas pontas — no job ele já
-            # ignora a caixa que o próprio detector gravou (que existe só para
-            # a UI), e aqui ele recusa perfil com caixa ilegível.
-            if _manual_rect(facecam_json) is None and profile_id:
-                do_perfil = await db.scalar(
-                    select(Profile.facecam_rect).where(Profile.id == profile_id)
-                )
-                if _manual_rect(do_perfil) is not None:
-                    facecam_json = do_perfil
-                    logger.info(f"[{job_id}] Facecam: caixa fixada no perfil")
             saved_media = {
                 "video_title": job.video_title,
                 "channel_name": job.channel_name,

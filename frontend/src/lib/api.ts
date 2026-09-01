@@ -88,6 +88,26 @@ export async function deleteProfile(id: string): Promise<void> {
   await api.delete(`/profiles/${id}`);
 }
 
+// ─── Recuperação de senha ────────────────────────────────────────────────────
+
+/**
+ * Pede o e-mail com o link de redefinição.
+ *
+ * Responde 204 mesmo quando não existe conta com aquele e-mail — o servidor não
+ * distingue os dois casos de propósito, para não entregar quem tem conta. A
+ * tela diz "se existir conta, o e-mail saiu", que é a verdade.
+ */
+export async function forgotPassword(email: string): Promise<void> {
+  await api.post("/auth/forgot-password", { email });
+}
+
+export async function resetPassword(
+  token: string,
+  password: string,
+): Promise<void> {
+  await api.post("/auth/reset-password", { token, password });
+}
+
 export async function createJob(payload: CreateJobPayload): Promise<Job> {
   const { data } = await api.post<Job>("/jobs", payload);
   return data;

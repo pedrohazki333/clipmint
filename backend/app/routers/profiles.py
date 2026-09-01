@@ -10,7 +10,6 @@ Por isso não há rota de "gerar a partir do perfil": a geração continua sendo
 preenchido nele.
 """
 
-import json
 import logging
 import shutil
 from typing import List, Optional
@@ -25,7 +24,6 @@ from app.deps import current_user
 from app.features import SourceTypeField
 from app.layouts import LAYOUT_LABELS, layout_allowed, layouts_for
 from app.models import Clip, Job, Profile, User
-from app.schemas import FacecamRectPayload
 from app.services.branding import profile_dir
 from app.services.profiles import valid_avatar
 
@@ -42,10 +40,6 @@ class ProfileCreate(BaseModel):
     # layout que a rubrica escolhida aceita.
     default_layout_mode: Optional[str] = None
     default_subtitle_mode: str = "word_highlight"
-    # Caixa da facecam congelada para este canal. Ausente/nula = detectar a
-    # cada vídeo, que é o normal. Só vale no layout streamer; nos outros o
-    # pipeline nem pergunta, então guardá-la não atrapalha.
-    facecam_rect: Optional[FacecamRectPayload] = None
 
     @field_validator("name")
     @classmethod
@@ -95,7 +89,6 @@ class ProfileResponse(BaseModel):
     avatar: str | None
     default_layout_mode: str
     default_subtitle_mode: str
-    facecam_rect: Optional[dict] = None
     # Contagens que a tela de perfis mostra. Derivadas dos jobs e clips que já
     # existem — nenhum contador é mantido em coluna, para não haver dois números
     # que possam discordar.
@@ -103,30 +96,7 @@ class ProfileResponse(BaseModel):
     clip_count: int = 0
     last_generated_at: str | None = None
 
-    @field_validator("facecam_rect", mode="before")
-    @classmethod
-    def parse_facecam_rect(cls, v):
-        """A coluna guarda JSON serializado; a API entrega o objeto."""
-        if not isinstance(v, str):
-            return v
-        try:
-            return json.loads(v)
-        except json.JSONDecodeError:
-            return None
-
     model_config = {"from_attributes": True}
-
-
-def _facecam_json(rect: FacecamRectPayload | None) -> str | None:
-    """A caixa do perfil, serializada com o método que o pipeline reconhece.
-
-    `method: manual` não é enfeite: é como `_manual_rect` do pipeline separa
-    caixa que uma PESSOA informou da caixa que o detector gravou para a UI ver.
-    Sem ele a caixa fixada seria ignorada e a detecção rodaria assim mesmo.
-    """
-    if rect is None:
-        return None
-    return json.dumps({**rect.model_dump(), "method": "manual"})
 
 
 async def _do_usuario(profile_id: str, user: User, db: AsyncSession) -> Profile:
@@ -217,7 +187,6 @@ async def create_profile(
         avatar=valid_avatar(payload.avatar),
         default_layout_mode=payload.default_layout_mode,
         default_subtitle_mode=payload.default_subtitle_mode,
-        facecam_rect=_facecam_json(payload.facecam_rect),
     )
     db.add(perfil)
     await db.commit()
@@ -255,41 +224,8 @@ async def update_profile(
     perfil.avatar = valid_avatar(payload.avatar)
     perfil.default_layout_mode = payload.default_layout_mode
     perfil.default_subtitle_mode = payload.default_subtitle_mode
-    perfil.facecam_rect = _facecam_json(payload.facecam_rect)
     await db.commit()
     await db.refresh(perfil)
-    return ProfileResponse.model_validate(perfil)
-
-
-class FacecamPin(BaseModel):
-    """Só a caixa. `null` volta o perfil para a detecção automática."""
-
-    facecam_rect: Optional[FacecamRectPayload] = None
-
-
-@router.put("/{profile_id}/facecam", response_model=ProfileResponse)
-async def pin_facecam(
-    profile_id: str,
-    payload: FacecamPin,
-    user: User = Depends(current_user),
-    db: AsyncSession = Depends(get_db),
-) -> ProfileResponse:
-    """Congela — ou solta — a caixa da facecam deste perfil.
-
-    Endpoint próprio, e não o PUT do perfil, porque aquele **reescreve o perfil
-    inteiro**: fixar a caixa a partir da tela de um job obrigaria a reenviar
-    nome, rubrica e defaults, e o que fosse enviado sobrescreveria uma edição
-    feita noutra aba. Aqui só a caixa muda.
-    """
-    perfil = await _do_usuario(profile_id, user, db)
-    perfil.facecam_rect = _facecam_json(payload.facecam_rect)
-    await db.commit()
-    await db.refresh(perfil)
-    logger.info(
-        "Perfil %s: caixa da facecam %s",
-        perfil.id,
-        "fixada" if payload.facecam_rect else "solta",
-    )
     return ProfileResponse.model_validate(perfil)
 
 

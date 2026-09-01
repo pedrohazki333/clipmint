@@ -117,6 +117,36 @@ class Session(Base):
     user = relationship("User")
 
 
+class PasswordReset(Base):
+    """
+    Um pedido de redefinição de senha — o que o link do e-mail representa.
+
+    É um EVENTO, não um atributo da pessoa: pedir duas vezes gera duas linhas, e
+    a segunda não invalida a primeira. Quem clicou no link antigo (o e-mail que
+    chegou primeiro) continua conseguindo entrar, que é o comportamento que não
+    surpreende ninguém.
+
+    `used_at` é o que torna o link de uso único. Sem ele, quem lesse o e-mail
+    depois — caixa compartilhada, encaminhamento, backup do celular — trocaria a
+    senha de novo semanas depois.
+
+    Guarda o HASH, nunca o token, pela mesma razão de [[Session]]: um dump
+    vazado não pode virar acesso.
+    """
+
+    __tablename__ = "password_resets"
+
+    token_hash = Column(String, primary_key=True)
+    user_id = Column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    used_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+    user = relationship("User")
+
+
 class Profile(Base):
     """
     Um perfil: o conjunto de configurações que se repete de vídeo para vídeo.
@@ -155,15 +185,6 @@ class Profile(Base):
     # dado, sem mudar o que ele significa.
     default_layout_mode = Column(String, nullable=False, default="cover")
     default_subtitle_mode = Column(String, nullable=False, default="word_highlight")
-    # Caixa da facecam congelada para este canal, em JSON (mesmo formato de
-    # `jobs.facecam_rect`). NULO — o normal — significa "detecte a cada vídeo".
-    #
-    # Existe porque detectar é palpite: a borda de cima da cam pode ter um
-    # décimo do contraste das outras e a heurística escolher a borda do frame,
-    # e aí o painel sai com gameplay no topo e a cabeça cortada. O canal é
-    # sempre o mesmo e a cam não anda de lugar, então depois de conferir um
-    # vídeo o dono congela a caixa e o palpite por vídeo vira dado por canal.
-    facecam_rect = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

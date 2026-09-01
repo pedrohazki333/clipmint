@@ -256,6 +256,9 @@ _ROTAS_ABERTAS = {
     "/api/auth/register",
     "/api/auth/login",
     "/api/auth/me",
+    # Quem esqueceu a senha não tem sessão — é o estado inteiro do problema.
+    "/api/auth/forgot-password",
+    "/api/auth/reset-password",
     # O webhook do Mercado Pago vem da internet, sem sessão e sem o token da
     # instalação — não teria como passar pela cerca. Quem autentica ali é a
     # assinatura HMAC do próprio gateway (services/mercadopago.py), que é

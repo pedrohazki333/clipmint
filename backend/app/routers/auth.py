@@ -18,8 +18,11 @@ from app.deps import current_user, current_user_optional
 from app.models import User
 from app.services import credits
 from app.services.quota import usage as quota_usage
+from app.services import mailer
 from app.services.auth import (
     SESSION_COOKIE,
+    consume_password_reset,
+    create_password_reset,
     create_session,
     hash_password,
     needs_rehash,
@@ -224,3 +227,106 @@ async def me_usage(
 ) -> dict:
     """Quanto desta janela já foi usado. Exige sessão."""
     return await quota_usage(db, user)
+
+
+# ─── Redefinição de senha ──────────────────────────────────────────────────────
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=16, max_length=200)
+    password: str
+
+
+def _link_de_redefinicao(token: str) -> str:
+    base = (settings.public_base_url or "").rstrip("/")
+    return f"{base}/redefinir-senha?token={token}"
+
+
+@router.post("/forgot-password", status_code=204)
+async def forgot_password(
+    payload: ForgotPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Manda o link de redefinição, se a conta existir.
+
+    **Responde 204 mesmo quando o e-mail não existe.** Ao contrário do cadastro,
+    aqui distinguir "existe" de "não existe" entregaria de graça uma lista de
+    quem tem conta — e não ajudaria ninguém: quem digitou o próprio e-mail
+    errado precisa conferir o e-mail, e a mensagem da tela já diz isso.
+
+    O 503 quando não há SMTP é de propósito: aceitar o pedido e não ter como
+    entregá-lo deixaria a pessoa esperando para sempre um e-mail que não vem.
+    """
+    if not mailer.enabled():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Este servidor ainda não envia e-mail. Peça a redefinição a "
+                "quem administra a instalação."
+            ),
+        )
+
+    email = normalize_email(payload.email)
+    user = (
+        await db.execute(select(User).where(User.email == email))
+    ).scalar_one_or_none()
+    if user is None or not user.is_active:
+        logger.info("Redefinição pedida para e-mail sem conta ativa: %s", email)
+        return
+
+    token = await create_password_reset(db, user)
+    try:
+        await mailer.send(
+            user.email,
+            "Redefinir sua senha do ClipMint",
+            (
+                "Você pediu para redefinir a senha da sua conta no ClipMint.\n\n"
+                f"{_link_de_redefinicao(token)}\n\n"
+                f"O link vale por {settings.password_reset_ttl_minutes} minutos "
+                "e só pode ser usado uma vez.\n\n"
+                "Se não foi você, ignore este e-mail: sua senha continua a mesma."
+            ),
+        )
+    except Exception:  # noqa: BLE001
+        # O pedido fica gravado, mas sem e-mail ele é inalcançável. Falhar aqui
+        # é melhor que responder 204 e a pessoa esperar por nada.
+        logger.exception("Falha ao enviar o e-mail de redefinição para %s", email)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Não conseguimos enviar o e-mail agora. Tente de novo em alguns minutos.",
+        )
+
+
+@router.post("/reset-password", response_model=UserResponse)
+async def reset_password(
+    payload: ResetPasswordRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """Troca a senha e já deixa a pessoa logada.
+
+    **Derruba todas as outras sessões.** Quem pede redefinição costuma estar
+    justamente com medo de que alguém tenha entrado; manter as sessões antigas
+    vivas manteria o invasor dentro depois da troca.
+    """
+    _validar_senha(payload.password)
+
+    user = await consume_password_reset(db, payload.token)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Este link não vale mais. Peça outro na tela de entrar.",
+        )
+
+    user.password_hash = hash_password(payload.password)
+    await db.commit()
+    await revoke_all_sessions(db, user.id)
+
+    token = await create_session(db, user, request.headers.get("user-agent"))
+    _set_session_cookie(response, token)
+    logger.info("Senha redefinida: %s", user.email)
+    return user
