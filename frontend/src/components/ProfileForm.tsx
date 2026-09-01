@@ -280,14 +280,32 @@ export default function ProfileForm({ profile }: Props) {
           </div>
         </div>
 
-        <BrandSettings
-          source={sourceType}
-          profileId={profile?.id}
-          draft={brand}
-          onChange={mudarMarca}
-          fonts={fonts}
-          disabled={salvando}
-        />
+        {/*
+          Editando, a marca só existe depois que `loadBrandDraft` volta — e até
+          lá `brand` vale o padrão de fábrica. Mostrar os painéis nesse estado
+          exibe cores que NÃO são as do perfil como se fossem, e quem abre a
+          tela conclui que a configuração se perdeu. Enquanto não chega, o
+          honesto é dizer que está carregando.
+
+          Na criação não se aplica: ali o padrão do nicho é mesmo o valor certo
+          de partida, e segurar o formulário só atrasaria quem quer preencher.
+        */}
+        {editando && brandBase === null ? (
+          <div className="rounded-md border border-line bg-raised px-6 py-12 text-center">
+            <p className="text-body text-ink-dim">
+              Carregando a marca deste perfil...
+            </p>
+          </div>
+        ) : (
+          <BrandSettings
+            source={sourceType}
+            profileId={profile?.id}
+            draft={brand}
+            onChange={mudarMarca}
+            fonts={fonts}
+            disabled={salvando}
+          />
+        )}
 
         {erro && (
           <p className="rounded-sm border border-danger/40 bg-danger-soft px-3 py-2 text-body text-danger">
