@@ -125,6 +125,27 @@ async def _creditos_cobrados(db: AsyncSession, job_id: str) -> int:
     return -int(debito) if debito else 0
 
 
+def _promove(status_atual: str | None, status_novo: str) -> bool:
+    """Este fechamento corrige um evento que ficou com o resultado errado?
+
+    Um job RETOMADO fecha duas vezes: a tentativa que falhou grava
+    `status=failed` com o custo do que já havia sido pago, e o Retomar que
+    entrega precisa corrigir a linha. Sem isso o painel mostra como prejuízo um
+    vídeo que foi entregue E cobrado — foi o que aconteceu em 01/09/2026, com o
+    evento parado em `failed`/`credits_charged=0` enquanto o extrato registrava
+    o débito de 81 créditos.
+
+    Só o sentido "não deu certo" → "deu certo" reabre. O contrário nunca: um
+    evento de sucesso não pode ser rebaixado por um fechamento tardio.
+
+    **Reabrir não recontabiliza.** O custo é recalculado do zero em `fechar`, a
+    partir dos minutos de transcrição e dos tokens que `registrar_analise`
+    guardou — e ela sobrescreve, não soma. O total que sai é o do vídeo, não a
+    soma das tentativas.
+    """
+    return status_novo == "success" and status_atual != "success"
+
+
 async def fechar(db: AsyncSession, job_id: str, *, status: str) -> UsageEvent | None:
     """Calcula o custo final do vídeo e fecha o evento. Não commita.
 
@@ -135,6 +156,9 @@ async def fechar(db: AsyncSession, job_id: str, *, status: str) -> UsageEvent | 
     Não reabre evento já fechado. `rate_snapshot` preenchido é a marca de
     fechado — só esta função escreve snapshot, então ela distingue "linha criada
     pela análise" de "linha já finalizada" sem precisar de coluna nova.
+
+    A exceção é o job RETOMADO: ele fecha duas vezes, e só a segunda sabe o
+    resultado. Ver `_promove` abaixo.
     """
     from app.config import settings
 
@@ -144,7 +168,7 @@ async def fechar(db: AsyncSession, job_id: str, *, status: str) -> UsageEvent | 
         return None
 
     evento = await _evento_do_job(db, job_id)
-    if evento.rate_snapshot:
+    if evento.rate_snapshot and not _promove(evento.status, status):
         logger.debug("Evento do job %s já fechado; nada a fazer", job_id)
         return evento
 

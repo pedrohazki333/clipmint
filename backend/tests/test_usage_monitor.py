@@ -279,6 +279,48 @@ def test_fechar_duas_vezes_nao_reescreve(ambiente, monkeypatch):
     assert ev.total_cost_brl == Decimal("3.2346")
 
 
+def test_job_retomado_que_entrega_corrige_o_evento(ambiente):
+    """O caso de 01/09/2026: falhou na análise, Retomar entregou.
+
+    A primeira passada fecha `failed` sem tokens e sem cobrança. O Retomar
+    registra os tokens, cobra, e fecha de novo — e é ESTE fechamento que o
+    painel precisa enxergar. Antes da correção o evento ficava preso em
+    `failed`/`credits_charged=0` e o vídeo aparecia como prejuízo.
+    """
+    _, factory = ambiente
+    asyncio.run(_preparar_job(factory, tokens=None))
+    asyncio.run(_fechar(factory, "j1", "failed"))
+
+    parcial = asyncio.run(_evento(factory))
+    assert parcial.status == "failed"
+    assert parcial.credits_charged == 0
+    custo_sem_analise = parcial.total_cost_brl
+
+    # O Retomar: a análise agora volta, e o crédito é debitado.
+    async def retomar():
+        async with factory() as db:
+            user = (await db.execute(select(User))).scalars().first()
+            await usage_monitor.registrar_analise(
+                db, "j1", model="claude-sonnet-4-6",
+                input_tokens=43_000, output_tokens=3_000,
+            )
+            await credits.lancar(
+                db, user_id=user.id, tipo="debito", amount=-120,
+                ref_usage_id="j1", descricao="teste",
+            )
+            await db.commit()
+
+    asyncio.run(retomar())
+    asyncio.run(_fechar(factory, "j1", "success"))
+
+    ev = asyncio.run(_evento(factory))
+    assert ev.status == "success"
+    assert ev.credits_charged == 120
+    # A análise entrou no custo, e a transcrição NÃO foi contada duas vezes.
+    assert ev.total_cost_brl > custo_sem_analise
+    assert ev.transcription_minutes == Decimal("120")
+
+
 def test_job_inexistente_nao_cria_evento(ambiente):
     _, factory = ambiente
     assert asyncio.run(_fechar(factory, "nao-existe", "failed")) is None
