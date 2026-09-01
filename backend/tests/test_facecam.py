@@ -798,3 +798,43 @@ def test_folga_medida_e_a_da_borda_mais_proxima():
     """Encostar num canto basta — o lado oposto fica longe por construção."""
     assert _edge_gap(FacecamRect(x=0.006, y=0.003, w=0.247, h=0.250)) == pytest.approx(0.003)
     assert _edge_gap(FacecamRect(x=0.528, y=0.173, w=0.303, h=0.283)) == pytest.approx(0.169)
+
+
+# ─── Borda superior fraca (regressão: 01/09/2026) ─────────────────────────────
+
+def _frame_topo_fraco(cam=(5, 17, 103, 67), w=480, h=270):
+    """Cam recuada do topo, com a borda de CIMA quase invisível.
+
+    O caso real: o gameplay logo acima da cam é escuro e o interior da cam
+    também, então a borda superior sai com um décimo do gradiente das outras
+    três. Foi assim que a borda do FRAME venceu a borda real e o painel do clipe
+    saiu com uma tira de gameplay no topo e a cabeça cortada.
+    """
+    rng = np.random.default_rng(11)
+    frame = 200 + rng.normal(0, 1.5, (h, w)).astype("float32")  # gameplay claro
+    x, y, cw, ch = cam
+    # Interior liso de propósito: no vídeo real a borda de cima ERA o pico local
+    # da região, só fraca em valor absoluto (9 contra 102 da esquerda). Ruído
+    # interno alto esconderia a borda e o teste passaria a medir outra coisa.
+    frame[y:y + ch, x:x + cw] = 60 + rng.normal(0, 2.5, (ch, cw))  # cam escura
+    # A faixa de gameplay ACIMA da cam é escura também: degrau de ~10 contra os
+    # ~140 das outras três bordas.
+    frame[0:y, x:x + cw] = 70 + rng.normal(0, 2.0, (y, cw)).astype("float32")
+    return np.clip(frame, 0, 255).astype("uint8")
+
+
+def test_borda_superior_fraca_nao_perde_para_a_borda_do_frame():
+    """A cam começa em y=17, não em y=0.
+
+    Três bordas fortes e uma fraca não autorizam esticar a caixa até o topo do
+    frame: o resultado tem proporção de cam (~3:2) e, esticado, viraria 1.2 —
+    mais alta que qualquer webcam de live.
+    """
+    gx, gy = _maps(_frame_topo_fraco())
+
+    rect = _fit_cam_rect(gx, gy, 56 / 480, 45 / 270, 34 / 480, 30 / 270, np)
+
+    assert rect is not None
+    x0, y0, x1, y1 = _pixels(rect)
+    assert 12 <= y0 <= 24, f"topo saiu em y={y0}; esperado perto de 17"
+    assert 78 <= y1 <= 90, f"base saiu em y={y1}; esperado perto de 84"

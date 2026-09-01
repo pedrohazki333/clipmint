@@ -145,11 +145,17 @@ _EDGE_QUALITY = 0.80       # Qualidade da borda do FRAME como candidata. Alta de
 
 # Prior de proporção: webcam de live é deitada, entre 4:3 e 16:9. É o que separa
 # a borda certa de uma linha forte perdida no gameplay.
-_CAM_ASPECTS = (4 / 3, 16 / 9)
-_ASPECT_TOL = 0.30         # tolerância em log (~±35%). Largo de propósito: as
-                           # cams reais medidas deram 1.36 e 1.47, entre 4:3 e
-                           # 16:9. Um prior estreito vira desempate fino e passa
-                           # a mandar mais que a qualidade das bordas.
+_CAM_ASPECTS = (4 / 3, 3 / 2, 16 / 9)
+                           # O 3:2 no meio não é simetria: as cams reais medidas
+                           # deram 1.36, 1.47 e 1.54 — todas AO REDOR de 3:2, e
+                           # nenhuma sobre 4:3 ou 16:9. Sem essa âncora o prior
+                           # precisava de tolerância larga só para alcançá-las,
+                           # e a largura passava a aceitar caixa que não é cam.
+_ASPECT_TOL = 0.12         # tolerância em log (~±13%). Com as três âncoras, cam
+                           # real fica a ~0.02 de uma delas e quase não é
+                           # penalizada; uma caixa esticada até a borda do frame
+                           # fica a ~0.08 e perde. Foi o que corrigiu o clipe de
+                           # 01/09/2026, cuja cam saiu 1.23 em vez de 1.54.
 _ASPECT_FLOOR = 0.15       # peso mínimo — proporção esquisita não zera a caixa
 _SCORE_TIE = 0.05          # placares dentro de 5% empatam; desempata a menor caixa
 _TIE_MAX_SHRINK = 0.05     # ...mas so entre caixas que sao A MESMA caixa com um
