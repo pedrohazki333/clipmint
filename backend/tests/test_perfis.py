@@ -394,3 +394,51 @@ def test_caixa_fora_do_quadro_e_recusada(ambiente):
         },
     )
     assert resp.status_code == 422
+
+
+def test_fixar_a_caixa_nao_mexe_no_resto_do_perfil(ambiente):
+    """A razão de existir um endpoint só para isso.
+
+    O PUT do perfil reescreve tudo. Se a tela do job usasse ele para fixar a
+    caixa, teria que reenviar nome, rubrica e defaults — e sobrescreveria com
+    dado velho qualquer edição feita noutra aba enquanto a página estava aberta.
+    """
+    cliente, factory = ambiente
+    perfil = _criar_perfil(cliente, "HZ Game Clips", "gameplay")
+    cliente.put(
+        f"/api/profiles/{perfil['id']}",
+        json={
+            "name": "HZ Game Clips",
+            "source_type": "gameplay",
+            "default_subtitle_mode": "traditional",
+        },
+    )
+
+    resp = cliente.put(
+        f"/api/profiles/{perfil['id']}/facecam", json={"facecam_rect": CAIXA}
+    )
+    assert resp.status_code == 200, resp.text
+
+    depois = cliente.get(f"/api/profiles/{perfil['id']}").json()
+    assert depois["facecam_rect"]["y"] == CAIXA["y"]
+    assert depois["name"] == "HZ Game Clips"
+    assert depois["source_type"] == "gameplay"
+    assert depois["default_subtitle_mode"] == "traditional"
+
+
+def test_soltar_a_caixa_volta_para_a_deteccao(ambiente):
+    cliente, _ = ambiente
+    perfil = _criar_perfil(cliente, source="gameplay", facecam_rect=CAIXA)
+
+    cliente.put(f"/api/profiles/{perfil['id']}/facecam", json={"facecam_rect": None})
+
+    assert cliente.get(f"/api/profiles/{perfil['id']}").json()["facecam_rect"] is None
+
+
+def test_fixar_caixa_em_perfil_alheio_e_404(ambiente):
+    """404, nunca 403: quem não é dono não descobre que o perfil existe."""
+    cliente, _ = ambiente
+    resp = cliente.put(
+        "/api/profiles/nao-existe/facecam", json={"facecam_rect": CAIXA}
+    )
+    assert resp.status_code == 404

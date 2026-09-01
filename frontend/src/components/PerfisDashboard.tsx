@@ -134,7 +134,9 @@ export default function PerfisDashboard() {
                 <dl className="mt-4 flex flex-col gap-1 text-label text-ink-muted">
                   <div className="flex items-center gap-1.5">
                     <span className="tabular text-ink-dim">{p.job_count}</span>
-                    <span>{p.job_count === 1 ? "vídeo gerado" : "vídeos gerados"}</span>
+                    <span>
+                      {p.job_count === 1 ? "vídeo processado" : "vídeos processados"}
+                    </span>
                   </div>
                   <div>{tempoRelativo(p.last_generated_at)}</div>
                 </dl>

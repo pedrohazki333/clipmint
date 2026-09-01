@@ -173,7 +173,7 @@ export default function ProfileView({ profileId }: { profileId: string }) {
 
       {/* Resumo — os mesmos números da tela de perfis */}
       <div className="grid gap-3 sm:grid-cols-3">
-        <Metrica valor={profile.job_count} rotulo="Vídeos gerados" />
+        <Metrica valor={profile.job_count} rotulo="Vídeos processados" />
         <Metrica valor={profile.clip_count} rotulo="Clipes prontos" />
         <Metrica
           valor={prontos}

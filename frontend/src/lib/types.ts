@@ -89,6 +89,8 @@ export interface Profile {
   avatar: string | null;
   default_layout_mode: LayoutMode;
   default_subtitle_mode: SubtitleMode;
+  /** Caixa da facecam congelada para este canal. Nula = detectar a cada vídeo. */
+  facecam_rect: FacecamRect | null;
   /** Derivadas dos jobs e clipes — nenhum contador é mantido em coluna. */
   job_count: number;
   clip_count: number;
@@ -101,6 +103,8 @@ export interface ProfilePayload {
   avatar: string | null;
   default_layout_mode: LayoutMode;
   default_subtitle_mode: SubtitleMode;
+  /** Omitida, a edição SOLTA a caixa: editar o perfil o reescreve por inteiro. */
+  facecam_rect?: FacecamRect | null;
 }
 
 export interface Job {

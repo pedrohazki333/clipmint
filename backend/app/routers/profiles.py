@@ -261,6 +261,38 @@ async def update_profile(
     return ProfileResponse.model_validate(perfil)
 
 
+class FacecamPin(BaseModel):
+    """Só a caixa. `null` volta o perfil para a detecção automática."""
+
+    facecam_rect: Optional[FacecamRectPayload] = None
+
+
+@router.put("/{profile_id}/facecam", response_model=ProfileResponse)
+async def pin_facecam(
+    profile_id: str,
+    payload: FacecamPin,
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ProfileResponse:
+    """Congela — ou solta — a caixa da facecam deste perfil.
+
+    Endpoint próprio, e não o PUT do perfil, porque aquele **reescreve o perfil
+    inteiro**: fixar a caixa a partir da tela de um job obrigaria a reenviar
+    nome, rubrica e defaults, e o que fosse enviado sobrescreveria uma edição
+    feita noutra aba. Aqui só a caixa muda.
+    """
+    perfil = await _do_usuario(profile_id, user, db)
+    perfil.facecam_rect = _facecam_json(payload.facecam_rect)
+    await db.commit()
+    await db.refresh(perfil)
+    logger.info(
+        "Perfil %s: caixa da facecam %s",
+        perfil.id,
+        "fixada" if payload.facecam_rect else "solta",
+    )
+    return ProfileResponse.model_validate(perfil)
+
+
 @router.delete("/{profile_id}", status_code=204)
 async def delete_profile(
     profile_id: str,

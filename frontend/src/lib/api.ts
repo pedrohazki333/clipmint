@@ -19,6 +19,7 @@ import type {
   JobDetail,
   Clip,
   CreateJobPayload,
+  FacecamRect,
   SourceType,
   Profile,
   ProfilePayload,
@@ -63,6 +64,23 @@ export async function updateProfile(
   payload: ProfilePayload,
 ): Promise<Profile> {
   const { data } = await api.put<Profile>(`/profiles/${id}`, payload);
+  return data;
+}
+
+/**
+ * Congela a caixa da facecam do perfil — ou a solta, com `null`.
+ *
+ * Rota própria porque `updateProfile` reescreve o perfil inteiro: fixar a caixa
+ * a partir da tela de um job teria que reenviar nome, rubrica e defaults, e
+ * sobrescreveria com dado velho uma edição feita noutra aba.
+ */
+export async function pinProfileFacecam(
+  id: string,
+  rect: FacecamRect | null,
+): Promise<Profile> {
+  const { data } = await api.put<Profile>(`/profiles/${id}/facecam`, {
+    facecam_rect: rect,
+  });
   return data;
 }
 
