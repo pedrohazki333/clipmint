@@ -8,7 +8,6 @@ import type { JobDetail } from "@/lib/types";
 import { getApiErrorMessage, getJob, retryJob } from "@/lib/api";
 import JobStatus from "@/components/JobStatus";
 import ClipCard from "@/components/ClipCard";
-import FixarFacecam from "@/components/FixarFacecam";
 import JobCredits from "@/components/JobCredits";
 import { avisarSaldoMudou } from "@/lib/creditos";
 
@@ -238,10 +237,6 @@ export default function JobPage() {
           </div>
         </div>
       )}
-
-      {/* Depois dos clipes, nunca antes: fixar a caixa sem ter olhado o
-          resultado é congelar um erro. */}
-      <FixarFacecam job={job} />
 
       {job.status !== "done" && job.status !== "error" && allClips.length === 0 && (
         <div className="text-center py-12 text-ink-muted animate-pulse">
