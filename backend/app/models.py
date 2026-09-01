@@ -155,6 +155,15 @@ class Profile(Base):
     # dado, sem mudar o que ele significa.
     default_layout_mode = Column(String, nullable=False, default="cover")
     default_subtitle_mode = Column(String, nullable=False, default="word_highlight")
+    # Caixa da facecam congelada para este canal, em JSON (mesmo formato de
+    # `jobs.facecam_rect`). NULO — o normal — significa "detecte a cada vídeo".
+    #
+    # Existe porque detectar é palpite: a borda de cima da cam pode ter um
+    # décimo do contraste das outras e a heurística escolher a borda do frame,
+    # e aí o painel sai com gameplay no topo e a cabeça cortada. O canal é
+    # sempre o mesmo e a cam não anda de lugar, então depois de conferir um
+    # vídeo o dono congela a caixa e o palpite por vídeo vira dado por canal.
+    facecam_rect = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

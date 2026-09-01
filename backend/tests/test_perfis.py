@@ -330,3 +330,67 @@ def test_avatar_desconhecido_cai_no_padrao(ambiente):
     cliente, _ = ambiente
     p = _criar_perfil(cliente, avatar="dragao-roxo")
     assert p["avatar"] == "person"
+
+
+# ─── A caixa da facecam congelada no canal ────────────────────────────────────
+
+CAIXA = {"x": 0.01, "y": 0.062, "w": 0.2156, "h": 0.2493}
+
+
+def test_caixa_da_facecam_vai_e_volta_pela_api(ambiente):
+    """Guardada na criação, devolvida na leitura, reescrita na edição."""
+    cliente, factory = ambiente
+    perfil = _criar_perfil(cliente, source="gameplay", facecam_rect=CAIXA)
+
+    lido = cliente.get(f"/api/profiles/{perfil['id']}").json()
+    assert lido["facecam_rect"]["x"] == CAIXA["x"]
+    assert lido["facecam_rect"]["h"] == CAIXA["h"]
+
+    # Editar sem mandar a caixa a APAGA — editar é reescrever por inteiro, e é
+    # assim que se volta para a detecção automática.
+    cliente.put(
+        f"/api/profiles/{perfil['id']}",
+        json={"name": "HZ Game Clips", "source_type": "gameplay"},
+    )
+    assert cliente.get(f"/api/profiles/{perfil['id']}").json()["facecam_rect"] is None
+
+
+def test_caixa_do_perfil_e_aceita_pelo_pipeline_como_manual(ambiente):
+    """O contrato que faz a fixação funcionar.
+
+    `_manual_rect` do pipeline só aceita caixa com `method: "manual"` — é como
+    ele separa o que uma PESSOA informou do que o detector gravou para a UI.
+    Se o perfil gravasse sem esse método, a caixa fixada seria silenciosamente
+    ignorada e a detecção rodaria assim mesmo. Este teste é o que impede essa
+    regressão de passar despercebida.
+    """
+    from app.workers.pipeline import _manual_rect
+
+    cliente, factory = ambiente
+    perfil = _criar_perfil(cliente, source="gameplay", facecam_rect=CAIXA)
+
+    async def guardado() -> str | None:
+        async with factory() as db:
+            return await db.scalar(
+                select(Profile.facecam_rect).where(Profile.id == perfil["id"])
+            )
+
+    bruto = asyncio.run(guardado())
+    rect = _manual_rect(bruto)
+    assert rect is not None, "o pipeline recusou a caixa fixada no perfil"
+    assert rect.method == "manual"
+    assert abs(rect.y - CAIXA["y"]) < 1e-6
+
+
+def test_caixa_fora_do_quadro_e_recusada(ambiente):
+    """x+w>1 não é caixa: é erro de quem chamou."""
+    cliente, factory = ambiente
+    resp = cliente.post(
+        "/api/profiles",
+        json={
+            "name": "Torta",
+            "source_type": "gameplay",
+            "facecam_rect": {"x": 0.9, "y": 0.1, "w": 0.3, "h": 0.2},
+        },
+    )
+    assert resp.status_code == 422
