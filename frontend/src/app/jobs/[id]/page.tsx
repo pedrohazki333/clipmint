@@ -8,6 +8,7 @@ import type { JobDetail } from "@/lib/types";
 import { getApiErrorMessage, getJob, retryJob } from "@/lib/api";
 import JobStatus from "@/components/JobStatus";
 import ClipCard from "@/components/ClipCard";
+import FacecamCorrector from "@/components/FacecamCorrector";
 import JobCredits from "@/components/JobCredits";
 import { avisarSaldoMudou } from "@/lib/creditos";
 
@@ -237,6 +238,19 @@ export default function JobPage() {
           </div>
         </div>
       )}
+
+      {/* Depois dos clipes: o problema de enquadramento só existe depois de
+          olhar o resultado. */}
+      <FacecamCorrector
+        job={job}
+        clips={allClips}
+        onRerender={async () => {
+          // Mesmo par do "Retomar": o job voltou para a fila, então a tela
+          // precisa recarregar E voltar a acompanhar.
+          await fetchJob();
+          startPolling();
+        }}
+      />
 
       {job.status !== "done" && job.status !== "error" && allClips.length === 0 && (
         <div className="text-center py-12 text-ink-muted animate-pulse">

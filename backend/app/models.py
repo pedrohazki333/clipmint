@@ -147,6 +147,49 @@ class PasswordReset(Base):
     user = relationship("User")
 
 
+class FacecamReport(Base):
+    """
+    O relato de que o enquadramento da facecam saiu errado — e a chave que
+    destranca o corretor.
+
+    **Por que existe uma porta.** Corrigir a caixa exige servir quadros do vídeo
+    de origem e re-renderizar; as duas coisas custam CPU do servidor. Um botão
+    livre viraria vetor de desperdício — bastaria pedir correção em todo job. O
+    cliente sobe um print e descreve; a visão olha e diz se está ruim de fato.
+
+    **Aponta para o CLIP**, não só para o job: é o clipe que ficou torto, e é o
+    intervalo dele que a linha do tempo do corretor varre. Um job de oito
+    clipes pode ter um só errado, e fazer a pessoa procurar o instante no vídeo
+    inteiro seria trabalho que o banco já sabe evitar.
+
+    `veredito` não é só registro. É o que a tela mostra a quem foi recusado —
+    sem ele, "recusado" seria uma parede sem explicação.
+    """
+
+    __tablename__ = "facecam_reports"
+
+    id = Column(String, primary_key=True, default=uuid4_hex)
+    job_id = Column(
+        String, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # NULO se o clipe foi apagado depois do relato — o relato segue valendo.
+    clip_id = Column(String, nullable=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    description = Column(Text, nullable=False)
+    screenshot_path = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="analisando")
+    veredito = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('analisando', 'aprovado', 'recusado')",
+            name="ck_facecam_reports_status",
+        ),
+    )
+
+
 class Profile(Base):
     """
     Um perfil: o conjunto de configurações que se repete de vídeo para vídeo.

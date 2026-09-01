@@ -20,6 +20,7 @@ import type {
   Clip,
   CreateJobPayload,
   FacecamRect,
+  FacecamReport,
   SourceType,
   Profile,
   ProfilePayload,
@@ -148,6 +149,56 @@ export async function deleteJob(jobId: string): Promise<void> {
  */
 export async function retryJob(jobId: string): Promise<Job> {
   const { data } = await api.post<Job>(`/jobs/${jobId}/retry`);
+  return data;
+}
+
+// ─── Enquadramento da facecam ────────────────────────────────────────────────
+
+/** O relato deste job, ou `null`. `null` é resposta, não erro. */
+export async function getFacecamReport(
+  jobId: string,
+): Promise<FacecamReport | null> {
+  const { data } = await api.get<FacecamReport | null>(
+    `/jobs/${jobId}/facecam-report`,
+  );
+  return data;
+}
+
+/**
+ * Manda o print e a descrição. O servidor tria com a visão e responde já com o
+ * veredito — aprovado destrava o corretor, recusado explica por quê.
+ */
+export async function reportFacecam(
+  jobId: string,
+  clipId: string,
+  description: string,
+  file: File,
+): Promise<FacecamReport> {
+  const form = new FormData();
+  form.append("clip_id", clipId);
+  form.append("description", description);
+  form.append("file", file);
+  const { data } = await api.post<FacecamReport>(
+    `/jobs/${jobId}/facecam-report`,
+    form,
+    { headers: { "Content-Type": "multipart/form-data" } },
+  );
+  return data;
+}
+
+/** URL de um quadro do vídeo de origem. Exige relato aprovado. */
+export function getSourceFrameUrl(jobId: string, t: number): string {
+  return `/api/jobs/${jobId}/frame?t=${t.toFixed(2)}`;
+}
+
+/** Grava a caixa corrigida e re-renderiza. Sem custo: o job já foi cobrado. */
+export async function fixFacecam(
+  jobId: string,
+  rect: FacecamRect,
+): Promise<Job> {
+  const { data } = await api.post<Job>(`/jobs/${jobId}/facecam-fix`, {
+    facecam_rect: rect,
+  });
   return data;
 }
 

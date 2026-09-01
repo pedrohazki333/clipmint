@@ -1,9 +1,22 @@
+import asyncio
 import json
 import logging
 import shutil
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Response,
+    UploadFile,
+)
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import selectinload
@@ -13,10 +26,15 @@ from app.database import get_db
 from app.deps import current_user, owned_by
 from app.features import SourceTypeField, billing_enabled
 from app.layouts import LAYOUT_LABELS, layout_allowed, layouts_for
-from app.models import Clip, CreditLedger, Job, Profile, Transcript, User
+from app.models import Clip, CreditLedger, FacecamReport, Job, Profile, Transcript, User
 from app.prompts.viral_analysis import default_source_type
-from app.schemas import JobCreate, JobResponse, JobDetailResponse
-from app.services import credits, usage, usage_monitor
+from app.schemas import (
+    FacecamRectPayload,
+    JobCreate,
+    JobDetailResponse,
+    JobResponse,
+)
+from app.services import credits, facecam_review, usage, usage_monitor
 from app.services.quota import guard_new_job
 from app.utils.timecodes import parse_ranges
 from app.workers import joblock
@@ -337,3 +355,275 @@ async def delete_job(
     (settings.locks_dir / f"{job_id}.pid").unlink(missing_ok=True)
 
     logger.info(f"Job {job_id} deleted (records + storage)")
+
+
+# ─── Enquadramento da facecam: relatar, destravar, corrigir ───────────────────
+#
+# A caixa da cam é detectada por heurística, e heurística erra. Quando erra, o
+# painel de cima sai com gameplay dentro e a cabeça cortada — clipe pago que não
+# presta. Corrigir exige servir quadros do vídeo e re-renderizar, e as duas
+# coisas custam CPU: por isso o corretor é DESTRANCADO por um relato aprovado,
+# em vez de ficar aberto para quem quiser clicar.
+
+_TIPOS_DE_PRINT = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
+_PRINT_MAX_BYTES = 8 * 1024 * 1024
+
+#: Assinatura no início do arquivo, por tipo. O `content_type` do upload é
+#: escolhido por quem envia e não prova nada — conferir os bytes é o que impede
+#: gravar em disco algo que não é imagem, com extensão de imagem.
+_ASSINATURAS = {
+    "image/png": (b"\x89PNG\r\n\x1a\n",),
+    "image/jpeg": (b"\xff\xd8\xff",),
+    "image/webp": (b"RIFF",),
+}
+
+
+def _parece_imagem(conteudo: bytes, media_type: str) -> bool:
+    assinaturas = _ASSINATURAS.get(media_type, ())
+    if not any(conteudo.startswith(a) for a in assinaturas):
+        return False
+    # WebP tem o RIFF genérico; o que distingue é o rótulo do formato.
+    if media_type == "image/webp":
+        return conteudo[8:12] == b"WEBP"
+    return True
+
+
+class FacecamReportResponse(BaseModel):
+    id: str
+    clip_id: str | None
+    status: str
+    veredito: str | None
+    description: str
+    # O intervalo do clipe relatado: é o que a linha do tempo do corretor varre.
+    # Fazer a pessoa procurar o instante no vídeo inteiro seria trabalho que o
+    # banco já sabe evitar.
+    clip_start: float | None = None
+    clip_end: float | None = None
+
+    model_config = {"from_attributes": True}
+
+
+async def _relato_atual(job_id: str, db: AsyncSession) -> FacecamReport | None:
+    """O relato mais recente deste job."""
+    return await db.scalar(
+        select(FacecamReport)
+        .where(FacecamReport.job_id == job_id)
+        .order_by(FacecamReport.created_at.desc())
+        .limit(1)
+    )
+
+
+async def _com_intervalo(
+    relato: FacecamReport, db: AsyncSession
+) -> FacecamReportResponse:
+    resposta = FacecamReportResponse.model_validate(relato)
+    if relato.clip_id:
+        clip = await db.scalar(select(Clip).where(Clip.id == relato.clip_id))
+        if clip:
+            resposta.clip_start = clip.start_time
+            resposta.clip_end = clip.end_time
+    return resposta
+
+
+@router.get("/jobs/{job_id}/facecam-report", response_model=FacecamReportResponse | None)
+async def get_facecam_report(
+    job_id: str,
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+) -> FacecamReportResponse | None:
+    """O relato deste job, se houver. `null` é resposta, não erro."""
+    await _job_do_usuario(job_id, user, db)
+    relato = await _relato_atual(job_id, db)
+    return await _com_intervalo(relato, db) if relato else None
+
+
+@router.post(
+    "/jobs/{job_id}/facecam-report",
+    response_model=FacecamReportResponse,
+    status_code=201,
+)
+async def create_facecam_report(
+    job_id: str,
+    clip_id: str = Form(...),
+    description: str = Form(...),
+    file: UploadFile = File(...),
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+) -> FacecamReportResponse:
+    """Recebe o print, tria com a visão e destrava a correção se procede."""
+    job = await _job_do_usuario(job_id, user, db)
+    if job.layout_mode != "streamer":
+        raise HTTPException(
+            status_code=422,
+            detail="Só o layout de streamer tem painel de facecam para enquadrar.",
+        )
+
+    ext = _TIPOS_DE_PRINT.get((file.content_type or "").lower())
+    if ext is None:
+        raise HTTPException(
+            status_code=422, detail="Mande o print em PNG, JPEG ou WebP."
+        )
+    conteudo = await file.read()
+    if len(conteudo) > _PRINT_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="O print passa de 8 MB.")
+    if not conteudo:
+        raise HTTPException(status_code=422, detail="O arquivo veio vazio.")
+    if not _parece_imagem(conteudo, (file.content_type or "").lower()):
+        raise HTTPException(
+            status_code=422,
+            detail="O arquivo não é a imagem que diz ser. Mande o print de novo.",
+        )
+
+    texto = (description or "").strip()
+    if len(texto) < 5:
+        raise HTTPException(
+            status_code=422,
+            detail="Descreva em uma frase o que está errado no enquadramento.",
+        )
+
+    destino = Path(settings.storage_dir) / "facecam_reports"
+    destino.mkdir(parents=True, exist_ok=True)
+    relato = FacecamReport(
+        job_id=job_id,
+        clip_id=clip_id or None,
+        user_id=user.id,
+        description=texto[:1000],
+        screenshot_path="",
+    )
+    caminho = destino / f"{relato.id}{ext}"
+    caminho.write_bytes(conteudo)
+    relato.screenshot_path = str(caminho)
+
+    ruim, motivo = await facecam_review.avaliar(
+        conteudo, (file.content_type or "image/png").lower(), texto
+    )
+    relato.status = "aprovado" if ruim else "recusado"
+    relato.veredito = motivo
+    relato.resolved_at = datetime.now(timezone.utc)
+
+    db.add(relato)
+    await db.commit()
+    await db.refresh(relato)
+    logger.info("Relato de enquadramento %s do job %s: %s", relato.id, job_id, relato.status)
+    return await _com_intervalo(relato, db)
+
+
+async def _relato_aprovado(job_id: str, db: AsyncSession) -> FacecamReport:
+    """O relato que destrava o corretor. 403 quando não há."""
+    relato = await _relato_atual(job_id, db)
+    if relato is None or relato.status != "aprovado":
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Relate o problema de enquadramento antes de corrigir a caixa: "
+                "mande um print e uma descrição."
+            ),
+        )
+    return relato
+
+
+@router.get("/jobs/{job_id}/frame")
+async def get_source_frame(
+    job_id: str,
+    t: float,
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Um quadro do vídeo de ORIGEM, para o corretor desenhar a caixa em cima.
+
+    Exige relato aprovado: extrair quadro de um vídeo de 3 GB é trabalho de
+    servidor, e sem a porta qualquer um poderia varrer o vídeo inteiro quadro a
+    quadro.
+
+    O instante é preso ao intervalo do clipe relatado. Não é só economia: é o
+    trecho que saiu errado, e é onde a cam está no lugar que precisa ser
+    corrigido.
+    """
+    job = await _job_do_usuario(job_id, user, db)
+    relato = await _relato_aprovado(job_id, db)
+    if not job.video_path:
+        raise HTTPException(status_code=404, detail="O vídeo de origem já não está em disco.")
+
+    inicio, fim = 0.0, float(job.duration_seconds or 0)
+    if relato.clip_id:
+        clip = await db.scalar(select(Clip).where(Clip.id == relato.clip_id))
+        if clip:
+            inicio, fim = float(clip.start_time), float(clip.end_time)
+    instante = min(max(float(t), inicio), max(inicio, fim - 0.1))
+
+    origem = Path(settings.storage_dir).parent / job.video_path
+    if not origem.exists():
+        origem = Path(job.video_path)
+    if not origem.exists():
+        raise HTTPException(status_code=404, detail="O vídeo de origem já não está em disco.")
+
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-hide_banner", "-loglevel", "error",
+        "-ss", f"{instante:.3f}", "-i", str(origem),
+        "-frames:v", "1", "-q:v", "4", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        jpeg, erro = await asyncio.wait_for(proc.communicate(), timeout=30)
+    except asyncio.TimeoutError:
+        proc.kill()
+        raise HTTPException(status_code=504, detail="O vídeo demorou demais para responder.")
+    if proc.returncode != 0 or not jpeg:
+        logger.warning("Falha ao extrair quadro de %s em %.1fs: %s", job_id, instante, erro[:300])
+        raise HTTPException(status_code=500, detail="Não consegui extrair o quadro.")
+
+    # Sem cache: a caixa é ajustada olhando o quadro, e um quadro velho em cache
+    # depois de um re-render mostraria o resultado antigo.
+    return Response(content=jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+class FacecamFix(BaseModel):
+    facecam_rect: FacecamRectPayload
+
+
+@router.post("/jobs/{job_id}/facecam-fix", response_model=JobResponse, status_code=202)
+async def fix_facecam(
+    job_id: str,
+    payload: FacecamFix,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Job:
+    """Grava a caixa corrigida e re-renderiza os clipes deste job.
+
+    **Sem custo.** `usage.reconciliar` não cobra job que já foi cobrado, então
+    re-renderizar por erro nosso não tira crédito de ninguém — o cliente já
+    pagou por um clipe que deveria ter saído certo da primeira vez.
+
+    A caixa é gravada com `method: manual`, que é como o pipeline distingue o
+    que uma PESSOA informou do que o detector achou. Sem isso o retry
+    descartaria a correção e detectaria de novo — voltando ao erro.
+    """
+    job = await _job_do_usuario(job_id, user, db)
+    await _relato_aprovado(job_id, db)
+
+    if job.status in RUNNING_STATUSES:
+        raise HTTPException(
+            status_code=409, detail="Este vídeo ainda está sendo processado."
+        )
+    if joblock.owner_pid(job_id) is not None:
+        raise HTTPException(
+            status_code=409, detail="Este vídeo já está sendo processado agora."
+        )
+
+    job.facecam_rect = json.dumps(
+        {**payload.facecam_rect.model_dump(), "method": "manual"}
+    )
+    job.status = "queued"
+    job.error_message = None
+    # Todos os clipes voltam para a fila: a caixa vale para o job inteiro, então
+    # re-renderizar só o relatado deixaria os outros com o enquadramento velho.
+    await db.execute(
+        update(Clip).where(Clip.job_id == job_id).values(status="processing")
+    )
+    await db.commit()
+    await db.refresh(job)
+
+    logger.info("Job %s: caixa da facecam corrigida à mão; re-renderizando", job_id)
+    background_tasks.add_task(run_pipeline, job_id, True)
+    return job

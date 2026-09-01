@@ -512,3 +512,17 @@ export interface SubscriptionAdmin {
   started_at: string | null;
   canceled_at: string | null;
 }
+
+
+/** O relato de que o enquadramento da facecam saiu errado. */
+export interface FacecamReport {
+  id: string;
+  clip_id: string | null;
+  status: "analisando" | "aprovado" | "recusado";
+  /** O que a visão viu no print. É o que a tela mostra a quem foi recusado. */
+  veredito: string | null;
+  description: string;
+  /** Intervalo do clipe relatado — a linha do tempo do corretor varre só ele. */
+  clip_start: number | null;
+  clip_end: number | null;
+}
