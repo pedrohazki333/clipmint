@@ -59,3 +59,10 @@ Thumbs.db
 # Storage isolado da demo pública — os presets de marca do dono não podem
 # vazar para o build que outras pessoas veem.
 storage-demo/
+
+# Gerado pelo Next a cada build, e ESTE repositório tem dois builds: o pessoal
+# escreve em `.next`, o público em `.next-public`, e a terceira linha do arquivo
+# aponta para um ou para o outro. Versionado, ele conflitava com o `git pull` de
+# todo deploy — o servidor acabara de gerar a variante pública e o commit trazia
+# a pessoal. O Next o recria sozinho; não há o que perder.
+frontend/next-env.d.ts
