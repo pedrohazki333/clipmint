@@ -93,6 +93,16 @@ def _download_sync(youtube_url: str, video_path: str) -> dict:
         "format": "bestvideo[height<=1440]+bestaudio/bestvideo[height<=1440]/best[height<=1440]/best",
         "outtmpl": video_path,
         "merge_output_format": "mp4",
+        # Sem barra de progresso. Num servidor ninguém a lê, e ela CEGA O LOG:
+        # o yt-dlp reescreve a mesma linha com \r, então as centenas de
+        # atualizações viram UMA linha enorme. O journald corta linha em 48K
+        # (LineMax), a entrada aparece como "[48K blob data]" — e o que o
+        # pipeline escreve depois some junto.
+        #
+        # Custou dois diagnósticos às cegas: a falha da análise em 01/09 e a da
+        # transcrição em 02/09 não deixaram traceback nenhum no journal, embora
+        # o pipeline chame logger.error(..., exc_info=True) nas duas.
+        "noprogress": True,
         # Retentativas DENTRO de uma tentativa, para o soluço curto não custar
         # uma re-extração inteira. A camada de fora cuida do resto.
         "retries": 10,

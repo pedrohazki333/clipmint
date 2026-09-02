@@ -222,3 +222,24 @@ def test_o_teto_de_resolucao_e_1440p(monkeypatch, tmp_path):
 
     assert "height<=1440" in opts["format"]
     assert "2160" not in opts["format"], "voltou para 4K: o disco não aguenta"
+
+
+def test_o_download_nao_emite_barra_de_progresso(monkeypatch, tmp_path):
+    """A barra cega o log, e o log é como se descobre por que um job falhou.
+
+    O yt-dlp reescreve a mesma linha com \\r; sem `noprogress`, centenas de
+    atualizações viram UMA linha enorme, o journald corta em 48K (LineMax) e a
+    entrada vira "[48K blob data]" — levando junto o que o pipeline escrever
+    depois. Aconteceu duas vezes em produção: as falhas de 01/09 (análise) e
+    02/09 (transcrição) não deixaram traceback, embora o pipeline registre com
+    exc_info=True.
+    """
+    from app.services import downloader
+
+    monkeypatch.setattr(settings, "ytdlp_cookies_file", "")
+    monkeypatch.setattr(settings, "ytdlp_proxy", "")
+    opts = _capturar_opts(monkeypatch, downloader)
+
+    downloader._download_sync("https://youtu.be/x", str(tmp_path / "v.mp4"))
+
+    assert opts.get("noprogress") is True
