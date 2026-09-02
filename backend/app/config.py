@@ -226,15 +226,23 @@ class Settings(BaseSettings):
     public_quota_max_videos: int = 10
     public_quota_max_minutes: int = 300
 
-    # Teto de duração de UM vídeo. Medido: a transcrição inteira entra no
-    # prompt sem truncagem, e 12h dão ~252k tokens — acima dos 200k de contexto
-    # do Sonnet, ou seja, o job falharia depois de já ter pago o download e a
-    # transcrição. 120min ≈ 43k tokens, com folga larga.
+    # Teto de duração de UM vídeo. O limite real é o CONTEXTO da análise: a
+    # transcrição inteira entra no prompt sem truncagem, então um vídeo longo
+    # demais falharia DEPOIS de já ter pago download e transcrição.
+    #
+    # Medido em produção (job e6975106, 02/09/2026): 80,2 min consumiram 52.493
+    # tokens de entrada — **654 tokens por minuto**. Daí:
+    #   120 min ≈  78k tokens
+    #   180 min ≈ 118k tokens
+    # O Sonnet 4.6 tem 1M de contexto, então 180 min cabe com folga enorme. (O
+    # comentário anterior citava 200k, que era o contexto de um modelo anterior;
+    # mesmo naquele teto 118k passaria.)
+    #
     # A conferência é feita ANTES do download, com uma chamada de metadados.
     # 0 = sem teto (o padrão da versão pessoal, onde quem paga escolhe).
     max_source_minutes: int = 0
     # Teto do build público, aplicado quando max_source_minutes é 0.
-    public_max_source_minutes: int = 120
+    public_max_source_minutes: int = 180
     # Tempo máximo da consulta de metadados. Ela roda na frente do usuário, na
     # resposta do POST /jobs, então não pode pendurar a tela.
     probe_timeout: float = 30.0
