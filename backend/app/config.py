@@ -123,6 +123,13 @@ class Settings(BaseSettings):
     # Vale notar para a decisão: no modelo que o projeto usa, o Deepgram é ~23%
     # MAIS CARO que o AssemblyAI. A troca só se justifica por qualidade.
     assemblyai_cost_per_hour: float = 0.21
+    # Tempo limite de CADA requisição HTTP ao AssemblyAI — envio do áudio e
+    # cada consulta do polling. O padrão do SDK é 30s, e é apertado demais:
+    # enviar 249 MB levou 21s medidos, e com o teto de 180 min o áudio passa de
+    # 340 MB. Além disso, um vídeo longo fica minutos em polling e uma única
+    # resposta lenta derruba o trabalho todo. 300s dá folga sem esconder um
+    # serviço realmente fora do ar.
+    assemblyai_http_timeout: float = 300.0
     deepgram_cost_per_hour: float = 0.258
 
     # Acesso remoto: senha única compartilhada. Vazia = sem checagem (uso

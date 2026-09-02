@@ -30,6 +30,21 @@ class AssemblyAIProvider(TranscriptionProvider):
     async def transcribe(self, job_id: str, audio_path: str) -> ProviderTranscript:
         self.require_configured()
         aai.settings.api_key = settings.assemblyai_api_key
+        # O padrão do SDK são 30 segundos, e ele vale para TODA requisição —
+        # inclusive o envio do áudio e cada consulta do polling.
+        #
+        # Medido em 02/09/2026: enviar 249 MB (130 min) levou 21 s. Nove
+        # segundos de margem, num arquivo que ainda não é o maior permitido —
+        # com o teto de 180 min o áudio passa de 340 MB e o envio encosta nos
+        # 30 s. Pior: a transcrição de um vídeo longo fica minutos em polling, e
+        # UMA resposta lenta em qualquer um desses minutos derruba o trabalho
+        # inteiro.
+        #
+        # Foi o que matou o job de 130 min: morreu aos 15,5 min sem nunca ter
+        # aparecido na fila da AssemblyAI, e com a mensagem GENÉRICA — porque
+        # um timeout do `requests` não diz "assemblyai error" e não casa com a
+        # tradução de erro.
+        aai.settings.http_timeout = settings.assemblyai_http_timeout
 
         logger.info(f"[{job_id}] AssemblyAI: transcrevendo {audio_path}")
 

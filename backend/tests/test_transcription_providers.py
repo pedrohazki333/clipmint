@@ -203,3 +203,39 @@ def test_relatorio_registra_provedor_que_falhou():
     run = asyncio.run(run_provider(ProvedorFalso(falha="503"), "j", "/a.wav", 60.0))
     texto = render_report([run], "/a.wav", 60.0)
     assert "Falhas" in texto and "503" in texto
+
+
+def test_o_timeout_http_do_assemblyai_sai_do_padrao_apertado(monkeypatch):
+    """30s (o padrão do SDK) derruba vídeo longo, e a mensagem esconde a causa.
+
+    O timeout do SDK vale para TODA requisição: o envio do áudio e cada consulta
+    do polling. Medido em 02/09/2026: enviar 249 MB levou 21s — nove segundos de
+    margem. Com o teto de 180 min o áudio passa de 340 MB, e a transcrição fica
+    minutos em polling, onde UMA resposta lenta mata o trabalho inteiro.
+
+    Foi o que derrubou o job de 130 min: morreu aos 15,5 min sem nunca ter
+    chegado à fila da AssemblyAI, exibindo a mensagem GENÉRICA — um timeout do
+    `requests` não diz "assemblyai error" e não casa com a tradução de erro.
+    """
+    import assemblyai as aai
+
+    from app.services.transcription.assemblyai import AssemblyAIProvider
+
+    monkeypatch.setattr(settings, "assemblyai_api_key", "chave-de-teste")
+    monkeypatch.setattr(settings, "assemblyai_http_timeout", 300.0)
+    monkeypatch.setattr(aai.settings, "http_timeout", 30.0)
+
+    class _Falso:
+        status = "completed"
+        error = None
+        words = []
+        text = ""
+        json_response = {}
+
+    monkeypatch.setattr(
+        aai.Transcriber, "transcribe", lambda self, path, **kw: _Falso()
+    )
+
+    asyncio.run(AssemblyAIProvider().transcribe("j1", "/tmp/a.wav"))
+
+    assert aai.settings.http_timeout == 300.0, "o provedor não afrouxou o timeout"
