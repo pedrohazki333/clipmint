@@ -18,7 +18,7 @@ streamer, roda MediaPipe quadro a quadro.
 |---|---|---|
 | vCPU | 4 | `MAX_CONCURRENT_JOBS=2` e o FFmpeg usa mais de um núcleo por job |
 | RAM | 8 GB | MediaPipe + dois FFmpeg + Postgres |
-| Disco | 80 GB+ | Um vídeo de origem em 4K passa de 1 GB; o TTL de download é de 3 dias |
+| Disco | 80 GB+ | Um vídeo de 3h em 1440p passa de 7 GB; o TTL de download é de 1 dia |
 
 Com 2 vCPU funciona, mas deixe `MAX_CONCURRENT_JOBS=1` — dois renders
 disputando dois núcleos deixam **os dois** lentos.
@@ -61,7 +61,7 @@ Conferir tudo de uma vez:
 ```bash
 python3 --version   # 3.11 ou mais novo
 node --version      # 20 ou mais novo
-ffmpeg -version     # 6.x testado
+ffmpeg -version     # 6.x e 8.x testados
 pg_isready          # accepting connections
 ```
 
@@ -133,10 +133,10 @@ já são conservadores):
 ```bash
 PUBLIC_QUOTA_MAX_VIDEOS=10      # por usuário, por janela
 PUBLIC_QUOTA_MAX_MINUTES=300    # o teto que segura a conta
-PUBLIC_MAX_SOURCE_MINUTES=120   # por vídeo
+PUBLIC_MAX_SOURCE_MINUTES=180   # por vídeo
 MAX_CONCURRENT_JOBS=2
 CLIP_TTL_DAYS=14
-DOWNLOAD_TTL_DAYS=3
+DOWNLOAD_TTL_DAYS=1
 REGISTRATION_OPEN=true          # false abre só para quem já tem conta
 ```
 
@@ -390,6 +390,55 @@ O firewall só precisa de duas portas:
 ```bash
 sudo ufw allow OpenSSH && sudo ufw allow 'Nginx Full' && sudo ufw enable
 ```
+
+### Banir a varredura do site
+
+O `fail2ban` instalado no item 2 cobre só o SSH. Medido em 02/09/2026, em três
+dias de log: **2.551 de 7.111 requisições** eram varredura atrás de segredo
+vazado — `/www/.env`, `/.git/config`, `/winscp.ini`, `/wp-config.php`. Quatro
+IPs sozinhos fizeram 2.374 delas, sem nenhuma contenção.
+
+O filtro de fábrica (`nginx-botsearch`) não serve aqui: ele só cobre webmail,
+phpMyAdmin e WordPress, e casa apenas **404**. Neste app o scanner leva **307**,
+porque o middleware do Next redireciona caminho desconhecido para o login.
+
+```bash
+sudo tee /etc/fail2ban/filter.d/clipmint-scanner.conf > /dev/null <<'EOF'
+[Definition]
+failregex = ^<HOST> \- \S+ \[\] "(GET|POST|HEAD|PUT) [^"]*(\.env|\.git/|\.aws/|\.ssh/|\.svn/|wp-config|wp-admin|wp-login|wp-content|wp-includes|phpmyadmin|/pma/|winscp\.ini|web\.config|yarn\.lock|license\.txt|\.php)[^"]*" \d+
+ignoreregex =
+datepattern = ^[^\[]*\[({DATE})
+EOF
+
+sudo tee /etc/fail2ban/jail.d/clipmint-scanner.conf > /dev/null <<'EOF'
+[clipmint-scanner]
+enabled  = true
+port     = http,https
+filter   = clipmint-scanner
+logpath  = /var/log/nginx/access.log
+maxretry = 3
+findtime = 600
+bantime  = 86400
+EOF
+
+sudo fail2ban-client reload
+sudo fail2ban-client status clipmint-scanner
+```
+
+> **Os colchetes vazios `\[\]` no `failregex` não são engano.** O fail2ban
+> extrai a data da linha ANTES de aplicar o regex, então o que sobra tem os
+> colchetes sem conteúdo. Escrever `\[[^\]]+\]` casa zero linhas — e o
+> sintoma é uma jaula que sobe, fica verde e nunca bane ninguém.
+>
+> **Teste antes de ligar**, e confira que nenhum IP legítimo aparece:
+> ```bash
+> sudo fail2ban-regex /var/log/nginx/access.log \
+>   /etc/fail2ban/filter.d/clipmint-scanner.conf
+> ```
+
+`maxretry` baixo é seguro porque nenhum desses caminhos existe: o app não tem
+PHP, não serve `.env` e não publica o `.git`. Pedir por eles é, por definição,
+varredura.
 
 ## 9. Conferir que subiu certo
 

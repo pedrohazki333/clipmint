@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import Script from "next/script";
 import { cookies } from "next/headers";
 import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
 
@@ -100,6 +101,27 @@ export default async function RootLayout({
         <main className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
           {children}
         </main>
+
+        {/*
+          Analítica só no build PÚBLICO. Na versão pessoal ela mediria o uso do
+          próprio dono e mandaria isso para fora — sem ganho nenhum, já que ali
+          existe um usuário só.
+
+          No navegador, e não no log do nginx, por um motivo medido: em três
+          dias o log acumulou 245 IPs que pediram `/www/.env`, `/.git/config` e
+          `/wp-config.php~` e sumiram. Robô não executa JavaScript, então medir
+          aqui filtra a varredura sozinho, sem regra que eu tenha que manter.
+
+          `afterInteractive` para não disputar com a hidratação; o beacon não
+          usa cookie, então não puxa aviso de cookies junto.
+        */}
+        {IS_PUBLIC_BUILD && (
+          <Script
+            src="https://static.cloudflareinsights.com/beacon.min.js"
+            strategy="afterInteractive"
+            data-cf-beacon='{"token": "02c8ad33496a4ab7aeacb277cceb473e"}'
+          />
+        )}
       </body>
     </html>
   );
