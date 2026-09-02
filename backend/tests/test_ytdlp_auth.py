@@ -199,3 +199,26 @@ def test_copia_impossivel_segue_sem_cookies(monkeypatch, cookies):
     monkeypatch.setattr(ytdlp.shutil, "copyfile", sem_espaco)
 
     assert "cookiefile" not in ytdlp.base_opts()
+
+
+def test_o_teto_de_resolucao_e_1440p(monkeypatch, tmp_path):
+    """4K não se paga, e o disco é o recurso que PARA o sistema.
+
+    Medido em 02/09/2026 neste projeto: 1440p deu 40 MB/min e 2160p deu
+    192 MB/min — 4,8x. Com 75 GB de disco, dois vídeos longos em 4K enchem a
+    máquina, e disco cheio derruba FFmpeg e Postgres juntos.
+
+    O ganho não aparece onde importa: o painel da facecam sai em 1080 de
+    largura, e num fonte 1440p a caixa da cam mede ~550px. Este teste existe
+    para que subir o teto de volta seja uma DECISÃO, não um descuido.
+    """
+    from app.services import downloader
+
+    monkeypatch.setattr(settings, "ytdlp_cookies_file", "")
+    monkeypatch.setattr(settings, "ytdlp_proxy", "")
+    opts = _capturar_opts(monkeypatch, downloader)
+
+    downloader._download_sync("https://youtu.be/x", str(tmp_path / "v.mp4"))
+
+    assert "height<=1440" in opts["format"]
+    assert "2160" not in opts["format"], "voltou para 4K: o disco não aguenta"

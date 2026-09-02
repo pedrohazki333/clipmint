@@ -253,7 +253,12 @@ class Settings(BaseSettings):
     # O vídeo de ORIGEM sai bem antes: é o que ocupa GB de verdade e só serve
     # para re-renderizar. Depois disso, "Retomar" ainda funciona — só volta a
     # baixar.
-    download_ttl_days: int = 3
+    #
+    # Um dia, não três. Um vídeo longo ocupa alguns GB e o disco é o recurso que
+    # PARA o sistema quando acaba, não o que o deixa lento. Um dia cobre a
+    # janela real em que alguém baixa os clipes, vê um problema e pede
+    # correção; passado isso, re-baixar custa tempo e nada mais.
+    download_ttl_days: int = 1
     # 0 em qualquer um dos dois desliga aquela limpeza.
     # De quanto em quanto tempo a faxina roda dentro do servidor. 0 desliga —
     # é o que se faz quando ela vira um cron (ver docs/DEPLOY.md).

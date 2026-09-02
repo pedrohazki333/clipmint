@@ -73,12 +73,24 @@ def _is_permanent(message: str) -> bool:
 
 def _download_sync(youtube_url: str, video_path: str) -> dict:
     """Baixa o vídeo com yt-dlp (bloqueante — executar fora do event loop)."""
-    # Até 4K: o crop 9:16 usa só ~56% da largura do vídeo — fonte 1080p vira
-    # upscale no clip final. Com fonte 2160p o crop sai em resolução nativa.
+    # Teto em 1440p, e não em 2160p. O crop 9:16 usa só ~56% da largura, então
+    # fonte 1080p vira upscale no clip final — mas 4K não se paga:
+    #
+    # Medido em 02/09/2026, dois vídeos reais deste servidor:
+    #   1440p, 80 min → 3,2 GB  (40 MB/min)
+    #   2160p, 99 min →  19 GB  (192 MB/min, AV1 60fps a 26 Mbps)
+    #
+    # 4,8x mais disco. Com 75 GB de disco e o vídeo ficando alguns dias, DOIS
+    # vídeos em 4K enchem a máquina — e disco cheio não degrada, PARA: o FFmpeg
+    # falha, o Postgres recusa escrita, tudo cai junto (ver docs/DEPLOY.md).
+    #
+    # E o ganho de qualidade não aparece onde importa. O painel da facecam sai
+    # em 1080 de largura; num fonte 1440p a caixa da cam mede ~550px e amplia
+    # 2x, que foi exatamente o caso do vídeo do Mount conferido quadro a quadro.
     ydl_opts = {
         # Mesma autenticação da consulta de metadados (ver utils/ytdlp.py).
         **ytdlp_opts.base_opts(),
-        "format": "bestvideo[height<=2160]+bestaudio/bestvideo[height<=2160]/best[height<=2160]/best",
+        "format": "bestvideo[height<=1440]+bestaudio/bestvideo[height<=1440]/best[height<=1440]/best",
         "outtmpl": video_path,
         "merge_output_format": "mp4",
         # Retentativas DENTRO de uma tentativa, para o soluço curto não custar
