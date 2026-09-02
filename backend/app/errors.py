@@ -117,6 +117,14 @@ _TRADUCOES: tuple[tuple[str, str], ...] = (
         "A chave de API não foi aceita. Confira as credenciais no .env do servidor.",
     ),
     (
+        # ANTES de "assemblyai error": a mensagem do envio contém as duas
+        # palavras, e a primeira regra que casa é a que vale. Invertendo a
+        # ordem, o envio recairia na mensagem genérica de transcrição.
+        "assemblyai upload error",
+        "Não conseguimos enviar o áudio para a transcrição — o serviço recusou "
+        "o arquivo. Use 'Retomar': o vídeo já baixado é reaproveitado.",
+    ),
+    (
         "assemblyai error",
         "A transcrição falhou no serviço externo. Use 'Retomar' para tentar de novo.",
     ),

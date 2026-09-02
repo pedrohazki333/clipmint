@@ -8,8 +8,10 @@ modelo alucina em grito e qual trava em loop.
 
 import asyncio
 import logging
+import os
 
 import assemblyai as aai
+import requests
 
 from app.config import settings
 from app.services.transcription.base import (
@@ -27,23 +29,57 @@ class AssemblyAIProvider(TranscriptionProvider):
     def is_configured(self) -> bool:
         return bool(settings.assemblyai_api_key)
 
+    @staticmethod
+    def _enviar_audio(job_id: str, audio_path: str) -> str:
+        """Envia o áudio e devolve a URL. Substitui o envio do próprio SDK.
+
+        **Por que não deixar o SDK enviar.** Ele usa `httpx` passando o arquivo
+        ABERTO como `content` (ver `api.upload_file`). O httpx não sabe o
+        tamanho de um fluxo, então manda `Transfer-Encoding: chunked` e sem
+        `Content-Length` — e a AssemblyAI recusa envio grande assim.
+
+        Medido em 02/09/2026 com o mesmo arquivo de 249 MB:
+          - httpx/SDK, chunked ......... 502 Bad Gateway (duas vezes, 15,5 min
+            cada, gastando o retry interno do SDK antes de desistir)
+          - urllib, chunked ............ 501 Not Implemented
+          - requests, Content-Length ... 200 em 21 s
+
+        O `requests` mede o arquivo com `os.fstat` e manda o tamanho, que é o
+        que a API espera. Ele já é dependência do próprio SDK, então isto não
+        acrescenta nada ao projeto.
+
+        Sem streaming manual: o arquivo é lido em pedaços pelo `requests`, não
+        carregado inteiro na memória — 345 MB de um vídeo de 3 h na RAM, vezes
+        MAX_CONCURRENT_JOBS, derrubaria a máquina.
+        """
+        tamanho = os.path.getsize(audio_path)
+        logger.info(
+            f"[{job_id}] AssemblyAI: enviando {tamanho / 1e6:.0f} MB de áudio"
+        )
+        with open(audio_path, "rb") as f:
+            resposta = requests.post(
+                "https://api.assemblyai.com/v2/upload",
+                headers={"authorization": settings.assemblyai_api_key},
+                data=f,
+                timeout=(30, settings.assemblyai_http_timeout),
+            )
+        if resposta.status_code != 200:
+            # Mensagem com "assemblyai" e "upload" para `errors.py` traduzir —
+            # a falha anterior chegou ao usuário como "erro inesperado".
+            raise RuntimeError(
+                f"AssemblyAI upload error: HTTP {resposta.status_code} "
+                f"{resposta.text[:200]}"
+            )
+        return resposta.json()["upload_url"]
+
     async def transcribe(self, job_id: str, audio_path: str) -> ProviderTranscript:
         self.require_configured()
         aai.settings.api_key = settings.assemblyai_api_key
-        # O padrão do SDK são 30 segundos, e ele vale para TODA requisição —
-        # inclusive o envio do áudio e cada consulta do polling.
-        #
-        # Medido em 02/09/2026: enviar 249 MB (130 min) levou 21 s. Nove
-        # segundos de margem, num arquivo que ainda não é o maior permitido —
-        # com o teto de 180 min o áudio passa de 340 MB e o envio encosta nos
-        # 30 s. Pior: a transcrição de um vídeo longo fica minutos em polling, e
-        # UMA resposta lenta em qualquer um desses minutos derruba o trabalho
-        # inteiro.
-        #
-        # Foi o que matou o job de 130 min: morreu aos 15,5 min sem nunca ter
-        # aparecido na fila da AssemblyAI, e com a mensagem GENÉRICA — porque
-        # um timeout do `requests` não diz "assemblyai error" e não casa com a
-        # tradução de erro.
+        # O padrão do SDK são 30 s, e valem para TODA requisição — inclusive
+        # cada consulta do polling, que num vídeo longo dura minutos. Medido:
+        # 249 MB levaram 21 s, nove segundos do teto. Não foi a causa da falha
+        # de 02/09 (ver `_enviar_audio`), mas nove segundos de margem não é
+        # margem, e com 3 h de áudio a folga desaparece.
         aai.settings.http_timeout = settings.assemblyai_http_timeout
 
         logger.info(f"[{job_id}] AssemblyAI: transcrevendo {audio_path}")
@@ -67,8 +103,12 @@ class AssemblyAIProvider(TranscriptionProvider):
 
         transcriber = aai.Transcriber(config=config)
 
+        # Enviamos o áudio NÓS, e passamos a URL pronta ao SDK. O porquê está
+        # em `_enviar_audio`.
+        audio_url = await asyncio.to_thread(self._enviar_audio, job_id, audio_path)
+
         # O SDK é síncrono: roda em thread para não travar o event loop.
-        transcript = await asyncio.to_thread(transcriber.transcribe, audio_path)
+        transcript = await asyncio.to_thread(transcriber.transcribe, audio_url)
 
         if transcript.status == aai.TranscriptStatus.error:
             raise RuntimeError(f"AssemblyAI error: {transcript.error}")

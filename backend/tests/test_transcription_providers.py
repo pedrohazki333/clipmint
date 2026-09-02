@@ -232,10 +232,102 @@ def test_o_timeout_http_do_assemblyai_sai_do_padrao_apertado(monkeypatch):
         text = ""
         json_response = {}
 
+    class _Resp:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"upload_url": "https://cdn.assemblyai.com/upload/abc"}
+
+    # O envio é nosso desde a correção do chunked; sem simular, o teste sairia
+    # para a rede de verdade.
+    monkeypatch.setattr(
+        "app.services.transcription.assemblyai.requests.post",
+        lambda *a, **k: _Resp(),
+    )
     monkeypatch.setattr(
         aai.Transcriber, "transcribe", lambda self, path, **kw: _Falso()
     )
 
-    asyncio.run(AssemblyAIProvider().transcribe("j1", "/tmp/a.wav"))
+    import tempfile, os as _os
+    fd, caminho = tempfile.mkstemp(suffix=".wav")
+    _os.write(fd, b"\x00" * 16)
+    _os.close(fd)
+    asyncio.run(AssemblyAIProvider().transcribe("j1", caminho))
+    _os.unlink(caminho)
 
     assert aai.settings.http_timeout == 300.0, "o provedor não afrouxou o timeout"
+
+
+def test_o_audio_e_enviado_com_content_length_e_nao_pelo_sdk(monkeypatch, tmp_path):
+    """O envio do SDK usa chunked, e a AssemblyAI recusa arquivo grande assim.
+
+    Medido em 02/09/2026 com o mesmo arquivo de 249 MB:
+      httpx/SDK (chunked)        -> 502 Bad Gateway
+      urllib (chunked)           -> 501 Not Implemented
+      requests (Content-Length)  -> 200 em 21s
+
+    Derrubou um job de 130 min duas vezes, 15,5 min cada, sem o arquivo nunca
+    aparecer na fila deles. Este teste trava as duas metades da correção: o
+    envio é nosso, e o que chega ao SDK é a URL pronta — nunca o caminho local,
+    que faria ele enviar de novo do jeito errado.
+    """
+    import assemblyai as aai
+
+    from app.services.transcription.assemblyai import AssemblyAIProvider
+
+    audio = tmp_path / "a.wav"
+    audio.write_bytes(b"\x00" * 2048)
+    monkeypatch.setattr(settings, "assemblyai_api_key", "chave-de-teste")
+
+    enviados = {}
+
+    class _Resp:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"upload_url": "https://cdn.assemblyai.com/upload/abc"}
+
+    def _post(url, headers=None, data=None, timeout=None):
+        enviados["url"] = url
+        # O `requests` deriva Content-Length de um arquivo aberto; um objeto de
+        # arquivo é justamente o que permite isso sem carregar tudo na RAM.
+        enviados["e_arquivo"] = hasattr(data, "read")
+        return _Resp()
+
+    monkeypatch.setattr(
+        "app.services.transcription.assemblyai.requests.post", _post
+    )
+
+    recebido = {}
+
+    class _Falso:
+        status = "completed"
+        error = None
+        words = []
+        text = ""
+        json_response = {}
+
+    def _transcribe(self, data, **kw):
+        recebido["data"] = data
+        return _Falso()
+
+    monkeypatch.setattr(aai.Transcriber, "transcribe", _transcribe)
+
+    asyncio.run(AssemblyAIProvider().transcribe("j1", str(audio)))
+
+    assert enviados["url"].endswith("/v2/upload")
+    assert enviados["e_arquivo"], "mandou bytes na RAM em vez do arquivo aberto"
+    assert recebido["data"].startswith("https://"), (
+        "o SDK recebeu o caminho local e vai enviar de novo, em chunked"
+    )
+
+
+def test_falha_de_envio_chega_ao_usuario_traduzida():
+    """A falha anterior apareceu como 'erro inesperado' e não ajudou ninguém."""
+    from app.errors import user_message
+
+    msg = user_message(RuntimeError("AssemblyAI upload error: HTTP 502 <html>"))
+    assert "enviar o áudio" in msg
+    assert "Retomar" in msg
