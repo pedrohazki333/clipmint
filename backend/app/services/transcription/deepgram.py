@@ -33,6 +33,20 @@ logger = logging.getLogger(__name__)
 _ENDPOINT = "https://api.deepgram.com/v1/listen"
 
 #: Pedaço lido do disco por vez ao enviar o áudio.
+#:
+#: Enviar em fluxo evita carregar centenas de MB na RAM, mas tem um custo que
+#: vale saber: sem tamanho conhecido, o httpx manda `Transfer-Encoding: chunked`
+#: e SEM `Content-Length`.
+#:
+#: A AssemblyAI RECUSA envio grande assim — 502 em 249 MB, medido em
+#: 02/09/2026, e foi o que derrubou um job duas vezes (ver `_enviar_audio` em
+#: assemblyai.py). A API do Deepgram é feita para receber fluxo, então aqui
+#: deve estar certo — mas isto NUNCA foi testado com arquivo grande contra a
+#: API real, porque o provedor ativo é o outro.
+#:
+#: Se um dia o Deepgram virar o padrão: teste com um áudio de 2h+ ANTES de
+#: confiar. Se recusar, a saída é a mesma — enviar com `requests`, que deriva o
+#: tamanho do arquivo e ainda assim lê em pedaços.
 _CHUNK = 1024 * 1024
 
 
