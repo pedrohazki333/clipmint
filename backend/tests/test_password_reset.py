@@ -248,3 +248,16 @@ def test_conta_desativada_nao_recebe_link(ambiente, enviados):
         "/api/auth/forgot-password", json={"email": "cliente@exemplo.com"}
     ).status_code == 204
     assert enviados == []
+
+
+def test_me_aceita_head_para_o_monitor(ambiente):
+    """A rota que o monitor de uptime observa.
+
+    Ela é a única pública que atravessa nginx, Next, proxy e backend — a home
+    responde 200 com a API morta, então monitorar a home daria monitor verde
+    com ninguém conseguindo gerar clipe. Monitor tenta HEAD primeiro; sem
+    aceitar, ele levava 405 e refazia com GET.
+    """
+    cliente, _ = ambiente
+    assert cliente.head("/api/auth/me").status_code == 200
+    assert cliente.get("/api/auth/me").status_code == 200

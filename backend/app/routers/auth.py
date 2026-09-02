@@ -203,9 +203,16 @@ async def logout_all(
     return {"sessoes_encerradas": quantas}
 
 
-@router.get("/me", response_model=UserResponse | None)
+@router.api_route("/me", methods=["GET", "HEAD"], response_model=UserResponse | None)
 async def me(user: User | None = Depends(current_user_optional)) -> User | None:
-    """Quem está logado, ou null. Não é erro não haver ninguém."""
+    """Quem está logado, ou null. Não é erro não haver ninguém.
+
+    Aceita HEAD porque é a rota que o monitor externo de uptime observa — ela é
+    a única pública que atravessa nginx, Next, proxy e backend, então um 200
+    aqui prova a cadeia inteira (a home responde 200 com a API morta).
+    Monitor costuma tentar HEAD primeiro por ser mais barato; sem isto ele
+    levava 405 e refazia com GET, gastando duas requisições por checagem.
+    """
     return user
 
 
