@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 
@@ -20,6 +20,9 @@ import {
 } from "@/lib/brand";
 import type { LayoutMode, Profile, SubtitleMode } from "@/lib/types";
 import BrandSettings from "@/components/BrandSettings";
+import ClipPreview from "@/components/ClipPreview";
+import { Button, ErroFaixa, Field, Input } from "@/components/ui";
+import { getClipWatermarkUrl } from "@/lib/api";
 import { bannerValido } from "@/components/BannerColorSettings";
 import { barValida } from "@/components/BarStyleSettings";
 import LayoutModeSelector from "@/components/LayoutModeSelector";
@@ -51,6 +54,7 @@ interface Props {
 
 export default function ProfileForm({ profile }: Props) {
   const router = useRouter();
+  const params = useSearchParams();
   const editando = Boolean(profile);
 
   const [name, setName] = useState(profile?.name ?? "");
@@ -179,159 +183,220 @@ export default function ProfileForm({ profile }: Props) {
       }
     }
 
-    router.replace(`/perfis/${salvoId}`);
+    // Continuação da jornada que começou no hero da landing: se a pessoa
+    // chegou aqui com uma URL no bolso, o perfil recém-criado já abre na tela
+    // de gerar, com o link preenchido. Sem `url`, nada muda — é o caminho de
+    // sempre, para a página do perfil.
+    const url = editando ? null : params.get("url");
+    router.replace(
+      url
+        ? `/perfis/${salvoId}/gerar?url=${encodeURIComponent(url)}`
+        : `/perfis/${salvoId}`,
+    );
     router.refresh();
   }
+
+  /**
+   * Criar pede DUAS coisas. Editar mostra tudo.
+   *
+   * O formulário tinha 14 campos na criação, e 12 deles têm padrão razoável —
+   * ícone, layout, legenda, duas logos e sete campos de cor, fonte e @. Pedir
+   * essas doze decisões antes do primeiro clipe é pedir que a pessoa escolha
+   * sem ter visto o que a escolha muda.
+   *
+   * Nome e rubrica ficam porque não têm padrão: um perfil sem nome não se
+   * distingue do próximo, e a rubrica decide como o vídeo é analisado.
+   */
+  const soOEssencial = !editando;
 
   return (
     <div className="flex flex-col gap-6">
       <div>
         <Link
-          href={editando ? `/perfis/${profile!.id}` : "/"}
+          href={editando ? `/perfis/${profile!.id}` : "/dashboard"}
           className="text-label text-ink-dim transition-colors hover:text-ink"
         >
           ← {editando ? profile!.name : "Meus perfis"}
         </Link>
         <h1 className="mt-2 text-display font-semibold text-ink">
-          {editando ? "Editar perfil" : "Criar novo perfil"}
+          {editando ? "Editar perfil" : "Criar perfil"}
         </h1>
         <p className="mt-1 text-body text-ink-dim">
-          Configure a identidade e o padrão de geração dos seus clipes.
+          {editando
+            ? "A identidade e o padrão de geração deste perfil."
+            : "Duas respostas e você já pode gerar. O resto se ajusta depois."}
         </p>
       </div>
 
-      <form
-        onSubmit={handleSubmit}
-        className="flex flex-col gap-6 rounded-md border border-line bg-raised p-4 sm:p-6"
-      >
-        <div className="flex flex-col gap-2">
-          <label htmlFor="nome" className="text-body font-medium text-ink">
-            Nome do perfil
-          </label>
-          <input
-            id="nome"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            maxLength={60}
-            autoFocus
-            placeholder="Ex.: Meus cortes"
-            className="w-full rounded-sm border border-line bg-inset px-4 py-2.5 text-body text-ink placeholder-ink-muted outline-none focus:border-mint"
-          />
-        </div>
-
-        <div className="flex flex-col gap-2">
-          <label htmlFor="nicho" className="text-body font-medium text-ink">
-            Rubrica de análise
-          </label>
-          <select
-            id="nicho"
-            value={sourceType}
-            onChange={(e) => handleNiche(e.target.value)}
-            className="w-full rounded-sm border border-line bg-inset px-4 py-2.5 text-body text-ink outline-none focus:border-mint"
+      <form onSubmit={handleSubmit} className="flex flex-col gap-6">
+        <div className="flex flex-col gap-6 rounded-md border border-line bg-raised p-4 sm:p-6">
+          <Field
+            label="Nome do perfil"
+            htmlFor="nome"
+            hint="Só para você se achar: um perfil por canal, ou por linha editorial. Aparece na sua lista, nunca no clipe."
           >
-            {NICHES.map((n) => (
-              <option key={n.source} value={n.source}>
-                {n.title}
-              </option>
-            ))}
-          </select>
-          {nicho && (
-            <p className="text-label text-ink-muted">{nicho.description}</p>
+            <Input
+              id="nome"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              maxLength={60}
+              autoFocus
+              placeholder="Ex.: Meus cortes"
+            />
+          </Field>
+
+          <Field
+            label="Rubrica de análise"
+            htmlFor="nicho"
+            hint="É o critério que dá nota a cada trecho do vídeo. Podcast pontua gancho verbal, arco de resolução e frase-momento; Gameplay pontua pico visual, reviravolta e legibilidade sem som. Escolha pelo tipo de vídeo que você vai enviar."
+          >
+            <select
+              id="nicho"
+              value={sourceType}
+              onChange={(e) => handleNiche(e.target.value)}
+              className="w-full rounded-sm border border-line bg-inset px-4 py-2.5 text-body text-ink outline-none focus:border-mint"
+            >
+              {NICHES.map((n) => (
+                <option key={n.source} value={n.source}>
+                  {n.title}
+                </option>
+              ))}
+            </select>
+            {nicho && (
+              <p className="text-label text-ink-dim">{nicho.description}</p>
+            )}
+          </Field>
+
+          {!soOEssencial && (
+            <Field
+              label="Ícone"
+              hint="Só para diferenciar os perfis na lista."
+            >
+              <div className="flex flex-wrap gap-2">
+                {AVATARS.map((chave) => (
+                  <button
+                    key={chave}
+                    type="button"
+                    onClick={() => setAvatar(chave)}
+                    title={AVATAR_LABEL[chave]}
+                    aria-pressed={avatar === chave}
+                    className={`flex h-12 w-12 items-center justify-center rounded-sm border transition-colors ${
+                      avatar === chave
+                        ? "border-mint bg-mint-soft text-mint"
+                        : "border-line bg-inset text-ink-dim hover:border-line-strong hover:text-ink"
+                    }`}
+                  >
+                    <AvatarIcon name={chave} className="h-5 w-5" />
+                  </button>
+                ))}
+              </div>
+            </Field>
           )}
         </div>
 
-        <div className="flex flex-col gap-2">
-          <span className="text-body font-medium text-ink">Ícone</span>
-          <div className="flex flex-wrap gap-2">
-            {AVATARS.map((chave) => (
-              <button
-                key={chave}
-                type="button"
-                onClick={() => setAvatar(chave)}
-                title={AVATAR_LABEL[chave]}
-                aria-pressed={avatar === chave}
-                className={`flex h-12 w-12 items-center justify-center rounded-sm border transition-colors ${
-                  avatar === chave
-                    ? "border-mint bg-mint-soft text-mint"
-                    : "border-line bg-inset text-ink-dim hover:border-line-strong hover:text-ink"
-                }`}
-              >
-                <AvatarIcon name={chave} className="h-5 w-5" />
-              </button>
-            ))}
-          </div>
-        </div>
+        {/* ── Aparência: só na edição, e sempre ao lado do preview ──────────
+            Estes controles não fazem sentido sem ver o que mudam. Enquanto
+            moravam numa coluna de painéis soltos, escolher uma cor de banner
+            era escolher no escuro — o resultado só aparecia depois de gastar
+            crédito num vídeo. */}
+        {!soOEssencial && (
+          <div className="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-start">
+            {/* ── Prévia ───────────────────────────────────────────────────
+                Primeira no DOM e grudada no topo: no celular ela é uma tira
+                fina que acompanha a rolagem, porque uma prévia que só aparece
+                depois de todos os controles não serve para nada — a pessoa
+                mexe na cor aqui e o resultado está três telas abaixo.
+                No desktop ela vira a coluna da direita, em tamanho cheio. */}
+            <div className="sticky top-0 z-20 -mx-4 min-w-0 border-b border-line bg-base px-4 py-3 sm:-mx-6 sm:px-6 lg:order-2 lg:top-6 lg:mx-0 lg:border-0 lg:bg-transparent lg:px-0 lg:py-0">
+              <div className="flex items-center gap-4 lg:block">
+                <div className="w-[88px] flex-shrink-0 lg:w-full">
+                  <ClipPreview
+                    layout={layout}
+                    subtitle={subtitle}
+                    brand={brand}
+                    watermarkUrl={
+                      profile?.id
+                        ? getClipWatermarkUrl({ source: sourceType, profileId: profile.id })
+                        : undefined
+                    }
+                  />
+                </div>
+                <div className="min-w-0 lg:mt-3">
+                  <p className="text-label uppercase tracking-[0.16em] text-ink-dim">
+                    Prévia
+                  </p>
+                  {/* No celular a tira tem que caber numa linha de leitura;
+                      o porquê completo fica onde há espaço para ele. */}
+                  <p className="mt-1 text-label leading-relaxed text-ink-dim">
+                    Atualiza enquanto você mexe.
+                    <span className="hidden lg:inline">
+                      {" "}
+                      Proporções, posição e cor são as do arquivo final. A
+                      quebra de linha do título é aproximada — quem quebra de
+                      verdade é o servidor, com a fonte instalada nele.
+                    </span>
+                  </p>
+                </div>
+              </div>
+            </div>
 
-        <div className="border-t border-line pt-6">
-          <p className="mb-1 text-body font-medium text-ink">
-            Padrão de geração
-          </p>
-          <p className="mb-4 text-label text-ink-muted">
-            Como o formulário de geração vem preenchido. Dá para mudar em cada
-            vídeo.
-          </p>
-          <div className="flex flex-col gap-5">
-            <LayoutModeSelector
-              value={layout}
-              onChange={setLayout}
-              source={sourceType}
-            />
-            <SubtitleModeSelector value={subtitle} onChange={setSubtitle} />
-          </div>
-        </div>
+            <div className="flex min-w-0 flex-col gap-6 rounded-md border border-line bg-raised p-4 sm:p-6 lg:order-1">
+              <div>
+                <p className="text-body font-medium text-ink">Padrão de geração</p>
+                <p className="mt-1 text-label text-ink-dim">
+                  Como o formulário de geração vem preenchido. Dá para mudar em
+                  cada vídeo.
+                </p>
+              </div>
+              <LayoutModeSelector
+                value={layout}
+                onChange={setLayout}
+                source={sourceType}
+              />
+              <SubtitleModeSelector value={subtitle} onChange={setSubtitle} />
 
-        {/*
-          Editando, a marca só existe depois que `loadBrandDraft` volta — e até
-          lá `brand` vale o padrão de fábrica. Mostrar os painéis nesse estado
-          exibe cores que NÃO são as do perfil como se fossem, e quem abre a
-          tela conclui que a configuração se perdeu. Enquanto não chega, o
-          honesto é dizer que está carregando.
-
-          Na criação não se aplica: ali o padrão do nicho é mesmo o valor certo
-          de partida, e segurar o formulário só atrasaria quem quer preencher.
-        */}
-        {editando && brandBase === null ? (
-          <div className="rounded-md border border-line bg-raised px-6 py-12 text-center">
-            <p className="text-body text-ink-dim">
-              Carregando a marca deste perfil...
-            </p>
+              {editando && brandBase === null ? (
+                <p className="border-t border-line pt-6 text-body text-ink-dim">
+                  Carregando a marca deste perfil...
+                </p>
+              ) : (
+                <BrandSettings
+                  source={sourceType}
+                  profileId={profile?.id}
+                  draft={brand}
+                  onChange={mudarMarca}
+                  fonts={fonts}
+                  disabled={salvando}
+                />
+              )}
+            </div>
           </div>
-        ) : (
-          <BrandSettings
-            source={sourceType}
-            profileId={profile?.id}
-            draft={brand}
-            onChange={mudarMarca}
-            fonts={fonts}
-            disabled={salvando}
-          />
         )}
 
-        {erro && (
-          <p className="rounded-sm border border-danger/40 bg-danger-soft px-3 py-2 text-body text-danger">
-            {erro}
-          </p>
-        )}
+        {erro && <ErroFaixa>{erro}</ErroFaixa>}
 
         <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
           <Link
-            href={editando ? `/perfis/${profile!.id}` : "/"}
+            href={editando ? `/perfis/${profile!.id}` : "/dashboard"}
             className="rounded-sm border border-line px-5 py-2.5 text-center text-body text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
           >
             Cancelar
           </Link>
-          <button
-            type="submit"
-            disabled={salvando || !name.trim() || !marcaValida}
-            className="rounded-sm bg-mint-strong px-5 py-2.5 text-body font-medium text-base transition-colors hover:bg-mint disabled:cursor-not-allowed disabled:opacity-50"
-          >
+          <Button type="submit" disabled={salvando || !name.trim() || !marcaValida}>
             {salvando
               ? "Salvando..."
               : editando
               ? "Salvar alterações"
               : "Criar perfil"}
-          </button>
+          </Button>
         </div>
+
+        {soOEssencial && (
+          <p className="text-label text-ink-dim">
+            Cores, fonte, logo e formato do corte ficam em Editar perfil, com a
+            prévia do clipe ao lado.
+          </p>
+        )}
       </form>
     </div>
   );

@@ -98,18 +98,7 @@ export default function PerfisDashboard() {
       {profiles === null ? (
         <p className="py-12 text-center text-ink-dim">Carregando...</p>
       ) : profiles.length === 0 && !erro ? (
-        <div className="rounded-md border border-dashed border-line bg-raised px-6 py-16 text-center">
-          <p className="text-title font-medium text-ink">Ainda não há perfis</p>
-          <p className="mt-1 text-body text-ink-dim">
-            Crie o primeiro perfil para começar a gerar clipes.
-          </p>
-          <Link
-            href="/perfis/novo"
-            className="mt-5 inline-block rounded-sm bg-mint-strong px-5 py-2.5 text-body font-medium text-base transition-colors hover:bg-mint"
-          >
-            Criar primeiro perfil
-          </Link>
-        </div>
+        <PrimeiroUso />
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
           {profiles.map((p) => {
@@ -188,6 +177,69 @@ export default function PerfisDashboard() {
 
       {/* Aprender com clipe viral e padrões — só na versão pessoal. */}
       {LearningSection && <LearningSection />}
+    </div>
+  );
+}
+
+/**
+ * O que fazer quando ainda não há nada.
+ *
+ * A tela vazia dizia "Ainda não há perfis" e oferecia um botão — o que é
+ * verdade e não é ajuda. Quem chega aqui acabou de criar a conta e não sabe o
+ * que é um perfil, o que é uma rubrica, nem quanto isso vai custar.
+ *
+ * Os três passos são os três que existem de verdade. Nenhum inventa etapa, e o
+ * terceiro diz o preço antes de a pessoa gastar: 1 crédito por minuto, com 120
+ * na conta.
+ */
+function PrimeiroUso() {
+  const passos = [
+    {
+      titulo: "Crie um perfil",
+      texto:
+        "Duas respostas: um nome e o tipo de vídeo que você envia. O perfil guarda a rubrica e a marca dos seus clipes.",
+    },
+    {
+      titulo: "Cole o link de um vídeo",
+      texto:
+        "Um vídeo do YouTube já publicado. O ClipMint baixa, transcreve e dá nota a cada trecho sozinho.",
+    },
+    {
+      titulo: "Baixe os clipes",
+      texto:
+        "Saem em 9:16, com legenda e a sua marca. Cada minuto de vídeo processado custa 1 crédito — você começa com 120.",
+    },
+  ];
+
+  return (
+    <div className="rounded-md border border-line bg-raised p-6 sm:p-8">
+      <h2 className="text-title font-semibold text-ink">
+        Do link ao clipe, em três passos
+      </h2>
+      <p className="mt-1 text-body text-ink-dim">
+        Você ainda não tem perfis. É por aqui que começa.
+      </p>
+
+      <ol className="mt-6 flex flex-col gap-5 sm:flex-row sm:gap-6">
+        {passos.map((passo, i) => (
+          <li key={passo.titulo} className="flex-1">
+            <span className="flex h-7 w-7 items-center justify-center rounded-full border border-line bg-inset text-label font-semibold text-mint">
+              {i + 1}
+            </span>
+            <p className="mt-3 text-body font-medium text-ink">{passo.titulo}</p>
+            <p className="mt-1 text-label leading-relaxed text-ink-dim">
+              {passo.texto}
+            </p>
+          </li>
+        ))}
+      </ol>
+
+      <Link
+        href="/perfis/novo"
+        className="mt-7 inline-flex rounded-sm bg-mint-strong px-5 py-2.5 text-body font-medium text-on-mint transition-colors hover:bg-mint"
+      >
+        Criar meu primeiro perfil
+      </Link>
     </div>
   );
 }

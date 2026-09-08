@@ -26,6 +26,11 @@ interface Props {
   defaultLayout?: LayoutMode;
   /** Modo de legenda com que o formulário abre. Vem do perfil; segue editável. */
   defaultSubtitle?: SubtitleMode;
+  /**
+   * URL com que o campo abre. Vem do link colado no hero da landing, que
+   * atravessa o cadastro e a criação do perfil — ver HeroUrlForm.
+   */
+  defaultUrl?: string;
 }
 
 /**
@@ -50,8 +55,9 @@ export default function UrlInput({
   lockedSource,
   defaultLayout = "cover",
   defaultSubtitle,
+  defaultUrl,
 }: Props) {
-  const [url, setUrl] = useState("");
+  const [url, setUrl] = useState(defaultUrl ?? "");
   const [subtitleMode, setSubtitleMode] = useState<SubtitleMode>(
     defaultSubtitle ?? "word_highlight",
   );

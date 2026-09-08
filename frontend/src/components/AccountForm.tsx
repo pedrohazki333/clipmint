@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { getApiErrorMessage } from "@/lib/api";
+import { ROTA_DASHBOARD } from "@/lib/rotas";
 import axios from "axios";
 
 type Modo = "entrar" | "criar";
@@ -19,7 +20,13 @@ type Modo = "entrar" | "criar";
 export default function AccountForm() {
   const router = useRouter();
   const params = useSearchParams();
-  const [modo, setModo] = useState<Modo>("entrar");
+  // O CTA de cadastro entra por `?modo=criar` (ver lib/rotas.ts): quem clicou
+  // em "Começar grátis" já chega no formulário certo. Antes, os dois botões
+  // caíam na mesma tela em "entrar", e criar conta exigia achar o alternador no
+  // rodapé — um clique a mais bem no ponto em que a pessoa decidiu começar.
+  const [modo, setModo] = useState<Modo>(
+    params.get("modo") === "criar" ? "criar" : "entrar",
+  );
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
   const [erro, setErro] = useState("");
@@ -36,8 +43,18 @@ export default function AccountForm() {
         email: email.trim(),
         password: senha,
       });
+      // O link colado no hero (ver HeroUrlForm) atravessa o cadastro: quem
+      // acabou de criar a conta ainda não tem perfil, então a próxima parada é
+      // criá-lo — levando a URL junto. Sem isto a pessoa digitaria o endereço
+      // duas vezes, e um campo que descarta o que recebeu é pior que campo
+      // nenhum.
+      const url = params.get("url");
+      const destino = criando && url
+        ? `/perfis/novo?url=${encodeURIComponent(url)}`
+        : params.get("next") || ROTA_DASHBOARD;
+
       // replace() para a tela de login não ficar no histórico do navegador
-      router.replace(params.get("next") || "/");
+      router.replace(destino);
       router.refresh();
     } catch (err) {
       setErro(
@@ -58,8 +75,11 @@ export default function AccountForm() {
           {criando ? "Criar conta" : "Entrar no ClipMint"}
         </h1>
         <p className="mt-1 text-body text-ink-dim">
+          {/* O bônus de cadastro é dito aqui, e não descoberto no saldo depois:
+              é a última tela antes de a pessoa digitar o e-mail, e o número que
+              a landing prometeu tem que continuar à vista. */}
           {criando
-            ? "Seus vídeos e clipes ficam só na sua conta."
+            ? "Você começa com 120 créditos grátis. Seus vídeos e clipes ficam só na sua conta."
             : "Use o e-mail e a senha da sua conta."}
         </p>
       </div>

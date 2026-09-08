@@ -42,7 +42,14 @@ import UrlInput from "@/components/UrlInput";
 
 const NICHES = [...PUBLIC_NICHES, ...PERSONAL_NICHES];
 
-export default function ProfileGenerate({ profileId }: { profileId: string }) {
+export default function ProfileGenerate({
+  profileId,
+  /** URL que veio da landing, já preenchida no campo. */
+  defaultUrl,
+}: {
+  profileId: string;
+  defaultUrl?: string;
+}) {
   const router = useRouter();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [ausente, setAusente] = useState(false);
@@ -158,7 +165,7 @@ export default function ProfileGenerate({ profileId }: { profileId: string }) {
         <p className="rounded-md border border-line bg-raised p-6 text-body text-ink">
           Este perfil não existe mais.
         </p>
-        <Link href="/" className="text-body text-mint hover:text-mint-strong">
+        <Link href="/dashboard" className="text-body text-mint hover:text-mint-strong">
           ← Meus perfis
         </Link>
       </div>
@@ -214,6 +221,7 @@ export default function ProfileGenerate({ profileId }: { profileId: string }) {
           lockedSource={profile.source_type}
           defaultLayout={profile.default_layout_mode}
           defaultSubtitle={profile.default_subtitle_mode}
+          defaultUrl={defaultUrl}
         />
         {erro && (
           <p className="mt-3 rounded-sm border border-danger/40 bg-danger-soft px-3 py-2 text-body text-danger">
