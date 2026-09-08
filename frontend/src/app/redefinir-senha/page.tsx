@@ -24,7 +24,7 @@ function Formulario() {
       // O backend já abriu a sessão e mandou o cookie: a pessoa entra direto.
       // Pedir para logar de novo, logo depois de provar que é dona do e-mail,
       // seria burocracia sem ganho de segurança.
-      router.replace("/");
+      router.replace("/dashboard");
       router.refresh();
     } catch (err) {
       setErro(getApiErrorMessage(err, "Não foi possível trocar a senha."));

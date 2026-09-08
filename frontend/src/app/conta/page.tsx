@@ -70,7 +70,7 @@ export default function ContaPage() {
     <div className="flex flex-col gap-6">
       <div>
         <Link
-          href="/"
+          href="/dashboard"
           className="text-label text-ink-dim transition-colors hover:text-ink"
         >
           ← Meus perfis
@@ -145,7 +145,7 @@ export default function ContaPage() {
             </p>
           </div>
           <Link
-            href="/"
+            href="/dashboard"
             className="rounded-sm border border-line px-4 py-2 text-body text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
           >
             Ver perfis

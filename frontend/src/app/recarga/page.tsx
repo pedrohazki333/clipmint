@@ -204,7 +204,7 @@ export default function RecargaPage() {
               </p>
               <div className="flex gap-2">
                 <Link
-                  href="/"
+                  href="/dashboard"
                   className="rounded-sm bg-mint px-3 py-1.5 text-body font-semibold text-base transition-opacity hover:opacity-90"
                 >
                   Gerar clips

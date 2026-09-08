@@ -101,7 +101,7 @@ export default function JobPage() {
             Ele pode ter sido excluído por aqui ou em outra aba.
           </p>
         </div>
-        <Link href="/" className="text-body text-mint hover:text-mint">
+        <Link href="/dashboard" className="text-body text-mint hover:text-mint">
           ← Voltar para as contas
         </Link>
       </div>
@@ -136,7 +136,7 @@ export default function JobPage() {
       {/* Voltar para o perfil que gerou este job — não para a lista de perfis.
           Job antigo (anterior aos perfis) não tem profile_id e cai na lista. */}
       <Link
-        href={job.profile_id ? `/perfis/${job.profile_id}` : "/"}
+        href={job.profile_id ? `/perfis/${job.profile_id}` : "/dashboard"}
         className="text-body text-ink-dim hover:text-ink transition-colors"
       >
         ← Voltar{job.profile_id ? " ao perfil" : " para os perfis"}

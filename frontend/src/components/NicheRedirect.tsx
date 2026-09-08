@@ -51,7 +51,7 @@ export default function NicheRedirect({ source }: { source: SourceType }) {
           Criar perfil
         </Link>
         <Link
-          href="/"
+          href="/dashboard"
           className="rounded-sm border border-line px-5 py-2.5 text-body text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
         >
           Meus perfis

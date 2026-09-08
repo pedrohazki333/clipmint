@@ -11,6 +11,10 @@ const PUBLIC_PATHS = new Set(["/login", "/auth/login", "/auth/logout"]);
  * público. Entram apenas em `guardaPublica` — o build pessoal nunca deve
  * mostrar nada antes da senha, então esta lista não participa do branch
  * pessoal abaixo.
+ *
+ * "/" é a LANDING e nada mais. Quem tem sessão e cai aqui é mandado para o
+ * dashboard logo abaixo: deixar a landing aparecer para quem já é cliente é
+ * mostrar a vitrine a quem já entrou na loja.
  */
 const MARKETING_PATHS = new Set(["/", "/como-funciona"]);
 
@@ -58,6 +62,13 @@ const WEBHOOK_PATHS = new Set(["/api/billing/webhook"]);
 function guardaPublica(req: NextRequest): NextResponse {
   const { pathname } = req.nextUrl;
 
+  // Quem já tem sessão não vê a landing: vai direto para o produto.
+  if (pathname === "/" && req.cookies.has(SESSION_COOKIE)) {
+    const dash = req.nextUrl.clone();
+    dash.pathname = "/dashboard";
+    return NextResponse.redirect(dash);
+  }
+
   if (
     PUBLIC_PATHS.has(pathname) ||
     MARKETING_PATHS.has(pathname) ||
@@ -76,7 +87,8 @@ function guardaPublica(req: NextRequest): NextResponse {
 
   const login = req.nextUrl.clone();
   login.pathname = "/login";
-  login.search = pathname === "/" ? "" : `?next=${encodeURIComponent(pathname)}`;
+  login.search =
+    pathname === "/dashboard" ? "" : `?next=${encodeURIComponent(pathname)}`;
   return NextResponse.redirect(login);
 }
 
@@ -100,6 +112,14 @@ export async function middleware(req: NextRequest) {
 
   if (PUBLIC_PATHS.has(pathname)) return NextResponse.next();
 
+  // A versão pessoal não tem landing — "/" ali sempre foi o dashboard, e
+  // continua sendo, agora no endereço certo.
+  if (pathname === "/") {
+    const dash = req.nextUrl.clone();
+    dash.pathname = "/dashboard";
+    return NextResponse.redirect(dash);
+  }
+
   const cookie = req.cookies.get(AUTH_COOKIE)?.value;
   if (cookie && safeEqual(cookie, await deriveToken(password))) {
     // O backend não pode identificar este proxy pelo IP: atrás de um túnel, o
@@ -118,11 +138,20 @@ export async function middleware(req: NextRequest) {
 
   const login = req.nextUrl.clone();
   login.pathname = "/login";
-  login.search = pathname === "/" ? "" : `?next=${encodeURIComponent(pathname)}`;
+  login.search =
+    pathname === "/dashboard" ? "" : `?next=${encodeURIComponent(pathname)}`;
   return NextResponse.redirect(login);
 }
 
 export const config = {
-  // Deixa passar os assets do Next e o favicon — o resto (páginas e /api/*) passa aqui.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // Deixa passar os assets do Next, o favicon e a arte da landing — o resto
+  // (páginas e /api/*) passa aqui.
+  //
+  // `landing/` entrou porque sem ele o asset do hero simplesmente não aparecia:
+  // um arquivo em `public/` que não está nesta lista é tratado como página, e
+  // visitante sem sessão levava 307 para /login. O sintoma era indireto — o
+  // otimizador de imagem do Next busca o original por HTTP, recebia o redirect
+  // e devolvia 400 "The requested resource isn't a valid image". Aqui só mora
+  // arte de marketing, que é pública por definição.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|landing/).*)"],
 };

@@ -75,7 +75,7 @@ export default function ProfileView({ profileId }: { profileId: string }) {
     setExcluindo(true);
     try {
       await deleteProfile(profileId);
-      router.replace("/");
+      router.replace("/dashboard");
       router.refresh();
     } catch (err) {
       setErro(getApiErrorMessage(err, "Não foi possível excluir o perfil."));
@@ -93,7 +93,7 @@ export default function ProfileView({ profileId }: { profileId: string }) {
             Os vídeos que saíram dele continuam na sua conta.
           </p>
         </div>
-        <Link href="/" className="text-body text-mint hover:text-mint-strong">
+        <Link href="/dashboard" className="text-body text-mint hover:text-mint-strong">
           ← Meus perfis
         </Link>
       </div>
@@ -110,7 +110,7 @@ export default function ProfileView({ profileId }: { profileId: string }) {
   return (
     <div className="flex flex-col gap-6">
       <Link
-        href="/"
+        href="/dashboard"
         className="text-label text-ink-dim transition-colors hover:text-ink"
       >
         ← Meus perfis
