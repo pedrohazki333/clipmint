@@ -1,121 +1,64 @@
-import Link from "next/link";
-
-import { AvatarIcon } from "@/lib/avatars";
-import { PUBLIC_NICHES } from "@/lib/features";
-import { HOW_IT_WORKS_STEPS } from "@/lib/how-it-works";
+import Hero from "./sections/Hero";
+import Method from "./sections/Method";
+import Rubric from "./sections/Rubric";
+import Niches from "./sections/Niches";
+import Audiences from "./sections/Audiences";
+import Brand from "./sections/Brand";
+import MobileSection from "./sections/MobileSection";
+import Productivity from "./sections/Productivity";
+import Credits from "./sections/Credits";
+import Faq from "./sections/Faq";
+import FinalCta from "./sections/FinalCta";
+import SiteFooter from "./sections/SiteFooter";
+import MobileCtaBar from "./MobileCtaBar";
 
 /**
  * A porta de entrada para quem nunca usou o ClipMint.
  *
- * Renderizada por app/page.tsx só quando o build é público e não há sessão —
- * quem já está logado nunca vê isto, cai direto em PerfisDashboard. Reaproveita
- * os mesmos tokens visuais e o mesmo estilo de card do resto do app: nada de
- * paleta ou tipografia nova só porque é a "primeira impressão".
+ * Renderizada por app/page.tsx só quando o build é público e não há sessão.
+ *
+ * Duas regras que esta página tem que continuar respeitando, porque quebrá-las
+ * já custou uma reescrita:
+ *
+ *  1. **Nenhuma seção simula o produto com markup.** Todo visual passa por
+ *     `Asset`, que carrega um arquivo de verdade — ver `assets.ts`. Uma tela do
+ *     ClipMint desenhada em `div` fica fiel e fica morta.
+ *  2. **O celular não é o desktop espremido.** Cada slot tem arte própria em
+ *     pé, a barra de ação de baixo existe só lá, e o campo de link vira dois
+ *     alvos cheios em vez de uma pílula apertada.
+ *
+ * O ritmo é o da referência que aprovamos: fundo escuro, uma ideia por tela,
+ * arte grande com o texto embaixo dela, e CTA só no começo e no fim.
  */
 export default function LandingPage() {
   return (
-    <div className="flex flex-col gap-16 pb-8">
-      <section className="flex flex-col items-start gap-4 pt-4 sm:pt-8">
-        <p className="text-label font-medium uppercase tracking-wide text-mint">
-          A partir de vídeos longos do YouTube
-        </p>
-        <h1 className="text-display font-semibold text-ink sm:text-3xl">
-          Clipes verticais que prendem atenção, sem editar nada na mão.
-        </h1>
-        <p className="max-w-xl text-body text-ink-dim">
-          Cole o link de um vídeo, escolha o perfil e o ClipMint encontra os
-          melhores trechos, corta em formato vertical e entrega pronto pra
-          postar — com legenda e marca aplicadas.
-        </p>
-        <div className="flex flex-wrap gap-3 pt-2">
-          <Link
-            href="/login"
-            className="rounded-sm bg-mint-strong px-5 py-2.5 text-body font-medium text-base transition-colors hover:bg-mint"
-          >
-            Criar conta grátis
-          </Link>
-          <Link
-            href="#como-funciona"
-            className="rounded-sm border border-line px-5 py-2.5 text-body font-medium text-ink transition-colors hover:border-line-strong"
-          >
-            Ver como funciona
-          </Link>
-        </div>
-      </section>
+    <>
+      {/*
+        A revelação por scroll depende de JavaScript: o elemento nasce
+        transparente e é o IntersectionObserver que o acende. Sem script não há
+        observer — o `scripting: none` de globals.css cobre o navegador
+        moderno, e isto cobre o resto.
+      */}
+      <noscript>
+        <style>{`[data-reveal]{opacity:1!important;transform:none!important}`}</style>
+      </noscript>
 
-      <section id="como-funciona" className="flex flex-col gap-6 scroll-mt-6">
-        <div>
-          <h2 className="text-title font-semibold text-ink">Como funciona</h2>
-          <p className="mt-1 text-body text-ink-dim">
-            Quatro passos, do link ao clipe pronto.
-          </p>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
-          {HOW_IT_WORKS_STEPS.map((step, i) => (
-            <div
-              key={step.title}
-              className="flex flex-col rounded-md border border-line bg-raised p-5"
-            >
-              <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-sm border border-line bg-inset text-mint">
-                <AvatarIcon name={step.icon} className="h-5 w-5" />
-              </div>
-              <p className="text-label text-ink-muted">Passo {i + 1}</p>
-              <h3 className="text-body font-semibold text-ink">{step.title}</h3>
-              <p className="mt-1 text-body text-ink-dim">{step.blurb}</p>
-            </div>
-          ))}
-        </div>
-        <Link
-          href="/como-funciona"
-          className="text-body font-medium text-mint transition-colors hover:text-mint-strong"
-        >
-          Ver o passo a passo completo →
-        </Link>
-      </section>
+      <Hero />
+      <Method />
+      <Rubric />
+      <Niches />
+      <Audiences />
+      <Brand />
+      <MobileSection />
+      <Productivity />
+      <Credits />
+      <Faq />
+      <FinalCta />
+      <SiteFooter />
 
-      <section className="flex flex-col gap-6">
-        <div>
-          <h2 className="text-title font-semibold text-ink">Feito para o seu nicho</h2>
-          <p className="mt-1 text-body text-ink-dim">
-            Cada nicho avalia os trechos do jeito certo pra ele.
-          </p>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2 sm:gap-4">
-          {PUBLIC_NICHES.map((nicho) => (
-            <div
-              key={nicho.source}
-              className={`flex flex-col rounded-md border border-line bg-raised p-5 transition-colors ${nicho.accent}`}
-            >
-              <h3 className="text-title font-semibold text-ink">{nicho.title}</h3>
-              <p className="mt-1 text-body text-ink-dim">{nicho.description}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="rounded-md border border-line bg-raised p-6 sm:p-8">
-        <h2 className="text-title font-semibold text-ink">Pague só pelo que gerar</h2>
-        <p className="mt-2 max-w-xl text-body text-ink-dim">
-          1 crédito equivale a 1 minuto de vídeo de origem processado. Sem
-          mensalidade obrigatória — a cobrança acontece só quando um vídeo é
-          processado.
-        </p>
-        <Link
-          href="/login"
-          className="mt-5 inline-block rounded-sm bg-mint-strong px-5 py-2.5 text-body font-medium text-base transition-colors hover:bg-mint"
-        >
-          Criar conta grátis
-        </Link>
-      </section>
-
-      <footer className="border-t border-line pt-6 text-label text-ink-muted">
-        <p>
-          ClipMint — cortes verticais a partir de vídeos longos.{" "}
-          <Link href="/como-funciona" className="text-ink-dim hover:text-ink">
-            Como usar
-          </Link>
-        </p>
-      </footer>
-    </div>
+      {/* Espaço para a barra fixa não cobrir o rodapé. */}
+      <div aria-hidden className="h-24 md:hidden" />
+      <MobileCtaBar />
+    </>
   );
 }

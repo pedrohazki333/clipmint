@@ -5,6 +5,7 @@ import { AvatarIcon } from "@/lib/avatars";
 import { AUTH_COOKIE } from "@/lib/auth";
 import { IS_PUBLIC_BUILD, SESSION_COOKIE } from "@/lib/build";
 import { PUBLIC_NICHES } from "@/lib/features";
+import { ROTA_CADASTRO, ROTA_DASHBOARD } from "@/lib/rotas";
 import { HOW_IT_WORKS_STEPS } from "@/lib/how-it-works";
 
 export const metadata = { title: "Como usar — ClipMint" };
@@ -105,7 +106,7 @@ export default async function ComoFuncionaPage() {
 
       <section className="flex flex-col items-start gap-3">
         <Link
-          href={loggedIn ? "/" : "/login"}
+          href={loggedIn ? ROTA_DASHBOARD : ROTA_CADASTRO}
           className="rounded-sm bg-mint-strong px-5 py-2.5 text-body font-medium text-base transition-colors hover:bg-mint"
         >
           {loggedIn ? "Ir para meus perfis" : "Criar conta grátis"}

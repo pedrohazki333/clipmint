@@ -74,6 +74,32 @@
   --text-label--line-height: 1rem;
   --text-data: 0.8125rem;       /* 13px — número e timecode, em mono */
   --text-data--line-height: 1rem;
+
+  /* Escala editorial — só a landing usa.
+     A escala de cima foi feita para telas de trabalho, onde 28px já é o maior
+     título da página. Uma landing precisa de um degrau que o app não tem: o H1
+     ali é o primeiro contato, não o cabeçalho de uma tela. Em vez de números
+     soltos no meio do markup, os três degraus moram aqui, com o resto.
+     O clamp() é o que substitui os breakpoints: um só valor cobre 360px e
+     1440px sem uma variante por tamanho. */
+  --text-hero: clamp(2.125rem, 5.4vw, 3.75rem);
+  --text-hero--line-height: 1.06;
+  --text-hero--letter-spacing: -0.02em;
+  --text-section: clamp(1.625rem, 3.2vw, 2.5rem);
+  --text-section--line-height: 1.15;
+  --text-section--letter-spacing: -0.015em;
+  --text-lead: clamp(1rem, 1.15vw, 1.125rem);
+  --text-lead--line-height: 1.6;
+  /* O "120" dos créditos e nada mais. */
+  --text-mega: clamp(4.5rem, 13vw, 9rem);
+  --text-mega--line-height: 0.85;
+  --text-mega--letter-spacing: -0.045em;
+
+  /* Tinta sobre o mint.
+     O mint é claro: em cima dele o texto tem que ser o fundo da página. Existe
+     como token porque `text-base` é ambíguo — o Tailwind resolve `text-*`
+     primeiro como tamanho, e `--text-base` existe no tema padrão dele. */
+  --color-on-mint: #0b0f0d;
 }
 
 /**
@@ -103,6 +129,55 @@
   border-radius: var(--radius-sm);
 }
 
+/**
+ * Revelação ao entrar na tela.
+ *
+ * O elemento nasce deslocado e transparente; `Reveal` marca `data-shown` quando
+ * o IntersectionObserver o vê, e a transição faz o resto. Sem biblioteca: são
+ * duas propriedades animadas, e carregar um motor de animação para isso seria
+ * pagar quilobytes por um `translate`.
+ *
+ * A direção é dado, não classe: `up` para continuidade, `left`/`right` só onde
+ * a entrada lateral significa alguma coisa (os dois nichos chegando de lados
+ * opostos), `fade` onde o movimento não explicaria nada.
+ */
+[data-reveal] {
+  opacity: 0;
+  transition:
+    opacity 620ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform 620ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  will-change: opacity, transform;
+}
+[data-reveal="up"] {
+  transform: translateY(18px);
+}
+[data-reveal="left"] {
+  transform: translateX(-32px);
+}
+[data-reveal="right"] {
+  transform: translateX(32px);
+}
+[data-reveal="fade"] {
+  transform: none;
+}
+[data-reveal][data-shown] {
+  opacity: 1;
+  transform: none;
+  will-change: auto;
+}
+
+/**
+ * Sem JavaScript não há observer — e sem observer nada receberia `data-shown`.
+ * A página inteira ficaria invisível. `scripting: none` cobre isso no navegador
+ * moderno; o `<noscript>` da landing cobre o resto.
+ */
+@media (scripting: none) {
+  [data-reveal] {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /** Quem pediu menos movimento ao sistema não deve receber movimento. */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -111,5 +186,13 @@
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  /* Zerar a duração não basta aqui: o estado inicial do `Reveal` é deslocado e
+     transparente, e sem transição ele simplesmente ficaria assim até o observer
+     disparar. Quem pediu menos movimento recebe o conteúdo já no lugar. */
+  [data-reveal] {
+    opacity: 1 !important;
+    transform: none !important;
   }
 }

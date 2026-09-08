@@ -1,14 +1,11 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import Script from "next/script";
 import { cookies } from "next/headers";
 import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
 
 import { AUTH_COOKIE } from "@/lib/auth";
 import { IS_PUBLIC_BUILD, SESSION_COOKIE } from "@/lib/build";
-import CreditBalance from "@/components/CreditBalance";
-import LogoutButton from "@/components/LogoutButton";
-import UserMenu from "@/components/UserMenu";
+import AppShell from "@/components/AppShell";
 import "./globals.css";
 
 /**
@@ -37,7 +34,11 @@ const plexMono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: "ClipMint",
-  description: "Gere clips virais a partir de vídeos do YouTube",
+  // "Clips virais" prometia o resultado; o produto entrega a produção. É a
+  // mesma linha que a landing sustenta, e é ela que aparece no resultado de
+  // busca e no card compartilhado.
+  description:
+    "Transforme podcasts e gameplays em clips verticais prontos para publicar.",
 };
 
 export default async function RootLayout({
@@ -56,51 +57,10 @@ export default async function RootLayout({
   return (
     <html lang="pt-BR" className={`${plexSans.variable} ${plexMono.variable}`}>
       <body className="min-h-screen bg-base font-sans text-body text-ink antialiased">
-        <header className="border-b border-line px-4 py-4 sm:px-6">
-          <div className="mx-auto flex max-w-4xl items-center gap-3">
-            <Link href="/" className="text-title font-semibold text-mint">
-              ClipMint
-            </Link>
-            <span className="hidden text-label text-ink-muted sm:inline">
-              cortes verticais a partir de vídeos longos
-            </span>
-            {/* Só existe landing e tutorial no build público — a versão
-                pessoal não ganha este link, pois nunca mostra a landing. */}
-            {IS_PUBLIC_BUILD && (
-              <Link
-                href="/como-funciona"
-                className="text-label text-ink-dim transition-colors hover:text-ink"
-              >
-                Como usar
-              </Link>
-            )}
-            {/* Público: saldo sempre à vista + botão de conta, ou CTA de
-                cadastro para quem ainda não entrou. Pessoal: não há conta nem
-                crédito, só a porta de saída da senha única.
-                O saldo vem ANTES da conta porque é o que se consulta com
-                frequência — a conta se abre uma vez por semana. */}
-            <div className="ml-auto flex items-center gap-2">
-              {loggedIn ? (
-                <>
-                  {IS_PUBLIC_BUILD && <CreditBalance />}
-                  {IS_PUBLIC_BUILD ? <UserMenu /> : <LogoutButton />}
-                </>
-              ) : (
-                IS_PUBLIC_BUILD && (
-                  <Link
-                    href="/login"
-                    className="rounded-sm bg-mint-strong px-3 py-1.5 text-label font-medium text-base transition-colors hover:bg-mint"
-                  >
-                    Criar conta
-                  </Link>
-                )
-              )}
-            </div>
-          </div>
-        </header>
-        <main className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
-          {children}
-        </main>
+        {/* Cabeçalho e moldura moram no AppShell: o produto e a vitrine usam
+            barras diferentes, e a escolha entre as duas depende do caminho —
+            que só o cliente conhece. Ver components/AppShell.tsx. */}
+        <AppShell loggedIn={loggedIn}>{children}</AppShell>
 
         {/*
           Analítica só no build PÚBLICO. Na versão pessoal ela mediria o uso do
