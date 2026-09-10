@@ -27,6 +27,7 @@ import type {
 import CreditConfirm from "@/components/CreditConfirm";
 import LowBalanceBanner from "@/components/LowBalanceBanner";
 import UrlInput from "@/components/UrlInput";
+import { ErroFaixa } from "@/components/ui";
 
 /**
  * Gerar clipes a partir de um perfil.
@@ -189,7 +190,7 @@ export default function ProfileGenerate({
         </Link>
         <h1 className="mt-2 text-display font-semibold text-ink">Gerar clipes</h1>
         <p className="mt-1 text-body text-ink-dim">
-          Transforme um vídeo longo em clipes verticais prontos para publicar.
+          Cole o link, confira os ajustes e gere.
         </p>
       </div>
 
@@ -214,21 +215,18 @@ export default function ProfileGenerate({
 
       {IS_PUBLIC_BUILD && <LowBalanceBanner />}
 
-      <div className="rounded-md border border-line bg-raised p-4 sm:p-6">
-        <UrlInput
-          onSubmit={handleSubmit}
-          isLoading={enviando}
-          lockedSource={profile.source_type}
-          defaultLayout={profile.default_layout_mode}
-          defaultSubtitle={profile.default_subtitle_mode}
-          defaultUrl={defaultUrl}
-        />
-        {erro && (
-          <p className="mt-3 rounded-sm border border-danger/40 bg-danger-soft px-3 py-2 text-body text-danger">
-            {erro}
-          </p>
-        )}
-      </div>
+      {/* O formulário traz os próprios cartões: o link e os trechos num, os
+          ajustes recolhidos noutro. Uma moldura em volta de tudo só somaria
+          mais uma borda entre a pessoa e o botão. */}
+      <UrlInput
+        onSubmit={handleSubmit}
+        isLoading={enviando}
+        lockedSource={profile.source_type}
+        defaultLayout={profile.default_layout_mode}
+        defaultSubtitle={profile.default_subtitle_mode}
+        defaultUrl={defaultUrl}
+      />
+      {erro && <ErroFaixa>{erro}</ErroFaixa>}
 
       {pendente && (
         <CreditConfirm

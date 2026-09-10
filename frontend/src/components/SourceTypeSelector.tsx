@@ -15,33 +15,39 @@ interface Props {
   isInferred?: boolean;
 }
 
+/** Sem rótulo próprio: quem nomeia o controle é o cartão que o contém. */
 export default function SourceTypeSelector({ value, onChange, isInferred }: Props) {
+  const atual = TYPES.find((t) => t.source === value);
+
   return (
     <div className="flex flex-col gap-2">
-      <label className="text-body font-medium text-ink-dim">Tipo de conteúdo</label>
-      <div className="flex gap-2 flex-wrap">
-        {TYPES.map((type) => (
-          <button
-            key={type.source}
-            type="button"
-            onClick={() => onChange(type.source)}
-            title={type.description}
-            className={`px-4 py-2 rounded-sm text-body font-medium transition-colors border ${
-              value === type.source
-                ? "bg-mint-strong border-mint text-white"
-                : "bg-inset border-line text-ink hover:border-mint"
-            }`}
-          >
-            {type.title}
-          </button>
-        ))}
+      <div className="flex flex-wrap gap-2">
+        {TYPES.map((type) => {
+          const ativo = value === type.source;
+          return (
+            <button
+              key={type.source}
+              type="button"
+              onClick={() => onChange(type.source)}
+              aria-pressed={ativo}
+              className={`rounded-sm border px-4 py-2.5 text-body font-medium transition-colors ${
+                ativo
+                  ? "border-mint bg-mint-soft text-mint"
+                  : "border-line bg-inset text-ink hover:border-line-strong hover:bg-hover"
+              }`}
+            >
+              {type.title}
+            </button>
+          );
+        })}
       </div>
       {/* A menção ao cronograma saiu daqui: a fila de postagem é da versão
           pessoal, e no build público este texto prometia algo que não existe. O
           que a rubrica faz — decidir os critérios da análise — vale nos dois. */}
-      <p className="text-label text-ink-dim">
+      <p className="text-label leading-relaxed text-ink-dim">
         {isInferred ? "Sugerido pelo layout. " : ""}
-        Define os critérios que a análise usa para escolher os melhores trechos.
+        {atual?.description ??
+          "Define os critérios que a análise usa para escolher os melhores trechos."}
       </p>
     </div>
   );
