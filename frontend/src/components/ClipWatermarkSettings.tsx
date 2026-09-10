@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 
+import { LinkButton } from "@/components/ui";
 import type { FileSlot } from "@/lib/brand";
 
 /**
@@ -49,34 +50,41 @@ export default function ClipWatermarkSettings({
   const mostrando = localUrl ?? (value.saved && !value.remove ? savedUrl : null);
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          <p className="text-body font-medium text-ink">
-            Marca d&apos;água do clipe
-          </p>
-          <p className="mt-1 text-label text-ink-muted">
-            Sua arte sobre o gameplay, a 70% de opacidade. Só vale para clipes em
-            modo streamer.
-          </p>
-        </div>
+    <div className="flex flex-col gap-3">
+      <div>
+        <p className="text-body font-medium text-ink">Arte sobre o gameplay</p>
+        <p className="mt-0.5 text-label leading-relaxed text-ink-muted">
+          Sua assinatura sobre a imagem do jogo, a 70% de opacidade. Só aparece
+          no layout facecam + gameplay.
+        </p>
+      </div>
 
-        <div className="flex flex-shrink-0 items-center gap-3">
-          {mostrando && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={mostrando}
-              alt="Marca d'água do clipe"
-              className="h-12 w-12 rounded-sm border border-line object-contain p-1"
-              style={XADREZ}
-            />
-          )}
+      <div className="flex items-center gap-3">
+        {mostrando ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={mostrando}
+            alt="Arte sobre o gameplay"
+            className="h-14 w-14 flex-shrink-0 rounded-sm border border-line object-contain p-1.5"
+            style={XADREZ}
+          />
+        ) : (
+          <span
+            className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-sm border border-dashed border-line text-label text-ink-muted"
+            style={XADREZ}
+            aria-hidden="true"
+          >
+            —
+          </span>
+        )}
+
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <label
             className={`cursor-pointer rounded-sm border border-line bg-inset px-4 py-2 text-body text-ink transition-colors hover:bg-hover ${
               disabled ? "pointer-events-none opacity-50" : ""
             }`}
           >
-            {value.saved || value.file ? "Trocar" : "Enviar arte"}
+            {value.saved || value.file ? "Trocar arte" : "Enviar arte"}
             <input
               ref={inputRef}
               type="file"
@@ -91,14 +99,13 @@ export default function ClipWatermarkSettings({
             />
           </label>
           {(value.file || (value.saved && !value.remove)) && (
-            <button
-              type="button"
+            <LinkButton
               disabled={disabled}
               onClick={() => onChange({ ...value, file: null, remove: true })}
-              className="text-label text-ink-dim transition-colors hover:text-danger disabled:opacity-50"
+              className="hover:text-danger"
             >
               Remover
-            </button>
+            </LinkButton>
           )}
         </div>
       </div>
@@ -121,8 +128,8 @@ export default function ClipWatermarkSettings({
         </p>
       )}
       {!value.saved && !value.file && (
-        <p className="rounded-sm bg-inset px-3 py-2 text-label text-ink-muted">
-          Sem arte aqui, o clipe sai sem marca d&apos;água.
+        <p className="text-label leading-relaxed text-ink-muted">
+          Sem arte aqui, o clipe sai sem nada sobre o gameplay.
         </p>
       )}
     </div>

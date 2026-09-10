@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 
 import { AVATARS, AVATAR_LABEL, AvatarIcon, avatarKey } from "@/lib/avatars";
@@ -21,7 +21,8 @@ import {
 import type { LayoutMode, Profile, SubtitleMode } from "@/lib/types";
 import BrandSettings from "@/components/BrandSettings";
 import ClipPreview from "@/components/ClipPreview";
-import { Button, ErroFaixa, Field, Input } from "@/components/ui";
+import { Button, ErroFaixa, Field, Input, SectionCard } from "@/components/ui";
+import { SectionIcon } from "@/lib/section-icons";
 import { getClipWatermarkUrl } from "@/lib/api";
 import { bannerValido } from "@/components/BannerColorSettings";
 import { barValida } from "@/components/BarStyleSettings";
@@ -43,6 +44,13 @@ import SubtitleModeSelector from "@/components/SubtitleModeSelector";
  * isso o submit cria o perfil primeiro e só então aplica o rascunho de marca
  * (ver `lib/brand.ts`). Antes disso a marca só existia na edição, com um botão
  * de salvar por painel.
+ *
+ * ── A forma da tela ──────────────────────────────────────────────────────────
+ * Um assunto por cartão (`SectionCard`), em três grupos rotulados. A edição tem
+ * dezesseis controles; empilhados em dois cartões grandes eles se liam como uma
+ * lista contínua, e três "Fundo" na mesma coluna só se distinguiam contando de
+ * cima para baixo. Os grupos existem porque as duas metades respondem a
+ * perguntas diferentes: "como o corte é montado" e "que marca ele carrega".
  */
 
 const NICHES = [...PUBLIC_NICHES, ...PERSONAL_NICHES];
@@ -50,6 +58,29 @@ const NICHES = [...PUBLIC_NICHES, ...PERSONAL_NICHES];
 interface Props {
   /** Ausente = criar. Presente = editar. */
   profile?: Profile;
+}
+
+/**
+ * Rótulo de grupo: separa os três assuntos sem virar mais uma caixa.
+ *
+ * O rótulo é um parágrafo, e não um cabeçalho, para não abrir um nível entre o
+ * título da página e os cartões — cada cartão é uma seção de verdade, com seu
+ * `h2`. O grupo é uma pista visual, e chega ao leitor de tela como nome da
+ * região, via `aria-labelledby`.
+ */
+function Grupo({ titulo, children }: { titulo: string; children: ReactNode }) {
+  const id = useId();
+  return (
+    <section aria-labelledby={id} className="flex flex-col gap-3">
+      <p
+        id={id}
+        className="text-label font-medium uppercase tracking-[0.14em] text-ink-muted"
+      >
+        {titulo}
+      </p>
+      {children}
+    </section>
+  );
 }
 
 export default function ProfileForm({ profile }: Props) {
@@ -209,6 +240,55 @@ export default function ProfileForm({ profile }: Props) {
    */
   const soOEssencial = !editando;
 
+  const basicos = (
+    <SectionCard
+      icon="identidade"
+      title="Informações básicas"
+      description="O nome que você vê na lista e o critério com que os vídeos deste perfil são analisados."
+    >
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field
+          label="Nome do perfil"
+          htmlFor="nome"
+          hint="Só para você se achar: um perfil por canal, ou por linha editorial. Aparece na sua lista, nunca no clipe."
+        >
+          <Input
+            id="nome"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={60}
+            autoFocus
+            placeholder="Ex.: Meus cortes"
+          />
+        </Field>
+
+        <Field
+          label="Rubrica de análise"
+          htmlFor="nicho"
+          hint="É o critério que dá nota a cada trecho do vídeo. Podcast pontua gancho verbal, arco de resolução e frase-momento; Gameplay pontua pico visual, reviravolta e legibilidade sem som. Escolha pelo tipo de vídeo que você vai enviar."
+        >
+          <select
+            id="nicho"
+            value={sourceType}
+            onChange={(e) => handleNiche(e.target.value)}
+            className="w-full rounded-sm border border-line bg-inset px-4 py-2.5 text-body text-ink outline-none focus:border-mint"
+          >
+            {NICHES.map((n) => (
+              <option key={n.source} value={n.source}>
+                {n.title}
+              </option>
+            ))}
+          </select>
+          {nicho && (
+            <p className="text-label leading-relaxed text-ink-muted">
+              {nicho.description}
+            </p>
+          )}
+        </Field>
+      </div>
+    </SectionCard>
+  );
+
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -229,85 +309,34 @@ export default function ProfileForm({ profile }: Props) {
       </div>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-6">
-        <div className="flex flex-col gap-6 rounded-md border border-line bg-raised p-4 sm:p-6">
-          <Field
-            label="Nome do perfil"
-            htmlFor="nome"
-            hint="Só para você se achar: um perfil por canal, ou por linha editorial. Aparece na sua lista, nunca no clipe."
-          >
-            <Input
-              id="nome"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              maxLength={60}
-              autoFocus
-              placeholder="Ex.: Meus cortes"
-            />
-          </Field>
-
-          <Field
-            label="Rubrica de análise"
-            htmlFor="nicho"
-            hint="É o critério que dá nota a cada trecho do vídeo. Podcast pontua gancho verbal, arco de resolução e frase-momento; Gameplay pontua pico visual, reviravolta e legibilidade sem som. Escolha pelo tipo de vídeo que você vai enviar."
-          >
-            <select
-              id="nicho"
-              value={sourceType}
-              onChange={(e) => handleNiche(e.target.value)}
-              className="w-full rounded-sm border border-line bg-inset px-4 py-2.5 text-body text-ink outline-none focus:border-mint"
-            >
-              {NICHES.map((n) => (
-                <option key={n.source} value={n.source}>
-                  {n.title}
-                </option>
-              ))}
-            </select>
-            {nicho && (
-              <p className="text-label text-ink-dim">{nicho.description}</p>
-            )}
-          </Field>
-
-          {!soOEssencial && (
-            <Field
-              label="Ícone"
-              hint="Só para diferenciar os perfis na lista."
-            >
-              <div className="flex flex-wrap gap-2">
-                {AVATARS.map((chave) => (
-                  <button
-                    key={chave}
-                    type="button"
-                    onClick={() => setAvatar(chave)}
-                    title={AVATAR_LABEL[chave]}
-                    aria-pressed={avatar === chave}
-                    className={`flex h-12 w-12 items-center justify-center rounded-sm border transition-colors ${
-                      avatar === chave
-                        ? "border-mint bg-mint-soft text-mint"
-                        : "border-line bg-inset text-ink-dim hover:border-line-strong hover:text-ink"
-                    }`}
-                  >
-                    <AvatarIcon name={chave} className="h-5 w-5" />
-                  </button>
-                ))}
-              </div>
-            </Field>
-          )}
-        </div>
-
-        {/* ── Aparência: só na edição, e sempre ao lado do preview ──────────
-            Estes controles não fazem sentido sem ver o que mudam. Enquanto
-            moravam numa coluna de painéis soltos, escolher uma cor de banner
-            era escolher no escuro — o resultado só aparecia depois de gastar
-            crédito num vídeo. */}
-        {!soOEssencial && (
-          <div className="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-start">
+        {soOEssencial ? (
+          basicos
+        ) : (
+          /* ── Edição: os blocos à esquerda, a prévia à direita ───────────
+             Estes controles não fazem sentido sem ver o que mudam. Enquanto
+             moravam numa coluna de painéis soltos, escolher uma cor de banner
+             era escolher no escuro — o resultado só aparecia depois de gastar
+             crédito num vídeo. */
+          <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_15rem] lg:items-start lg:gap-6">
             {/* ── Prévia ───────────────────────────────────────────────────
                 Primeira no DOM e grudada no topo: no celular ela é uma tira
                 fina que acompanha a rolagem, porque uma prévia que só aparece
                 depois de todos os controles não serve para nada — a pessoa
                 mexe na cor aqui e o resultado está três telas abaixo.
-                No desktop ela vira a coluna da direita, em tamanho cheio. */}
-            <div className="sticky top-0 z-20 -mx-4 min-w-0 border-b border-line bg-base px-4 py-3 sm:-mx-6 sm:px-6 lg:order-2 lg:top-6 lg:mx-0 lg:border-0 lg:bg-transparent lg:px-0 lg:py-0">
+                No desktop a mesma marcação vira o cartão da coluna direita. */}
+            <aside className="sticky top-0 z-20 -mx-4 min-w-0 border-b border-line bg-base px-4 py-3 sm:-mx-6 sm:px-6 lg:order-2 lg:top-6 lg:mx-0 lg:rounded-md lg:border lg:border-line lg:bg-raised lg:p-4">
+              <header className="mb-4 hidden items-start gap-3 lg:flex">
+                <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-sm border border-line bg-inset text-mint">
+                  <SectionIcon name="previa" />
+                </span>
+                <div className="min-w-0">
+                  <h2 className="text-body font-medium text-ink">Prévia</h2>
+                  <p className="mt-0.5 text-label leading-relaxed text-ink-muted">
+                    Atualiza enquanto você mexe.
+                  </p>
+                </div>
+              </header>
+
               <div className="flex items-center gap-4 lg:block">
                 <div className="w-[88px] flex-shrink-0 lg:w-full">
                   <ClipPreview
@@ -321,59 +350,107 @@ export default function ProfileForm({ profile }: Props) {
                     }
                   />
                 </div>
-                <div className="min-w-0 lg:mt-3">
-                  <p className="text-label uppercase tracking-[0.16em] text-ink-dim">
-                    Prévia
-                  </p>
-                  {/* No celular a tira tem que caber numa linha de leitura;
-                      o porquê completo fica onde há espaço para ele. */}
-                  <p className="mt-1 text-label leading-relaxed text-ink-dim">
-                    Atualiza enquanto você mexe.
-                    <span className="hidden lg:inline">
-                      {" "}
-                      Proporções, posição e cor são as do arquivo final. A
-                      quebra de linha do título é aproximada — quem quebra de
-                      verdade é o servidor, com a fonte instalada nele.
-                    </span>
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex min-w-0 flex-col gap-6 rounded-md border border-line bg-raised p-4 sm:p-6 lg:order-1">
-              <div>
-                <p className="text-body font-medium text-ink">Padrão de geração</p>
-                <p className="mt-1 text-label text-ink-dim">
-                  Como o formulário de geração vem preenchido. Dá para mudar em
-                  cada vídeo.
+                {/* No celular a tira tem que caber numa linha de leitura;
+                    o porquê completo fica onde há espaço para ele. */}
+                <p className="min-w-0 text-label leading-relaxed text-ink-dim lg:mt-3">
+                  <span className="lg:hidden">Atualiza enquanto você mexe.</span>
+                  <span className="hidden lg:inline">
+                    Proporções, posição e cor são as do arquivo final. A quebra
+                    de linha do título é aproximada — quem quebra de verdade é o
+                    servidor, com a fonte instalada nele.
+                  </span>
                 </p>
               </div>
-              <LayoutModeSelector
-                value={layout}
-                onChange={setLayout}
-                source={sourceType}
-              />
-              <SubtitleModeSelector value={subtitle} onChange={setSubtitle} />
 
-              {editando && brandBase === null ? (
-                <p className="border-t border-line pt-6 text-body text-ink-dim">
-                  Carregando a marca deste perfil...
-                </p>
-              ) : (
-                <BrandSettings
-                  source={sourceType}
-                  profileId={profile?.id}
-                  draft={brand}
-                  onChange={mudarMarca}
-                  fonts={fonts}
-                  disabled={salvando}
-                />
-              )}
+              <p className="mt-4 hidden rounded-sm border border-line bg-inset px-3 py-2 text-label leading-relaxed text-ink-muted lg:block">
+                Nada aqui vale antes de salvar, e o que você salvar entra nos
+                próximos clipes — os que já foram gerados continuam como estão.
+              </p>
+            </aside>
+
+            <div className="flex min-w-0 flex-col gap-6 lg:order-1">
+              <Grupo titulo="Perfil">
+                {basicos}
+                <SectionCard
+                  icon="icone"
+                  title="Ícone do perfil"
+                  description="Para bater o olho e achar este perfil na lista. Não aparece no clipe."
+                >
+                  {/* Grade de seis, e não uma fileira que quebra: em 390px os
+                      seis botões de 48px não cabiam numa linha e o último caía
+                      sozinho embaixo, parecendo de outro grupo. */}
+                  <div className="grid grid-cols-6 gap-2 sm:max-w-xs">
+                    {AVATARS.map((chave) => (
+                      <button
+                        key={chave}
+                        type="button"
+                        onClick={() => setAvatar(chave)}
+                        title={AVATAR_LABEL[chave]}
+                        aria-label={AVATAR_LABEL[chave]}
+                        aria-pressed={avatar === chave}
+                        className={`flex aspect-square items-center justify-center rounded-sm border transition-colors ${
+                          avatar === chave
+                            ? "border-mint bg-mint-soft text-mint"
+                            : "border-line bg-inset text-ink-dim hover:border-line-strong hover:text-ink"
+                        }`}
+                      >
+                        <AvatarIcon name={chave} className="h-5 w-5" />
+                      </button>
+                    ))}
+                  </div>
+                </SectionCard>
+              </Grupo>
+
+              <Grupo titulo="Padrão de geração">
+                <SectionCard
+                  icon="layout"
+                  title="Layout do clipe"
+                  description="Como o vertical é montado. Vem escolhido no formulário de geração e dá para trocar em cada vídeo."
+                >
+                  <LayoutModeSelector
+                    value={layout}
+                    onChange={setLayout}
+                    source={sourceType}
+                  />
+                </SectionCard>
+
+                <SectionCard
+                  icon="legenda"
+                  title="Legenda"
+                  description="Como a fala aparece na tela de quem assiste sem som."
+                >
+                  <SubtitleModeSelector value={subtitle} onChange={setSubtitle} />
+                </SectionCard>
+              </Grupo>
+
+              <Grupo titulo="Identidade">
+                {editando && brandBase === null ? (
+                  <p className="rounded-md border border-line bg-raised p-4 text-body text-ink-dim sm:p-5">
+                    Carregando a marca deste perfil...
+                  </p>
+                ) : (
+                  <BrandSettings
+                    source={sourceType}
+                    profileId={profile?.id}
+                    draft={brand}
+                    onChange={mudarMarca}
+                    fonts={fonts}
+                    disabled={salvando}
+                  />
+                )}
+              </Grupo>
             </div>
           </div>
         )}
 
         {erro && <ErroFaixa>{erro}</ErroFaixa>}
+
+        {!soOEssencial && (
+          <p className="text-label leading-relaxed text-ink-muted lg:hidden">
+            Nada aqui vale antes de salvar, e o que você salvar entra nos
+            próximos clipes — os que já foram gerados continuam como estão.
+          </p>
+        )}
 
         <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
           <Link

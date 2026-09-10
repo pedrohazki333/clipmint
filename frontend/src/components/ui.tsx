@@ -2,6 +2,8 @@
 
 import { useId, useState, type ReactNode } from "react";
 
+import { SectionIcon, type SectionIconName } from "@/lib/section-icons";
+
 /**
  * As peças que o produto repete.
  *
@@ -162,5 +164,99 @@ export function ErroFaixa({ children }: { children: ReactNode }) {
     >
       {children}
     </p>
+  );
+}
+
+/* ── Bloco de configuração ──────────────────────────────────────────────── */
+
+/**
+ * Um assunto por cartão: ícone, título, uma legenda curta e os controles.
+ *
+ * A tela de editar perfil chegou a ter dezesseis controles empilhados dentro de
+ * dois cartões, separados só por espaço em branco. Dava para configurar tudo,
+ * mas não dava para achar nada: "Fundo" aparecia três vezes na mesma coluna, e
+ * qual dos três era o do banner só se descobria contando de cima para baixo.
+ *
+ * A legenda é obrigatória e curta de propósito. Ela responde "o que isto muda
+ * no clipe" em uma linha; o porquê comprido, quando existe, vai para o `Hint`
+ * do campo, que só abre quando alguém pergunta.
+ */
+export function SectionCard({
+  icon,
+  title,
+  description,
+  action,
+  children,
+  className = "",
+}: {
+  icon: SectionIconName;
+  title: string;
+  description: ReactNode;
+  /** Canto direito do cabeçalho — "Restaurar padrão" e afins. */
+  action?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <section
+      className={`rounded-md border border-line bg-raised p-4 sm:p-5 ${className}`}
+    >
+      <header className="flex items-start gap-3">
+        <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-sm border border-line bg-inset text-mint">
+          <SectionIcon name={icon} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-body font-medium text-ink">{title}</h2>
+          <p className="mt-0.5 text-label leading-relaxed text-ink-muted">
+            {description}
+          </p>
+        </div>
+        {action && <div className="flex-shrink-0">{action}</div>}
+      </header>
+      <div className="mt-4 flex flex-col gap-4">{children}</div>
+    </section>
+  );
+}
+
+/**
+ * Rótulo pequeno sobre o controle.
+ *
+ * Para os campos que andam em fileira — cor, fonte, @ — onde o `Field` normal,
+ * com rótulo do tamanho do corpo, pesaria mais que o próprio controle. O rótulo
+ * fica ACIMA e não ao lado porque ao lado ele come a largura do campo, e num
+ * celular de 360px o poço do hexadecimal encolhia até cortar o `#RRGGBB`.
+ */
+export function MiniField({
+  label,
+  htmlFor,
+  children,
+  className = "",
+}: {
+  label: string;
+  htmlFor?: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={`flex min-w-0 flex-col gap-1.5 ${className}`}>
+      <label htmlFor={htmlFor} className="text-label text-ink-dim">
+        {label}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+/** Botão de texto discreto — "Restaurar padrão", "Desfazer". */
+export function LinkButton({
+  className = "",
+  ...props
+}: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type="button"
+      {...props}
+      className={`text-label text-ink-dim underline-offset-4 transition-colors hover:text-ink hover:underline disabled:opacity-50 ${className}`}
+    />
   );
 }

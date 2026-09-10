@@ -1,5 +1,9 @@
 "use client";
 
+import { useId } from "react";
+
+import { MiniField } from "@/components/ui";
+
 /**
  * Escolha da família de fonte usada no render (banner e faixa).
  *
@@ -38,16 +42,18 @@ interface Props {
   label?: string;
 }
 
-export default function FontField({ value, onChange, disabled, fonts, label = "Família" }: Props) {
+export default function FontField({ value, onChange, disabled, fonts, label = "Fonte" }: Props) {
   const options = fonts.length ? fonts : [{ key: DEFAULT_FONT, label: "Padrão" }];
+  const id = useId();
+
   return (
-    <div className="flex items-center gap-2">
-      <span className="text-label text-ink-dim">{label}</span>
+    <MiniField label={label} htmlFor={id}>
       <select
+        id={id}
         value={value}
         disabled={disabled || fonts.length === 0}
         onChange={(e) => onChange(e.target.value)}
-        className="rounded-sm bg-inset border border-line px-2 py-1.5 text-body text-ink outline-none focus:border-mint disabled:opacity-50"
+        className="w-full min-w-0 truncate rounded-sm border border-line bg-inset px-2 py-2 text-body text-ink outline-none transition-colors focus:border-mint disabled:opacity-50"
       >
         {options.map((f) => (
           <option key={f.key} value={f.key}>
@@ -55,6 +61,6 @@ export default function FontField({ value, onChange, disabled, fonts, label = "F
           </option>
         ))}
       </select>
-    </div>
+    </MiniField>
   );
 }

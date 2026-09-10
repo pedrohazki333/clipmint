@@ -1,7 +1,10 @@
 "use client";
 
+import { useId } from "react";
+
 import ColorField, { HEX_RE, toFullHex } from "@/components/ColorField";
 import FontField, { fontStack } from "@/components/FontField";
+import { LinkButton, MiniField, SectionCard } from "@/components/ui";
 import { BAR_PADRAO, type BarDraft, type FontOption } from "@/lib/brand";
 import {
   BAR_DEFAULT_BG as DEFAULT_BG,
@@ -38,6 +41,7 @@ export default function BarStyleSettings({
   fonts,
   disabled = false,
 }: Props) {
+  const nomeId = useId();
   const previewBg = toFullHex(value.bg, DEFAULT_BG);
   const previewText = toFullHex(value.text, DEFAULT_TEXT);
   const previewDot = mix(previewText, previewBg, 0.45);
@@ -52,30 +56,21 @@ export default function BarStyleSettings({
     value.name === BAR_PADRAO.name;
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-body font-medium text-ink">Faixa com o nome</p>
-          <p className="mt-1 text-label text-ink-muted">
-            No streamer ela divide facecam e gameplay; no podcast fecha o banner.
-            Sem nome, sai <code>{BAR_DEFAULT_NAME}</code>.
-          </p>
-        </div>
-        {!noPadrao && (
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => onChange({ ...BAR_PADRAO })}
-            className="text-label text-ink-dim transition-colors hover:text-ink disabled:opacity-50"
-          >
+    <SectionCard
+      icon="faixa"
+      title="Faixa com o seu @"
+      description="No modo facecam ela separa a câmera do jogo; na capa, fecha o banner."
+      action={
+        !noPadrao && (
+          <LinkButton disabled={disabled} onClick={() => onChange({ ...BAR_PADRAO })}>
             Restaurar padrão
-          </button>
-        )}
-      </div>
-
+          </LinkButton>
+        )
+      }
+    >
       {/* Preview da faixa em proporção parecida com a do clipe */}
       <div
-        className="select-none overflow-hidden rounded"
+        className="select-none overflow-hidden rounded-sm"
         style={{
           backgroundColor: previewBg,
           borderTop: `1px solid ${previewHairline}`,
@@ -100,7 +95,7 @@ export default function BarStyleSettings({
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-6">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <ColorField
           label="Fundo"
           value={value.bg}
@@ -109,7 +104,7 @@ export default function BarStyleSettings({
           fallback={DEFAULT_BG}
         />
         <ColorField
-          label="Fonte"
+          label="Texto"
           value={value.text}
           onChange={(text) => onChange({ ...value, text })}
           disabled={disabled}
@@ -121,30 +116,31 @@ export default function BarStyleSettings({
           disabled={disabled}
           fonts={fonts}
         />
-        <div className="flex items-center gap-2">
-          <span className="text-label text-ink-dim">Nome</span>
+        <MiniField label="Seu @" htmlFor={nomeId}>
           <input
+            id={nomeId}
             type="text"
             value={value.name}
             disabled={disabled}
             maxLength={MAX_NAME}
             onChange={(e) => onChange({ ...value, name: e.target.value })}
             placeholder={BAR_DEFAULT_NAME}
-            className="w-40 rounded-sm border border-line bg-inset px-2 py-1.5 text-body text-ink outline-none focus:border-mint disabled:opacity-50"
+            className="w-full min-w-0 rounded-sm border border-line bg-inset px-2 py-2 text-body text-ink outline-none transition-colors placeholder:text-ink-muted focus:border-mint disabled:opacity-50"
           />
-        </div>
+        </MiniField>
       </div>
 
-      <p className="text-label text-ink-muted">
-        O preview aproxima a fonte com o que o navegador tem — o render usa a
-        fonte instalada no servidor.
+      <p className="text-label leading-relaxed text-ink-muted">
+        Em branco, a faixa sai com <code>{BAR_DEFAULT_NAME}</code>. O preview
+        aproxima a fonte com o que o navegador tem — o render usa a fonte
+        instalada no servidor.
       </p>
 
       {!barValida(value) && (
-        <p className="rounded-sm bg-amber-900/15 px-3 py-2 text-label text-amber-500/80">
+        <p className="rounded-sm border border-danger/40 bg-danger-soft px-3 py-2 text-label text-danger">
           Use hexadecimal no formato #RRGGBB (ex: {DEFAULT_BG}).
         </p>
       )}
-    </div>
+    </SectionCard>
   );
 }

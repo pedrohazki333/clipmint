@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 
+import { LinkButton } from "@/components/ui";
 import type { FileSlot } from "@/lib/brand";
 
 /**
@@ -10,6 +11,11 @@ import type { FileSlot } from "@/lib/brand";
  * Campo CONTROLADO: não fala com a API. Quem grava é o `applyBrandDraft` do
  * formulário, no submit — é isso que permite configurar a marca já na criação
  * do perfil, antes de existir um id para nomear a pasta dos presets.
+ *
+ * Título e legenda em cima, miniatura e botões numa linha embaixo. Enquanto o
+ * texto e os botões dividiam a mesma linha, num celular estreito o bloco
+ * quebrava com "Remover" sozinho numa terceira linha, longe da imagem a que se
+ * referia — perto o bastante do bloco seguinte para parecer dele.
  */
 interface Props {
   value: FileSlot;
@@ -41,40 +47,41 @@ export default function WatermarkSettings({
   const mostrando = localUrl ?? (value.saved && !value.remove ? savedUrl : null);
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          <p className="text-body font-medium text-ink">Marca d&apos;água</p>
-          <p className="mt-1 text-label text-ink-muted">
-            Sua logo cobre QR codes e marcas de terceiros nos clipes, e assina a
-            capa.
-          </p>
-        </div>
+    <div className="flex flex-col gap-3">
+      <div>
+        <p className="text-body font-medium text-ink">Marca d&apos;água</p>
+        <p className="mt-0.5 text-label leading-relaxed text-ink-muted">
+          Sua logo cobre QR codes e marcas de terceiros nos clipes, e assina a
+          capa.
+        </p>
+      </div>
 
-        <div className="flex flex-shrink-0 items-center gap-3">
-          {mostrando ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={mostrando}
-              alt="Marca d'água"
-              className="h-12 w-12 rounded-sm border border-line bg-inset object-contain p-1"
-            />
-          ) : (
-            // Exemplo apagado: nada desta imagem entra no clipe.
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src="/marca-clipmint.png"
-              alt="Exemplo de marca d'água"
-              title="Exemplo — envie a sua para substituir"
-              className="h-12 w-20 rounded-sm border border-dashed border-line bg-inset object-contain p-1 opacity-40"
-            />
-          )}
+      <div className="flex items-center gap-3">
+        {mostrando ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={mostrando}
+            alt="Marca d'água"
+            className="h-14 w-14 flex-shrink-0 rounded-sm border border-line bg-inset object-contain p-1.5"
+          />
+        ) : (
+          // Exemplo apagado: nada desta imagem entra no clipe.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src="/marca-clipmint.png"
+            alt="Exemplo de marca d'água"
+            title="Exemplo — envie a sua para substituir"
+            className="h-14 w-14 flex-shrink-0 rounded-sm border border-dashed border-line bg-inset object-contain p-1.5 opacity-40"
+          />
+        )}
+
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <label
             className={`cursor-pointer rounded-sm border border-line bg-inset px-4 py-2 text-body text-ink transition-colors hover:bg-hover ${
               disabled ? "pointer-events-none opacity-50" : ""
             }`}
           >
-            {value.saved || value.file ? "Trocar" : "Enviar logo"}
+            {value.saved || value.file ? "Trocar logo" : "Enviar logo"}
             <input
               ref={inputRef}
               type="file"
@@ -89,14 +96,13 @@ export default function WatermarkSettings({
             />
           </label>
           {(value.file || (value.saved && !value.remove)) && (
-            <button
-              type="button"
+            <LinkButton
               disabled={disabled}
               onClick={() => onChange({ ...value, file: null, remove: true })}
-              className="text-label text-ink-dim transition-colors hover:text-danger disabled:opacity-50"
+              className="hover:text-danger"
             >
               Remover
-            </button>
+            </LinkButton>
           )}
         </div>
       </div>

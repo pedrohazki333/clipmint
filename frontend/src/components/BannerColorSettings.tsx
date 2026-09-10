@@ -2,6 +2,7 @@
 
 import ColorField, { HEX_RE, toFullHex } from "@/components/ColorField";
 import FontField, { fontStack } from "@/components/FontField";
+import { LinkButton, SectionCard } from "@/components/ui";
 import { BANNER_PADRAO, type BannerDraft, type FontOption } from "@/lib/brand";
 import {
   BANNER_DEFAULT_BG as DEFAULT_BG,
@@ -40,29 +41,21 @@ export default function BannerColorSettings({
     value.font === BANNER_PADRAO.font;
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-body font-medium text-ink">Banner de título</p>
-          <p className="mt-1 text-label text-ink-muted">
-            Cores e fonte da faixa de título nos próximos clipes.
-          </p>
-        </div>
-        {!noPadrao && (
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => onChange({ ...BANNER_PADRAO })}
-            className="text-label text-ink-dim transition-colors hover:text-ink disabled:opacity-50"
-          >
+    <SectionCard
+      icon="banner"
+      title="Banner de título"
+      description="A faixa com a frase do corte, na emenda entre a capa e o vídeo."
+      action={
+        !noPadrao && (
+          <LinkButton disabled={disabled} onClick={() => onChange({ ...BANNER_PADRAO })}>
             Restaurar padrão
-          </button>
-        )}
-      </div>
-
+          </LinkButton>
+        )
+      }
+    >
       {/* Preview: retângulo de ponta a ponta, como sai no clipe */}
       <div
-        className="select-none overflow-hidden rounded px-5 py-3 text-center"
+        className="select-none overflow-hidden rounded-sm px-5 py-3 text-center"
         style={{ backgroundColor: previewBg }}
       >
         <span
@@ -73,11 +66,11 @@ export default function BannerColorSettings({
             fontWeight: stack.weight,
           }}
         >
-          TÍTULO DO CLIP
+          TÍTULO DO CLIPE
         </span>
       </div>
 
-      <div className="flex flex-wrap items-center gap-6">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <ColorField
           label="Fundo"
           value={value.bg}
@@ -101,10 +94,10 @@ export default function BannerColorSettings({
       </div>
 
       {!bannerValido(value) && (
-        <p className="rounded-sm bg-amber-900/15 px-3 py-2 text-label text-amber-500/80">
+        <p className="rounded-sm border border-danger/40 bg-danger-soft px-3 py-2 text-label text-danger">
           Use hexadecimal no formato #RRGGBB (ex: {DEFAULT_BG}).
         </p>
       )}
-    </div>
+    </SectionCard>
   );
 }
