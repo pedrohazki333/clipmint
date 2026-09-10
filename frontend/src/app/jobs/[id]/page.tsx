@@ -10,9 +10,28 @@ import JobStatus from "@/components/JobStatus";
 import ClipCard from "@/components/ClipCard";
 import FacecamCorrector from "@/components/FacecamCorrector";
 import JobCredits from "@/components/JobCredits";
+import { SUBTITLE_LABELS } from "@/components/SubtitleModeSelector";
 import { avisarSaldoMudou } from "@/lib/creditos";
 
-const POLLING_INTERVAL = 3000; // ms
+/**
+ * Segundos → "12:05" ou "2:02:05".
+ *
+ * Sem a hora, um vídeo de duas horas aparecia como "122:05" — que é um número
+ * que ninguém lê como duração.
+ */
+function formatarDuracao(segundos: number): string {
+  const h = Math.floor(segundos / 3600);
+  const m = Math.floor((segundos % 3600) / 60);
+  const s = Math.floor(segundos % 60);
+  const mm = String(m).padStart(h ? 2 : 1, "0");
+  return `${h ? `${h}:` : ""}${mm}:${String(s).padStart(2, "0")}`;
+}
+
+// De quanto em quanto tempo perguntamos ao servidor onde o job está.
+// Era 3s, e com a barra de progresso isso aparecia: o número do download muda
+// continuamente, e a cada 3s a barra dava um salto. A 1,5s o salto vira
+// movimento — e o custo é uma consulta indexada por chave primária.
+const POLLING_INTERVAL = 1500; // ms
 const TERMINAL_STATUSES = new Set(["done", "error"]);
 
 export default function JobPage() {
@@ -160,8 +179,10 @@ export default function JobPage() {
               <p className="text-body text-ink-dim mt-1">{job.channel_name}</p>
             )}
             {job.duration_seconds && (
-              <p className="text-label text-ink-muted mt-1">
-                {Math.floor(job.duration_seconds / 60)}:{String(Math.floor(job.duration_seconds % 60)).padStart(2, "0")} · {job.subtitle_mode}
+              <p className="tabular text-label text-ink-muted mt-1">
+                {formatarDuracao(job.duration_seconds)} ·{" "}
+                {/* O valor cru do banco ("word_highlight") vazava para a tela. */}
+                {SUBTITLE_LABELS[job.subtitle_mode] ?? job.subtitle_mode}
               </p>
             )}
           </div>
@@ -175,6 +196,7 @@ export default function JobPage() {
             clipsReady={readyClips.length}
             clipsTotal={allClips.length}
             stageLog={job.stage_log}
+            progresso={job.progresso}
           />
           {/* O custo fica junto do andamento: é ali que a pessoa está olhando
               enquanto espera, e é a pergunta que ela tem. */}
@@ -182,13 +204,6 @@ export default function JobPage() {
             <JobCredits job={job} />
           </div>
         </div>
-
-        {job.status === "done" && (
-          <p className="text-body text-mint">
-            {readyClips.length} clip{readyClips.length !== 1 ? "s" : ""} pronto{readyClips.length !== 1 ? "s" : ""}
-            {allClips.length > readyClips.length && ` (${allClips.length - readyClips.length} com falha)`}
-          </p>
-        )}
 
         {canRetry && (
           <div className="flex flex-col gap-2">
@@ -228,7 +243,23 @@ export default function JobPage() {
       {/* Clips grid */}
       {allClips.length > 0 && (
         <div>
-          <h2 className="text-title font-semibold text-ink mb-4">Clips gerados</h2>
+          <h2 className="mb-4 text-title font-semibold text-ink">
+            {/* Enquanto o job roda, "0 clipes prontos" seria uma notícia ruim
+                sobre algo que está indo bem: o denominador conta a história. */}
+            {job.status === "done"
+              ? `${readyClips.length} clipe${readyClips.length !== 1 ? "s" : ""} pronto${readyClips.length !== 1 ? "s" : ""}`
+              : `${readyClips.length} de ${allClips.length} clipes prontos`}
+            {/* Falha é o clip com status 'error', e só ele. A conta por
+                diferença — total menos prontos — chamava de falha todo clipe
+                que ainda estava sendo renderizado: durante o corte de cinco
+                clipes, o primeiro a ficar pronto anunciava "4 com falha". */}
+            {failedClips.length > 0 && (
+              <span className="font-normal text-ink-muted">
+                {" "}
+                · {failedClips.length} com falha
+              </span>
+            )}
+          </h2>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">
             {[...allClips]
               .sort((a, b) => b.virality_score - a.virality_score)

@@ -9,6 +9,7 @@ import yt_dlp
 from app.utils import ytdlp as ytdlp_opts
 
 from app.config import settings
+from app.services import progress
 from app.utils.ffmpeg import get_duration, run_ffmpeg
 
 logger = logging.getLogger(__name__)
@@ -71,7 +72,45 @@ def _is_permanent(message: str) -> bool:
     return any(marker in lowered for marker in _PERMANENT_ERRORS)
 
 
-def _download_sync(youtube_url: str, video_path: str) -> dict:
+def _hook_de_progresso(job_id: str):
+    """
+    O gancho que o yt-dlp chama a cada pedaço recebido.
+
+    É a fração mais honesta do pipeline inteiro: bytes que chegaram sobre bytes
+    que faltam, sem estimativa nenhuma. Roda na thread do download, e por isso
+    só toca o registro de progresso (protegido por lock) — nada de banco, nada
+    de log, que é o que cegaria o journal (ver `noprogress` abaixo).
+
+    O download acontece em duas passadas quando vídeo e áudio vêm em arquivos
+    separados: o yt-dlp reinicia a contagem na segunda. Reservar os últimos 15%
+    da faixa para a junção evita a barra voltar — e a junção existe mesmo.
+    """
+
+    def hook(d: dict) -> None:
+        if d.get("status") == "finished":
+            progress.report(
+                job_id, "downloading", 0.85, "Juntando vídeo e áudio", ate=0.9
+            )
+            return
+        if d.get("status") != "downloading":
+            return
+        total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+        baixado = d.get("downloaded_bytes") or 0
+        if not total:
+            return
+        fracao = min(baixado / total, 1.0)
+        mb = total / 1024 / 1024
+        progress.report(
+            job_id,
+            "downloading",
+            fracao * 0.85,
+            f"Baixando o vídeo · {fracao * 100:.0f}% de {mb:.0f} MB",
+        )
+
+    return hook
+
+
+def _download_sync(youtube_url: str, video_path: str, job_id: str) -> dict:
     """Baixa o vídeo com yt-dlp (bloqueante — executar fora do event loop)."""
     # Teto em 1440p, e não em 2160p. O crop 9:16 usa só ~56% da largura, então
     # fonte 1080p vira upscale no clip final — mas 4K não se paga:
@@ -113,6 +152,9 @@ def _download_sync(youtube_url: str, video_path: str) -> dict:
         # e em pedaços o que falha é o pedaço, que o "retries" acima refaz.
         "http_chunk_size": 10 * 1024 * 1024,
         "continuedl": True,
+        # O gancho é uma função Python, não a barra de texto: ele alimenta a
+        # barra da tela sem escrever uma linha no log.
+        "progress_hooks": [_hook_de_progresso(job_id)],
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         return ydl.extract_info(youtube_url, download=True)
@@ -136,7 +178,9 @@ async def _download_with_retry(job_id: str, youtube_url: str, video_path: str) -
     """
     for attempt in range(1, _DOWNLOAD_ATTEMPTS + 1):
         try:
-            return await asyncio.to_thread(_download_sync, youtube_url, video_path)
+            return await asyncio.to_thread(
+                _download_sync, youtube_url, video_path, job_id
+            )
         except yt_dlp.utils.DownloadError as exc:
             message = str(exc)
             if _is_permanent(message):
@@ -161,6 +205,9 @@ async def _download_with_retry(job_id: str, youtube_url: str, video_path: str) -
 async def _extract_audio(job_id: str, video_path: str, audio_path: str) -> None:
     """Extrai o áudio do vídeo local (WAV mono 16kHz, o que a transcrição usa)."""
     logger.info(f"[{job_id}] Extracting audio...")
+    progress.report(
+        job_id, "downloading", 0.9, "Separando o áudio para a transcrição", ate=1.0
+    )
     await run_ffmpeg(
         "-i", video_path,
         "-vn",

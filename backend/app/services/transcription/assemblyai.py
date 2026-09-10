@@ -14,6 +14,7 @@ import assemblyai as aai
 import requests
 
 from app.config import settings
+from app.services import progress
 from app.services.transcription.base import (
     ProviderTranscript,
     TranscriptionProvider,
@@ -106,6 +107,12 @@ class AssemblyAIProvider(TranscriptionProvider):
         # Enviamos o áudio NÓS, e passamos a URL pronta ao SDK. O porquê está
         # em `_enviar_audio`.
         audio_url = await asyncio.to_thread(self._enviar_audio, job_id, audio_path)
+        # O envio acabou: daqui em diante é a API trabalhando, e ela só responde
+        # "pronto" ou "ainda não".
+        progress.report(
+            job_id, "transcribing", 0.3, "Transcrevendo a fala, palavra por palavra",
+            ate=0.9,
+        )
 
         # O SDK é síncrono: roda em thread para não travar o event loop.
         transcript = await asyncio.to_thread(transcriber.transcribe, audio_url)

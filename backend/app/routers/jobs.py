@@ -35,6 +35,7 @@ from app.schemas import (
     JobResponse,
 )
 from app.services import credits, facecam_review, usage, usage_monitor
+from app.services import progress
 from app.services.quota import guard_new_job
 from app.utils.timecodes import parse_ranges
 from app.workers import joblock
@@ -224,6 +225,11 @@ async def get_job(
     # ou job criado antes dela.
     if billing_enabled():
         await _anexar_creditos(job, user, db)
+
+    # Onde o processamento está agora. Só enquanto roda: num job terminado o
+    # registro já foi limpo, e um valor velho ali reacenderia a barra.
+    if job.status not in ("done", "error"):
+        job.progresso = progress.atual(job.id, job.status)
 
     return job
 

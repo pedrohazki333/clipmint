@@ -163,8 +163,23 @@ export interface Clip {
   created_at: string;
 }
 
+/**
+ * Onde o processamento está agora, direto do servidor.
+ *
+ * `pct` é o que já aconteceu de verdade; `ate` é onde o passo atual termina. A
+ * barra desliza de um para o outro sem alcançar, e salta quando o servidor
+ * relata o evento seguinte. Ver backend/app/services/progress.py.
+ */
+export interface Progresso {
+  pct: number;
+  ate: number;
+  nota: string;
+}
+
 export interface JobDetail extends Job {
   clips: Clip[];
+  /** Ausente em job terminado: não há o que relatar. */
+  progresso?: Progresso | null;
   /**
    * Créditos deste job. Nulos na versão pessoal e em jobs anteriores à
    * cobrança — lá não há o que mostrar, e mostrar "0" seria mentira.

@@ -1,18 +1,31 @@
-import type { JobStatus, StageMark } from "@/lib/types";
+"use client";
+
+import type { JobStatus, Progresso, StageMark } from "@/lib/types";
+
+import ProgressBar from "@/components/ProgressBar";
 
 /**
- * O andamento do job, etapa por etapa.
+ * O andamento do job: as etapas já fechadas, a que está rodando, e uma barra.
  *
- * A versão anterior mostrava uma barra única com porcentagem fixa por etapa —
- * 12% durante todo o download — pulsando parada por vinte minutos. Ela estimava
- * algo que ninguém sabia, e a estimativa era sempre a mesma para um vídeo de
- * três minutos e para uma live de seis horas.
+ * ── Uma barra, e ela anda de verdade ────────────────────────────────────────
+ * A primeira versão desta tela tinha uma barra por etapa com porcentagem fixa —
+ * 12% durante os vinte minutos do download. A segunda trocou por uma barra
+ * indeterminada e por frases que giravam num relógio: honesta, mas ainda
+ * desligada do que o servidor fazia, e as frases não batiam com o passo real.
  *
- * Aqui a barra só aparece onde existe uma fração de verdade: em "gerando
- * clipes" sabemos 2 de 5. Nas outras etapas mostramos o que realmente se sabe —
- * qual etapa está rodando e há quanto tempo. O tempo das etapas concluídas fica
- * à vista: depois de alguns jobs dá para saber que download leva ~4 min, e uma
- * etapa travada passa a se denunciar sozinha.
+ * Agora existe UMA barra, no rodapé, e o número vem do servidor: bytes
+ * baixados, áudio enviado, análise em qual dos quatro passos, clipe N de M e
+ * qual etapa do render daquele clipe (ver backend/app/services/progress.py). A
+ * frase que aparece embaixo dela é a que o servidor mandou — não há mais lista
+ * de mensagens escrita aqui, porque a tela não tem como saber o que está
+ * acontecendo lá.
+ *
+ * O que sobrou de estimativa está isolado num lugar só e é honesto: entre dois
+ * eventos reais a barra desliza rumo ao FIM DO PASSO ATUAL sem alcançá-lo (ver
+ * ProgressBar). Ela nunca ultrapassa o que já se sabe e nunca anda para trás.
+ *
+ * O tempo de cada etapa concluída continua à vista: depois de alguns jobs dá
+ * para saber que download leva ~4 min, e uma etapa travada se denuncia sozinha.
  */
 
 const STAGES: { key: JobStatus; label: string }[] = [
@@ -37,6 +50,8 @@ interface Props {
   clipsReady?: number;
   clipsTotal?: number;
   stageLog?: StageMark[] | null;
+  /** Onde o servidor diz que o job está. Ausente = job terminado. */
+  progresso?: Progresso | null;
 }
 
 /** Segundos → "4:12" ou "1:02:30". Sempre com dois dígitos nos minutos. */
@@ -83,6 +98,7 @@ export default function JobStatus({
   clipsReady = 0,
   clipsTotal = 0,
   stageLog,
+  progresso,
 }: Props) {
   if (status === "error") {
     return (
@@ -146,7 +162,7 @@ export default function JobStatus({
 
       {/* Etapa ativa: o único lugar com destaque. */}
       {status !== "done" && (
-        <div className="rounded-md border border-line bg-inset p-3">
+        <div className="flex flex-col gap-2.5 rounded-md border border-line bg-inset p-3">
           <div className="flex items-baseline justify-between gap-3">
             <span className="flex items-center gap-2 text-body font-medium text-ink">
               <span
@@ -161,23 +177,16 @@ export default function JobStatus({
             </span>
           </div>
 
-          {/* Barra só onde existe uma fração de verdade. Nas outras etapas não
-              sabemos quanto falta, e inventar um número foi o erro anterior. */}
-          {emClipes && (
-            <div
-              className="mt-2.5 h-1 overflow-hidden rounded-full bg-line"
-              role="progressbar"
-              aria-valuenow={clipsReady}
-              aria-valuemin={0}
-              aria-valuemax={clipsTotal}
-              aria-label="Clipes gerados"
-            >
-              <div
-                className="h-full rounded-full bg-mint transition-[width] duration-500 ease-out"
-                style={{ width: `${(clipsReady / clipsTotal) * 100}%` }}
-              />
-            </div>
+          {/* A frase vem do servidor e muda quando o passo muda — não há
+              relógio girando frases aqui. `aria-live` para quem usa leitor de
+              tela acompanhar sem precisar reler a página. */}
+          {progresso?.nota && (
+            <p aria-live="polite" className="text-label leading-relaxed text-ink-dim">
+              {progresso.nota}
+            </p>
           )}
+
+          <ProgressBar pct={progresso?.pct ?? 0} ate={progresso?.ate ?? 0} />
         </div>
       )}
 

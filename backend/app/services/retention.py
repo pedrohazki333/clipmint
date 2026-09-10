@@ -31,6 +31,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.services.preview import preview_path, remove_preview
 from app.models import Clip, Job, Transcript
 
 logger = logging.getLogger(__name__)
@@ -112,11 +113,14 @@ async def expirar_clipes(db: AsyncSession, dry_run: bool = False) -> tuple[int, 
         if criado is None or criado > limite:
             continue
         caminho = Path(clip.file_path)
-        bytes_liberados += _tamanho(caminho)
+        bytes_liberados += _tamanho(caminho) + _tamanho(preview_path(caminho))
         quantos += 1
         ids.append(clip.id)
         if not dry_run:
             caminho.unlink(missing_ok=True)
+            # A prévia é do arquivo: some com ele. Sem isto ela sobraria no
+            # disco para sempre, sem nada no banco apontando para ela.
+            remove_preview(caminho)
 
     if ids and not dry_run:
         await db.execute(

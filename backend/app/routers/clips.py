@@ -13,6 +13,7 @@ from app.database import get_db
 from app.deps import current_user, owned_by
 from app.features import learning_enabled
 from app.models import Clip, Job, Transcript, User
+from app.services.preview import preview_path
 from app.schemas import (
     ClipMetricsRequest,
     ClipResponse,
@@ -214,6 +215,39 @@ async def set_clip_metrics(
 
     logger.info(f"Clip {clip_id}: métricas registradas ({', '.join(changed)})")
     return clip
+
+
+@router.get("/clips/{clip_id}/preview")
+async def preview_clip(
+    clip_id: str,
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+) -> FileResponse:
+    """
+    Os três primeiros segundos do clipe, mudos, para o cartão se mexer.
+
+    404 quando não existe — e isso é comum, não é erro: clipes gerados antes
+    desta rota não têm prévia, e o arquivo de um clipe expirado leva a dele
+    junto. O cartão trata o 404 mostrando a capa estática, então o caminho de
+    baixo é o mesmo de sempre.
+
+    O `Cache-Control` longo é seguro porque a prévia é imutável: ela nasce com
+    o clipe e nunca muda de conteúdo. `private` porque o arquivo é de uma pessoa
+    só e não pode encostar num cache compartilhado.
+    """
+    clip = await _clip_do_usuario(clip_id, user, db)
+    if clip.status != "ready" or not clip.file_path:
+        raise HTTPException(status_code=404, detail="Preview not available")
+
+    caminho = preview_path(clip.file_path)
+    if not caminho.is_file():
+        raise HTTPException(status_code=404, detail="Preview not available")
+
+    return FileResponse(
+        path=str(caminho),
+        media_type="video/mp4",
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
 
 
 @router.get("/clips/{clip_id}/download")

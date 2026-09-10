@@ -55,6 +55,8 @@ from app.services.facecam import (
 )
 from app.prompts.viral_analysis import default_source_type
 from app.services.layout import streamer_geometry
+from app.services.preview import generate_preview
+from app.services import progress
 from app.services import r6_hud
 from app.services import usage as usage_service
 from app.services import usage_monitor
@@ -112,6 +114,27 @@ class JobDeleted(RuntimeError):
     def __init__(self, job_id: str) -> None:
         super().__init__(f"Job {job_id} foi excluído durante o processamento")
         self.job_id = job_id
+
+
+def _relatar_clipe(
+    job_id: str, index: int, total: int, dentro: float, nota: str, ate: float | None = None
+) -> None:
+    """
+    Onde o corte está, dentro do clipe que está sendo feito agora.
+
+    Cada clipe ocupa uma faixa igual da etapa, e os passos dentro dele — juntar
+    trechos, achar a webcam, montar o vertical, gerar a prévia — andam essa
+    faixa. É por isso que a mensagem pode dizer o que está sendo feito NAQUELE
+    clipe em vez de repetir uma frase genérica: quem chama sabe em que passo
+    está, porque acabou de chamá-lo.
+    """
+    progress.report(
+        job_id,
+        "clipping",
+        progress.por_item(index, total, dentro),
+        f"Clipe {index + 1} de {total} · {nota}",
+        ate=progress.por_item(index, total, ate) if ate is not None else None,
+    )
 
 
 @dataclass
@@ -767,10 +790,20 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
             # O que a transcrição não conta: onde os buracos sem fala são a
             # gargalhada ou a jogada, e não tempo morto. Sem isto a análise lê
             # o melhor momento do vídeo como ausência de conteúdo.
+            progress.report(
+                job_id, "analyzing", 0.0,
+                "Ouvindo o áudio atrás de reações e silêncios", ate=0.35,
+            )
             gaps = await detect_gaps(job_id, metadata.audio_path, words)
 
             # E o que a tela mostrava nesses momentos. O áudio diz quando; a
             # imagem diz o quê — e só olha as janelas que o áudio apontou.
+            progress.report(
+                job_id, "analyzing", 0.35,
+                f"Olhando o vídeo em {len(gaps)} momento(s) sem fala"
+                if gaps else "Olhando as cenas do vídeo",
+                ate=0.55,
+            )
             await describe_events(job_id, metadata.video_path, gaps)
 
             # A varredura de áudio e a visão levam minutos: se o usuário
@@ -790,6 +823,10 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                     clips=manual, analysis_notes="Trechos indicados manualmente."
                 )
             else:
+                progress.report(
+                    job_id, "analyzing", 0.55,
+                    "Escolhendo e pontuando os melhores trechos", ate=0.95,
+                )
                 analysis = await analyze_virality(
                     job_id=job_id,
                     words=words,
@@ -886,6 +923,7 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
             # job ser excluído. Sem esta checagem o laço seguia até o fim
             # recriando storage/clips/<job_id>/ depois do DELETE.
             await _abort_if_deleted(job_id)
+            _relatar_clipe(job_id, index, len(pending), 0.0, "preparando o corte", ate=0.1)
 
             compacted: str | None = None
             try:
@@ -897,6 +935,10 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                 clip_start, clip_end = task.start, task.end
                 clip_words = words
                 if task.segments:
+                    _relatar_clipe(
+                        job_id, index, len(pending), 0.1,
+                        f"juntando {len(task.segments)} trechos num corte só", ate=0.3,
+                    )
                     compacted = str(
                         settings.clips_dir / job_id / f"{task.clip_id}_costurado.mp4"
                     )
@@ -912,6 +954,10 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                 # Os dois modos sem camada nenhuma não precisam de facecam
                 # nem de capa — vão direto ao render.
                 if layout_mode in ("crop", "original"):
+                    _relatar_clipe(
+                        job_id, index, len(pending), 0.3,
+                        "recortando o vertical e queimando a legenda", ate=0.85,
+                    )
                     render = (
                         cut_vertical if layout_mode == "crop" else cut_original
                     )
@@ -929,6 +975,10 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                 elif layout_mode == "streamer":
                     # O layout da live muda ao longo do vídeo: cada clip tem a
                     # sua própria linha do tempo de facecam.
+                    _relatar_clipe(
+                        job_id, index, len(pending), 0.3,
+                        "seguindo o rosto na webcam", ate=0.55,
+                    )
                     facecam, stored_rect = await _resolve_facecam(
                         job_id=job_id,
                         video_path=source_path,
@@ -943,6 +993,10 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                     # trazia gameplay para dentro do painel do rosto.
                     if stored_rect:
                         facecam_json = stored_rect
+                    _relatar_clipe(
+                        job_id, index, len(pending), 0.55,
+                        "empilhando câmera e gameplay com a legenda", ate=0.85,
+                    )
                     file_path, file_size = await cut_and_stack(
                         job_id=job_id,
                         clip_id=task.clip_id,
@@ -957,6 +1011,10 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                         banner_text=task.banner_text,
                     )
                 else:
+                    _relatar_clipe(
+                        job_id, index, len(pending), 0.3,
+                        "montando capa, banner e legenda", ate=0.85,
+                    )
                     file_path, file_size = await cut_and_crop(
                         job_id=job_id,
                         clip_id=task.clip_id,
@@ -969,6 +1027,16 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                         source_type=source_type,
                         profile_id=profile_id,
                     )
+
+                # A prévia sai ANTES de o clipe virar "ready": assim "pronto"
+                # continua querendo dizer que está tudo lá, e o cartão nunca
+                # aparece com um <video> apontando para um arquivo que ainda
+                # está sendo escrito. São ~2s por clipe, e não derruba nada se
+                # falhar (ver services/preview.py).
+                _relatar_clipe(
+                    job_id, index, len(pending), 0.85, "gerando a prévia", ate=1.0
+                )
+                await generate_preview(file_path)
 
                 await _update_clip(
                     task.clip_id,
@@ -1037,6 +1105,12 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
         # devolveu.
         await usage_service.reconciliar_job(job_id, sucesso=False)
         await usage_monitor.fechar_job(job_id, status="failed")
+
+    finally:
+        # O job saiu do ar (pronto, com erro ou excluído): o registro de
+        # progresso não tem mais o que informar, e sem isto o dicionário
+        # cresceria a cada job até o próximo reinício.
+        progress.clear(job_id)
 
 
 def _discard_storage(job_id: str) -> None:

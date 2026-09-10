@@ -228,8 +228,24 @@ class ClipMetricsRequest(BaseModel):
 
 # ─── Job Detail (com clips aninhados) ─────────────────────────────────────────
 
+class ProgressoResponse(BaseModel):
+    """Onde o job está agora — ver services/progress.py."""
+
+    #: 0-100. O que já aconteceu de verdade.
+    pct: float
+    #: 0-100. Onde o passo atual termina; a tela desliza até aí sem chegar.
+    ate: float
+    #: O que está acontecendo agora, em uma linha.
+    nota: str
+
+    model_config = {"from_attributes": True}
+
+
 class JobDetailResponse(JobResponse):
     clips: List[ClipResponse] = []
+
+    #: Só enquanto o job roda. Num job terminado não há o que relatar.
+    progresso: Optional[ProgressoResponse] = None
 
     #: Créditos deste job, para a tela dizer o que foi gasto.
     #: `reservado` enquanto roda, `cobrado` depois que fecha. Nulos na versão

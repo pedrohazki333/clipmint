@@ -212,6 +212,16 @@ export function getDownloadUrl(clipId: string): string {
 }
 
 /**
+ * A prévia animada do clipe — 3s mudos do começo.
+ *
+ * Pode não existir (clipe gerado antes desta rota, clipe expirado). O cartão
+ * trata o 404 sozinho, então não há o que checar antes de pedir.
+ */
+export function getClipPreviewUrl(clipId: string): string {
+  return `/api/clips/${clipId}/preview`;
+}
+
+/**
  * Presets de marca — duas escalas.
  *
  * `profileId` presente: os presets daquele PERFIL, que são do usuário. Ausente:

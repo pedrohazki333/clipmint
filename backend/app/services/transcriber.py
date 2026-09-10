@@ -19,6 +19,7 @@ import logging
 from typing import Optional
 
 from app.config import settings
+from app.services import progress
 from app.services.transcription import get_provider
 from app.services.transcription.base import (  # noqa: F401 - reexport
     ProviderTranscript,
@@ -51,7 +52,16 @@ async def transcribe_audio(
     provider = get_provider(provider_name)
     logger.info(f"[{job_id}] Transcrição via '{provider.name}'")
 
+    # O provedor não devolve fração nenhuma — nem AssemblyAI nem Deepgram
+    # dizem "45% do áudio". O que é real aqui são os dois eventos: o arquivo
+    # sair daqui e o texto voltar. A tela desliza devagar entre eles.
+    progress.report(
+        job_id, "transcribing", 0.0, "Enviando o áudio para a transcrição", ate=0.3
+    )
     resultado = await provider.transcribe(job_id, audio_path)
+    progress.report(
+        job_id, "transcribing", 0.95, "Guardando o texto e o tempo de cada palavra"
+    )
 
     words, dropped = drop_degenerate_repeats(resultado.words)
     if dropped:
