@@ -59,6 +59,7 @@ from app.services import r6_hud
 from app.services import usage as usage_service
 from app.services import usage_monitor
 from app.services import segments as segments_service
+from app.services.memory_guard import render_slot
 from app.services.segments import compact_segments, remap_words, remap_words_keeping
 from app.workers import joblock
 
@@ -910,89 +911,91 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
 
             compacted: str | None = None
             try:
-                # Clip costurado (Siege, compilado, pausas do podcast): os trechos
-                # viram um arquivo só, e o render trabalha nele como se fosse um
-                # vídeo comum. É o que
-                # mantém facecam, faixa, banner e legendas sem mexer no
-                # filtergraph — ele nunca sabe que houve emenda.
-                source_path = metadata.video_path
-                clip_start, clip_end = task.start, task.end
-                clip_words = words
-                if task.segments:
-                    compacted = str(
-                        settings.clips_dir / job_id / f"{task.clip_id}_costurado.mp4"
-                    )
-                    Path(compacted).parent.mkdir(parents=True, exist_ok=True)
-                    total = await compact_segments(
-                        job_id, task.clip_id, metadata.video_path,
-                        task.segments, compacted,
-                    )
-                    source_path = compacted
-                    clip_start, clip_end = 0.0, total
-                    clip_words = _stitched_words(
-                        words, task.segments, source_type, clip_mode, total
-                    )
+                # A fila e a memória vêm antes de costurar: é daqui até o fim do
+                # render que o clipe pesa (ver services/memory_guard.py).
+                async with render_slot(job_id, task.clip_id):
+                    # Clip costurado (Siege, compilado, pausas do podcast): os trechos
+                    # viram um arquivo só, e o render trabalha nele como se fosse um
+                    # vídeo comum. É o que mantém facecam, faixa, banner e legendas
+                    # sem mexer no filtergraph — ele nunca sabe que houve emenda.
+                    source_path = metadata.video_path
+                    clip_start, clip_end = task.start, task.end
+                    clip_words = words
+                    if task.segments:
+                        compacted = str(
+                            settings.clips_dir / job_id / f"{task.clip_id}_costurado.mp4"
+                        )
+                        Path(compacted).parent.mkdir(parents=True, exist_ok=True)
+                        total = await compact_segments(
+                            job_id, task.clip_id, metadata.video_path,
+                            task.segments, compacted,
+                        )
+                        source_path = compacted
+                        clip_start, clip_end = 0.0, total
+                        clip_words = _stitched_words(
+                            words, task.segments, source_type, clip_mode, total
+                        )
 
-                # Os dois modos sem camada nenhuma não precisam de facecam
-                # nem de capa — vão direto ao render.
-                if layout_mode in ("crop", "original"):
-                    render = (
-                        cut_vertical if layout_mode == "crop" else cut_original
-                    )
-                    file_path, file_size = await render(
-                        job_id=job_id,
-                        clip_id=task.clip_id,
-                        video_path=source_path,
-                        start_time=clip_start,
-                        end_time=clip_end,
-                        words=clip_words,
-                        subtitle_mode=subtitle_mode,
-                        source_type=source_type,
-                        profile_id=profile_id,
-                    )
-                elif layout_mode == "streamer":
-                    # O layout da live muda ao longo do vídeo: cada clip tem a
-                    # sua própria linha do tempo de facecam.
-                    facecam, stored_rect = await _resolve_facecam(
-                        job_id=job_id,
-                        video_path=source_path,
-                        facecam_json=facecam_json,
-                        start_time=clip_start,
-                        end_time=clip_end,
-                        store=index == 0,
-                    )
-                    # Sem isto a caixa do 1º clip ia só para o banco, e os
-                    # clipes seguintes desta execução ficariam sem referência
-                    # de tamanho — era assim que um encaixe inflado passava e
-                    # trazia gameplay para dentro do painel do rosto.
-                    if stored_rect:
-                        facecam_json = stored_rect
-                    file_path, file_size = await cut_and_stack(
-                        job_id=job_id,
-                        clip_id=task.clip_id,
-                        video_path=source_path,
-                        start_time=clip_start,
-                        end_time=clip_end,
-                        words=clip_words,
-                        subtitle_mode=subtitle_mode,
-                        facecam=facecam,
-                        source_type=source_type,
-                        profile_id=profile_id,
-                        banner_text=task.banner_text,
-                    )
-                else:
-                    file_path, file_size = await cut_and_crop(
-                        job_id=job_id,
-                        clip_id=task.clip_id,
-                        video_path=source_path,
-                        start_time=clip_start,
-                        end_time=clip_end,
-                        words=clip_words,
-                        subtitle_mode=subtitle_mode,
-                        banner_text=task.banner_text,
-                        source_type=source_type,
-                        profile_id=profile_id,
-                    )
+                    # Os dois modos sem camada nenhuma não precisam de facecam
+                    # nem de capa — vão direto ao render.
+                    if layout_mode in ("crop", "original"):
+                        render = (
+                            cut_vertical if layout_mode == "crop" else cut_original
+                        )
+                        file_path, file_size = await render(
+                            job_id=job_id,
+                            clip_id=task.clip_id,
+                            video_path=source_path,
+                            start_time=clip_start,
+                            end_time=clip_end,
+                            words=clip_words,
+                            subtitle_mode=subtitle_mode,
+                            source_type=source_type,
+                            profile_id=profile_id,
+                        )
+                    elif layout_mode == "streamer":
+                        # O layout da live muda ao longo do vídeo: cada clip tem a
+                        # sua própria linha do tempo de facecam.
+                        facecam, stored_rect = await _resolve_facecam(
+                            job_id=job_id,
+                            video_path=source_path,
+                            facecam_json=facecam_json,
+                            start_time=clip_start,
+                            end_time=clip_end,
+                            store=index == 0,
+                        )
+                        # Sem isto a caixa do 1º clip ia só para o banco, e os
+                        # clipes seguintes desta execução ficariam sem referência
+                        # de tamanho — era assim que um encaixe inflado passava e
+                        # trazia gameplay para dentro do painel do rosto.
+                        if stored_rect:
+                            facecam_json = stored_rect
+                        file_path, file_size = await cut_and_stack(
+                            job_id=job_id,
+                            clip_id=task.clip_id,
+                            video_path=source_path,
+                            start_time=clip_start,
+                            end_time=clip_end,
+                            words=clip_words,
+                            subtitle_mode=subtitle_mode,
+                            facecam=facecam,
+                            source_type=source_type,
+                            profile_id=profile_id,
+                            banner_text=task.banner_text,
+                        )
+                    else:
+                        file_path, file_size = await cut_and_crop(
+                            job_id=job_id,
+                            clip_id=task.clip_id,
+                            video_path=source_path,
+                            start_time=clip_start,
+                            end_time=clip_end,
+                            words=clip_words,
+                            subtitle_mode=subtitle_mode,
+                            banner_text=task.banner_text,
+                            source_type=source_type,
+                            profile_id=profile_id,
+                        )
 
                 await _update_clip(
                     task.clip_id,

@@ -259,6 +259,17 @@ class Settings(BaseSettings):
     # ficam lentos em vez de uns poucos ficarem rápidos. Os que passarem do
     # limite esperam a vez em "queued".
     max_concurrent_jobs: int = 2
+    # Quantos renders ao mesmo tempo, somando todos os jobs (ver memory_guard.py).
+    render_concurrency: int = 1
+    # Memória disponível que um render pede antes de começar. 0 desliga a guarda.
+    render_min_available_mb: int = 900
+    # Quanto esperar a memória voltar antes de o clipe falhar dizendo o motivo.
+    render_memory_wait_seconds: int = 600
+    render_memory_poll_seconds: int = 5
+    # Com pelo menos isto disponível o x264 usa todos os núcleos; abaixo, este limite
+    # de threads, que gasta menos memória e leva mais tempo.
+    render_fast_available_mb: int = 1600
+    render_low_memory_threads: int = 4
 
     # ── Retenção (TTL) ────────────────────────────────────────────────────────
     # Depois de quantos dias o ARQUIVO do clipe é apagado. A linha no banco

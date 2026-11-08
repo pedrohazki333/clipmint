@@ -52,6 +52,7 @@ from app.services.watermark import (
     detect_brand_regions,
     user_watermark_path,
 )
+from app.services.memory_guard import encoder_thread_args
 from app.utils.ffmpeg import run_ffmpeg, get_video_dimensions, probe_video
 
 logger = logging.getLogger(__name__)
@@ -104,6 +105,7 @@ async def _encode(
         "-bufsize", "24000k",
         "-profile:v", "high",
         "-pix_fmt", "yuv420p",
+        *encoder_thread_args(),
         # Sem estas tags o arquivo não declara em que espaço de cor foi
         # codificado, e cada player/plataforma chuta — é o que faz o mesmo
         # vídeo sair lavado num lugar e saturado em outro. Live do YouTube
@@ -183,9 +185,10 @@ async def cut_and_crop(
         static_regions=brand["static"],
     )
     if settings.face_tracking_enabled:
-        tracking, cover_method = await asyncio.gather(
-            track_faces(video_path, start_time, end_time), cover_job
-        )
+        # Um depois do outro: os dois carregam o MediaPipe e extraem quadros, e
+        # juntos competem pela memória sem ganhar nada que se note num render.
+        tracking = await track_faces(video_path, start_time, end_time)
+        cover_method = await cover_job
     else:
         tracking = static_tracking()
         cover_method = await cover_job
@@ -809,6 +812,7 @@ async def cut_and_stack(
         "-bufsize", "24000k",
         "-profile:v", "high",
         "-pix_fmt", "yuv420p",
+        *encoder_thread_args(),
         # Sem estas tags o arquivo não declara em que espaço de cor foi
         # codificado, e cada player/plataforma chuta — é o que faz o mesmo
         # vídeo sair lavado num lugar e saturado em outro. Live do YouTube

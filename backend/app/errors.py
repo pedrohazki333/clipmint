@@ -133,6 +133,11 @@ _TRADUCOES: tuple[tuple[str, str], ...] = (
         "no space left on device",
         "O servidor ficou sem espaço em disco. Libere espaço e use 'Retomar'.",
     ),
+    (
+        "memória insuficiente",
+        "Faltou memória para renderizar os clipes. Feche o que puder na máquina e "
+        "use 'Retomar': nada do que já foi feito se perde.",
+    ),
 )
 
 #: Quando nada casa. Genérica de propósito: chutar uma causa errada é pior que

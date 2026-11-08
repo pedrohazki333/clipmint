@@ -18,6 +18,7 @@ import logging
 import os
 from typing import Iterable, Optional
 
+from app.services.memory_guard import encoder_thread_args
 from app.utils.ffmpeg import get_duration, run_ffmpeg
 
 logger = logging.getLogger(__name__)
@@ -138,6 +139,38 @@ def remap_words_keeping(
     return remapped
 
 
+# Até quanto vídeo descartado vale decodificar para ter uma entrada só. Tirar pausas
+# de um podcast descarta segundos, e cada um custa quase nada; um compilado com
+# trechos a 90 minutos de distância pagaria o vídeo inteiro por isso.
+_MAX_DISCARDED_FOR_SINGLE_DECODER = 60.0
+
+
+def _single_decoder_graph(
+    segments: list[tuple[float, float]],
+) -> Optional[tuple[float, float, str]]:
+    """
+    (início, duração, filtro) para costurar com um decodificador só, ou None.
+
+    Decide por `select` e `aselect` sobre a mesma entrada, em vez de uma entrada por
+    trecho. Só serve em ordem cronológica, e o filtro não sabe tocar para trás: a
+    ordem editorial de um compilado cai no caminho antigo.
+    """
+    if len(segments) < 2 or any(a[1] > b[0] for a, b in zip(segments, segments[1:])):
+        return None
+
+    first, last = segments[0][0], segments[-1][1]
+    span = last - first
+    if span - total_duration(segments) > _MAX_DISCARDED_FOR_SINGLE_DECODER:
+        return None
+
+    # `t` começa do zero porque a busca é na entrada.
+    keep = "+".join(f"between(t,{a - first:.3f},{b - first:.3f})" for a, b in segments)
+    return first, span, (
+        f"[0:v]select='{keep}',setpts=N/FRAME_RATE/TB[v];"
+        f"[0:a]aselect='{keep}',asetpts=N/SR/TB[a]"
+    )
+
+
 async def compact_segments(
     job_id: str,
     clip_id: str,
@@ -155,19 +188,28 @@ async def compact_segments(
     Real, e não a soma dos trechos, porque quem chama usa isto como fim do render:
     cada trecho arredonda para cima no limite do quadro, e a soma nominal cortava
     os últimos 0,18s de um clipe de 6 trechos, justo o respiro depois da frase.
-    """
-    inputs: list[str] = []
-    for start, end in segments:
-        inputs += ["-ss", f"{start:.3f}", "-t", f"{end - start:.3f}", "-i", video_path]
 
-    streams = "".join(f"[{i}:v][{i}:a]" for i in range(len(segments)))
-    filtergraph = f"{streams}concat=n={len(segments)}:v=1:a=1[v][a]"
+    Com trechos próximos e em ordem há um caminho mais leve: uma entrada só, ver
+    `_single_decoder_graph`. Cada entrada extra é um decodificador a mais vivo ao
+    mesmo tempo, e isso pesa.
+    """
+    single = _single_decoder_graph(segments)
+    if single is not None:
+        first, span, filtergraph = single
+        inputs = ["-ss", f"{first:.3f}", "-t", f"{span:.3f}", "-i", video_path]
+    else:
+        inputs = []
+        for start, end in segments:
+            inputs += ["-ss", f"{start:.3f}", "-t", f"{end - start:.3f}", "-i", video_path]
+        streams = "".join(f"[{i}:v][{i}:a]" for i in range(len(segments)))
+        filtergraph = f"{streams}concat=n={len(segments)}:v=1:a=1[v][a]"
 
     await run_ffmpeg(
         *inputs,
         "-filter_complex", filtergraph,
         "-map", "[v]", "-map", "[a]",
         "-c:v", "libx264", "-crf", _INTERMEDIATE_CRF, "-preset", _INTERMEDIATE_PRESET,
+        *encoder_thread_args(),
         "-c:a", "aac", "-b:a", "192k",
         output_path,
         description=f"Costura {len(segments)} trecho(s) do clip {clip_id}",

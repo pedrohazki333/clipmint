@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import signal
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -65,6 +66,18 @@ _KILL_GRACE = 5
 
 async def _kill_tree(proc: asyncio.subprocess.Process) -> None:
     """Derruba o processo e tudo que ele tiver aberto, sem deixar sobra."""
+
+    if sys.platform == "win32":
+        # Sem grupo de processos e sem sinal: quem derruba a árvore é o taskkill. O
+        # /F não dá chance de ignorar, então a carência não tem o que fazer aqui.
+        killer = await asyncio.create_subprocess_exec(
+            "taskkill", "/T", "/F", "/PID", str(proc.pid),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await killer.wait()
+        await proc.wait()
+        return
 
     def sinalizar(sig: int) -> bool:
         """False = já não existe ninguém para receber."""

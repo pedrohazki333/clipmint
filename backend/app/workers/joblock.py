@@ -23,6 +23,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from app.config import settings
+from app.utils.processes import process_alive
 
 logger = logging.getLogger(__name__)
 
@@ -40,17 +41,6 @@ def _lock_path(job_id: str) -> Path:
     return settings.locks_dir / f"{job_id}.pid"
 
 
-def _process_alive(pid: int) -> bool:
-    """Sinal 0 não faz nada — só verifica se o processo existe."""
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True  # existe, só pertence a outro usuário
-    return True
-
-
 def owner_pid(job_id: str) -> int | None:
     """
     PID do processo que está trabalhando no job, ou None se ninguém está.
@@ -62,7 +52,7 @@ def owner_pid(job_id: str) -> int | None:
         pid = int(_lock_path(job_id).read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
         return None
-    return pid if _process_alive(pid) else None
+    return pid if process_alive(pid) else None
 
 
 def _create_exclusive(path: Path) -> int | None:

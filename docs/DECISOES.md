@@ -1960,6 +1960,41 @@ dessincronizam a legenda, com palavras espremidas em 0,05s que passam sem dar pa
 Nenhuma das três corrige isso. É uma fatia própria, a começar por comparar modelos com
 `compare_transcribers`.
 
+### D135. Render só começa quando a máquina aguenta, e perguntar por um processo não o mata
+
+Exigência do dono: o sistema não pode ficar sem memória, principalmente rodando na
+máquina pessoal dele (7,7 GB, dividida com o que estiver aberto). Num reprocessamento
+real, os processos filhos morreram com a mensagem vazia, e os 7 clipes caíram em menos
+de 3 segundos sem dizer por quê. Nada no sistema impedia isso.
+
+**Um render por vez, somando os jobs, e só com memória disponível.** Antes de costurar
+e renderizar, `render_slot` entra na fila e confere a memória disponível (900 MB). Sem
+ela, espera até 10 minutos e, passado o teto, o clipe falha com "Faltou memória", e o
+`Retomar` continua de onde parou. Disponível, e não livre, porque o cache do sistema é
+devolvido quando alguém pede. A fila é por processo: um `reanalyze_job` rodando à parte
+tem a dele, e a conferência de memória é o que os protege um do outro.
+
+**A costura deixou de abrir um decodificador por trecho.** Era o caminho do Siege, com
+trechos distantes. Pausas de podcast ficam a segundos umas das outras, e `select` sobre
+uma entrada só faz o mesmo. Medido em 9 trechos: de 791 MB em 19,7s para 677 MB em
+11,3s, e a duração ficou mais perto da soma nominal (+0,05s, contra +0,18s antes, em
+menos trechos). Trecho a mais de 60s de distância e ordem não cronológica continuam
+no caminho antigo, porque ali decodificar tudo sairia caro e o filtro não volta no tempo.
+
+**O x264 troca tempo por memória só quando precisa.** Num clipe de 1080x1920: 996 MB em
+16,6s com todos os 12 núcleos, 716 MB em 39,3s com 4, e 673 MB em 53,8s com 2, com o
+mesmo arquivo. Abaixo de 1,6 GB disponíveis usa 4 threads; acima, todos os núcleos.
+Fixar em 4 deixaria todo mundo 2,4x mais lento por um risco que nem sempre existe.
+
+Face tracking e capa também rodam um depois do outro, porque ambos carregam o MediaPipe.
+
+**`os.kill(pid, 0)` matava o processo no Windows.** Foi a causa de outro job perdido: o
+backend subiu ao mesmo tempo que um reprocessamento, conferiu o lock e o matou. O `0` lá
+não é "só verifica". `utils/processes.py` pergunta ao sistema sem efeito nenhum, e o
+timeout do ffmpeg usa `taskkill /T` no lugar de `os.killpg`, que não existe no Windows.
+Os testes de timeout passaram a usar processos Python em vez de `sleep` e `sh`, e as 6
+falhas conhecidas do Windows acabaram.
+
 ---
 
 ## Adiado, com destino definido
