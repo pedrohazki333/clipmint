@@ -30,7 +30,10 @@ from app import models  # noqa: F401
 
 config = context.config
 
-if config.config_file_name is not None:
+# Só no CLI do Alembic. Dentro do servidor (quem passa a conexão é o startup, ver
+# app/db_migrations.py) o log já está configurado, e o fileConfig o destruiria:
+# desliga todo logger existente, baixa a raiz para WARNING e troca os handlers.
+if config.config_file_name is not None and "connection" not in config.attributes:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata

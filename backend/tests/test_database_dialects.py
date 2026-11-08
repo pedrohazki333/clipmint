@@ -112,6 +112,41 @@ def test_banco_novo_recebe_o_schema_completo(tmp_path, monkeypatch):
     assert {"jobs", "clips", "transcripts", "users", "alembic_version"} <= tabelas
 
 
+def test_migracao_no_startup_nao_cala_o_log_do_servidor(tmp_path, monkeypatch):
+    """
+    O `fileConfig` do env.py é para o CLI do Alembic. Rodando dentro do servidor,
+    ele desligava todo logger já criado (disable_existing_loggers), baixava a raiz
+    para WARNING e trocava os handlers — e como as migrações rodam no startup, o
+    servidor subia e nunca mais escrevia nada. Um job falhava, a tela mandava ler
+    o log, e o log não tinha uma linha.
+    """
+    import asyncio
+    import logging
+
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from app import db_migrations
+
+    raiz = logging.getLogger()
+    nivel_antes, handlers_antes = raiz.level, list(raiz.handlers)
+    do_pipeline = logging.getLogger("app.workers.pipeline")
+    monkeypatch.setattr(do_pipeline, "disabled", False)
+    raiz.setLevel(logging.INFO)
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'log.db'}")
+    monkeypatch.setattr(db_migrations, "engine", engine)
+    try:
+        asyncio.run(db_migrations.upgrade_to_head())
+        asyncio.run(engine.dispose())
+
+        assert do_pipeline.disabled is False, "o logger da aplicação foi desligado"
+        assert raiz.level == logging.INFO, "o nível da raiz foi rebaixado"
+        assert raiz.handlers == handlers_antes, "os handlers da raiz foram trocados"
+    finally:
+        raiz.setLevel(nivel_antes)
+        raiz.handlers[:] = handlers_antes
+
+
 def _banco_pre_alembic(tmp_path, monkeypatch, extras_sql: list[str] | None = None):
     """
     Constrói um banco no estado "antes do Alembic" e roda o upgrade nele.
