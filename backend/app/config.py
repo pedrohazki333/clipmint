@@ -366,6 +366,20 @@ class Settings(BaseSettings):
     # hard continuam em min/max_clip_duration; isto só orienta a escolha do corte.
     preferred_clip_min: int = 25
     preferred_clip_max: int = 40
+    # O fim do clipe fecha a frase (ver services/analyzer.py e D132): até quanto o
+    # `end` pode avançar ou recuar para achar um fim de frase, e o respiro depois
+    # da última palavra.
+    end_extend_max: float = 6.0
+    end_retreat_max: float = 8.0
+    end_breath: float = 0.25
+    # O que confirma no ÁUDIO que a frase acabou: pelo menos este tanto de tempo
+    # este tanto abaixo do nível de fala. -6 dB é a mesma régua de "bem abaixo da
+    # fala" dos buracos (audio_events._DEAD_MAX_DB); mais duro que isto recusava
+    # a sala com gente ao fundo, que nunca chega ao silêncio digital.
+    end_confirm_below_speech_db: float = 6.0
+    end_confirm_min_quiet: float = 0.3
+    # Janela, em volta do meio, em que o divisor procura fim de frase.
+    split_sentence_window: float = 20.0
     # Face tracking: quando desligado, o crop 9:16 fica estático no centro do
     # frame e o MediaPipe nem chega a rodar (render bem mais rápido).
     face_tracking_enabled: bool = False

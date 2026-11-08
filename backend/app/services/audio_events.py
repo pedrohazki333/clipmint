@@ -28,9 +28,12 @@ depois de um evento, que é o erro que se quer nunca mais cometer.
 import asyncio
 import logging
 import re
+import wave
 from dataclasses import dataclass
 from statistics import median
 from typing import Optional
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +194,129 @@ async def loudness_timeline(audio_path: str) -> list[tuple[float, float]]:
             t = None
 
     return timeline
+
+
+# ─── Nível fino, para decidir ONDE cortar ──────────────────────────────────────
+#
+# A curva do ebur128 acima responde "aconteceu algo neste buraco de 3s?". Para
+# saber onde uma frase termina ela é grossa demais: a janela de 400ms atravessa
+# uma pausa de 0,5s inteira e mistura a fala das duas pontas.
+#
+# E o timestamp da palavra não substitui o áudio. Medido num vídeo real com o
+# universal-3-pro: "mil seguidores do dia" ocupa 0,08s no timestamp enquanto o
+# áudio segue falando por 2s, e `pé.` dura 1,34s com 1,15s de silêncio dentro.
+# Um clipe cortado no fim de `foda.` pelo timestamp ainda saiu com a palavra pela
+# metade. Quem diz onde a fala parou é o áudio.
+
+_RMS_STEP = 0.05
+
+# Blocos por leitura do WAV: lê em pedaços porque o áudio de um vídeo de 3h passa
+# de 300 MB, e isto roda com outros jobs ao lado.
+_RMS_BLOCKS_PER_READ = 1200
+
+_RMS_FLOOR_DB = -120.0
+
+# Palavra mais curta que isto tem timestamp espremido, não fala de verdade — e
+# entraria na referência medindo o que quer que estivesse tocando ali.
+_MIN_WORD_FOR_REFERENCE = 0.1
+
+
+@dataclass
+class AudioLevels:
+    """RMS em blocos de 50ms do áudio inteiro, com o nível de fala do vídeo."""
+
+    levels: np.ndarray
+    speech_level: float
+    step: float = _RMS_STEP
+
+    def quiet_runs(
+        self, start: float, end: float, below_speech_db: float, min_duration: float
+    ) -> list[tuple[float, float]]:
+        """
+        Trechos de [start, end] pelo menos `below_speech_db` abaixo da fala.
+
+        O limiar é relativo porque cada vídeo tem sua mixagem, pelo mesmo motivo
+        do `_speech_level`: o que interessa é estar baixo *para aquele vídeo*.
+        """
+        first = max(0, int(start / self.step))
+        last = min(len(self.levels), int(np.ceil(end / self.step)))
+        if last <= first:
+            return []
+
+        quiet = self.levels[first:last] <= self.speech_level - below_speech_db
+        # Pontas das sequências de True: onde a máscara muda de valor.
+        edges = np.flatnonzero(np.diff(np.concatenate(([False], quiet, [False])).astype(int)))
+        runs = []
+        for run_start, run_end in zip(edges[::2], edges[1::2]):
+            a = (first + int(run_start)) * self.step
+            b = (first + int(run_end)) * self.step
+            if b - a >= min_duration:
+                runs.append((a, b))
+        return runs
+
+    def p90(self, start: float, end: float) -> Optional[float]:
+        """Nível que o trecho alcança, sem se deixar levar por um estalo isolado."""
+        first = max(0, int(start / self.step))
+        last = min(len(self.levels), int(np.ceil(end / self.step)))
+        if last <= first:
+            return None
+        return float(np.percentile(self.levels[first:last], 90))
+
+
+def _rms_levels(audio_path: str) -> np.ndarray:
+    """Lê o WAV do pipeline (PCM 16 bits, ver services/downloader.py) em blocos."""
+    with wave.open(audio_path, "rb") as source:
+        if source.getsampwidth() != 2:
+            raise ValueError(f"esperava PCM de 16 bits, veio {source.getsampwidth() * 8}")
+        channels = source.getnchannels()
+        block = max(1, int(_RMS_STEP * source.getframerate()))
+        chunks: list[np.ndarray] = []
+        leftover = np.empty(0, dtype=np.float32)
+        while True:
+            raw = source.readframes(block * _RMS_BLOCKS_PER_READ)
+            if not raw:
+                break
+            samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+            if channels > 1:
+                samples = samples.reshape(-1, channels).mean(axis=1)
+            samples = np.concatenate((leftover, samples))
+            whole = len(samples) // block
+            leftover = samples[whole * block:]
+            blocks = samples[: whole * block].reshape(-1, block)
+            rms = np.sqrt((blocks**2).mean(axis=1))
+            chunks.append(20 * np.log10(np.maximum(rms, 10 ** (_RMS_FLOOR_DB / 20))))
+
+    return np.concatenate(chunks) if chunks else np.empty(0, dtype=np.float32)
+
+
+def measure_levels(job_id: str, audio_path: str, words: list[dict]) -> Optional[AudioLevels]:
+    """
+    O nível do áudio do vídeo, ou None se não der para medir.
+
+    Nunca levanta, como `detect_gaps`: sem isto o corte volta a confiar só nos
+    timestamps, o que é pior mas não é motivo para derrubar um job.
+    """
+    try:
+        levels = _rms_levels(audio_path)
+    except (OSError, EOFError, ValueError, wave.Error) as exc:
+        logger.warning(f"[{job_id}] Sem nível fino de áudio ({exc}) — cortes só pelos timestamps")
+        return None
+
+    spoken: list[np.ndarray] = []
+    for word in words:
+        if word["end"] - word["start"] < _MIN_WORD_FOR_REFERENCE:
+            continue
+        first = int(word["start"] / _RMS_STEP)
+        last = int(np.ceil(word["end"] / _RMS_STEP))
+        spoken.append(levels[first:last])
+
+    sample = np.concatenate(spoken) if spoken else np.empty(0)
+    sample = sample[sample > _SILENCE_FLOOR]
+    if len(sample) < 50:
+        logger.warning(f"[{job_id}] Fala insuficiente para calibrar — cortes só pelos timestamps")
+        return None
+
+    return AudioLevels(levels=levels, speech_level=float(np.median(sample)))
 
 
 def find_gaps(words: list[dict], min_gap: float = _MIN_GAP) -> list[tuple[float, float]]:

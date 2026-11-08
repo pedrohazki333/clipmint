@@ -1820,6 +1820,50 @@ A D110 (job que falha devolve tudo e não é cobrado) continua valendo sem
 ressalva. O que muda é só isto: **falhar não é o fim da história do job**, e
 "devolvi" nunca quis dizer "acabou".
 
+### D132. O fim do clipe fecha a frase, e quem confirma é o áudio
+
+Dois em cada três clipes de um podcast real terminavam no meio da frase: o `end`
+devolvido pelo modelo ia direto para o render, e só o divisor olhava para o fim de
+frase. O plano era avançar até a próxima pontuação. **Medido no vídeo, isso não
+basta**, porque o timestamp da palavra não é confiável com o `universal-3-pro`:
+6,3% das palavras duram até 0,05s (`mil seguidores do dia` cabe em 0,08s, com o
+áudio falando por mais 2s) e outras carregam silêncio dentro (`pé.` dura 1,34s,
+com 1,15s calado). O clipe que terminava em "foi—" estava cortado 0,02s antes do
+fim de `foda.` pelo timestamp. Pela pontuação ele já estaria certo.
+
+Por isso um fim de frase só conta como confirmado se houver queda real de nível ao
+redor dele: pelo menos 0,3s a 6 dB abaixo da fala. A régua é relativa à fala do
+vídeo, como a dos buracos. Mais duro que -6 dB recusava sala com gente ao fundo
+(`correr.` tem -33 dBFS depois, contra -23 da fala, e a frase acabou ali). O nível
+vem de RMS em blocos de 50ms, porque o ebur128 usa janela de 400ms e atravessa uma
+pausa de 0,5s inteira. O corte fica no silêncio, com 0,25s de respiro, e por isso
+também tira o rabo morto de `mano?`, cujo timestamp passa 0,8s da fala.
+
+A ordem de busca, escolhida pelo dono depois de ver o caso: **à frente confirmado
+(até +6s), atrás confirmado (até -8s), e só então o que só a pontuação sustenta**,
+registrado no log e no `trim_reason` porque a palavra pode sair cortada. O preço é
+aceito: o clipe do `foda.` recua 3,45s até "sou a mesma pessoa." e perde a última
+frase. Um corte limpo mais cedo vale mais que uma punchline pela metade.
+
+Três casos ficam de fora da regra:
+
+- **Fim definido pela imagem** não recua. A visão só afrouxa (ver
+  `_refine_bounds_with_vision`), e recuar devolveria o acontecimento que ela
+  acabou de incluir.
+- **Fim na reação** fica onde está: som 3 dB acima da fala depois da última
+  palavra, ou um buraco com evento. Ali não há frase aberta, há a risada.
+- **Clipe costurado** passa intacto, como no resgate de início: os trechos definem
+  a linha do tempo.
+
+No divisor, a janela de busca sobe de ±10s para ±20s, e as duas partes precisam
+caber em min/max. Sem essa conta, procurar mais longe devolveria uma parte acima
+do teto, que o laço seguinte descarta inteira. E as partes deixam de encostar: a
+parte 1 termina no respiro e a parte 2 abre na fala. Encostadas, a parte 2 abria
+com 0,69s de silêncio. É uma mudança deliberada do que
+`test_split_clip_splits_long_clip` exigia, que agora é "não se sobrepõem".
+
+Sem áudio legível, tudo isso cai para os timestamps e registra, sem derrubar o job.
+
 ---
 
 ## Adiado, com destino definido

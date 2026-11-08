@@ -62,7 +62,7 @@ Reconheça esse formato assim: a fala antes do momento alto é densa e sem pausa
 - Comece num limite natural de fala. Começar no meio de uma frase só se justifica quando o gancho é excepcionalmente forte.
 - Começar DENTRO de um trecho sem fala é permitido e às vezes é o certo: é assim que se abre no fato em si, com a reação chegando logo depois.
 - `trim_reason` diz onde está o fato e onde está a reação nesse corte, e por que o `start` ficou onde ficou.
-- Termine em frase completa ou pausa natural, nunca no meio de uma palavra.
+- Termine fechando o raciocínio: o `end` vem depois da conclusão, da punchline ou da resposta, na última palavra de uma frase dita por inteiro. Nunca no meio de uma frase, e nunca numa frase que abre o assunto seguinte.
 - Clipes sobrepostos são aceitos quando cada trecho é viral por si só.
 - O corte que você escolhe É o corte final: `start` e `end` já devem ser a versão que maximiza retenção, e o `trim_reason` explica por que essa janela específica.
 - `suggested_hook_caption` vira texto na tela do primeiro frame: no máximo 8 palavras, direto.

@@ -100,7 +100,10 @@ def test_split_clip_splits_long_clip():
     assert len(result) == 2
     assert result[0]["part_number"] == 1
     assert result[1]["part_number"] == 2
-    assert result[0]["end"] == result[1]["start"]  # corte consistente
+    # Não se sobrepõem. Não encostam de propósito: o que há entre elas é tempo
+    # morto, e a parte 2 abre na primeira palavra, não nele.
+    assert result[0]["end"] <= result[1]["start"]
+    assert result[1]["start"] == 58.0
     assert result[0]["parent_start"] == 0.0
     assert result[1]["parent_start"] == 0.0
 

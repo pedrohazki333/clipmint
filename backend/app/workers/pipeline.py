@@ -800,6 +800,7 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                     gaps=gaps,
                     video_path=metadata.video_path,
                     clip_mode=clip_mode,
+                    audio_path=metadata.audio_path,
                 )
                 # Modo 'plus': o indicado à mão entra GARANTIDO, à frente do
                 # que a análise achou. Ele não passa pelo filtro de nota — foi

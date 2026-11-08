@@ -10,6 +10,7 @@ Lógica de split:
   buscando o ponto de corte mais natural (pausa ou fim de frase) na metade.
 """
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -32,7 +33,7 @@ from app.prompts.viral_analysis import (
     source_criteria,
 )
 from app.services import vision
-from app.services.audio_events import Gap, rescue_start
+from app.services.audio_events import AudioLevels, Gap, measure_levels, rescue_start
 from app.services.moderation_terms import find_risky_terms
 from prompt_engine.prompt_builder import PromptBuilder
 
@@ -96,27 +97,111 @@ class AnalysisResult:
     analysis_notes: str
 
 
-def _find_split_point(words: List[dict], target_time: float) -> float:
+_SENTENCE_END = (".", "!", "?", "…")
+_CLOSING_MARKS = "\"'”’»)]"
+
+# Quanto antes da palavra o silêncio que confirma o fim dela pode ter começado. O
+# timestamp erra para os dois lados: `noite.` aparece 1s depois de já ter sido
+# dita, e o silêncio que a confirma termina onde o timestamp dela começa.
+_CONFIRM_LOOKBACK = 3.0
+# E quanto depois do fim da palavra o silêncio ainda conta como sendo dela.
+_CONFIRM_LOOKAHEAD = 0.5
+# Folga para um silêncio que acaba encostado no fim do timestamp.
+_CONFIRM_TAIL_SLACK = 0.1
+# Até onde olhar para saber onde o silêncio termina.
+_CONFIRM_SCAN_AHEAD = 10.0
+
+# Som depois da última palavra, acima da fala por esta margem, é a reação (a mesma
+# régua de evento de services/audio_events.py). Ela é o fim do clipe, não um erro.
+_REACTION_ABOVE_SPEECH_DB = 3.0
+_REACTION_MIN_AFTER_WORD = 0.5
+_REACTION_GAP_TOLERANCE = 1.0
+
+
+def _ends_sentence(text: str) -> bool:
+    return text.rstrip().rstrip(_CLOSING_MARKS).endswith(_SENTENCE_END)
+
+
+def _confirmed_cut(word: dict, levels: Optional[AudioLevels]) -> Optional[tuple[float, float]]:
+    """
+    O silêncio que prova que a frase desta palavra acabou: (início, fim).
+
+    None quando a fala segue colada, que é o caso do `foda.` do clipe real:
+    pontuação correta, 0,02s depois do corte pelo timestamp, e a palavra ainda
+    saiu cortada porque o áudio não parava ali.
+
+    Um silêncio que começa cedo mas acaba antes do fim do timestamp não serve:
+    o `pé.` de 1,34s tem 1,15s de silêncio dentro, e pode ser dito depois dele.
+    """
+    if levels is None:
+        return None
+    runs = levels.quiet_runs(
+        word["start"] - _CONFIRM_LOOKBACK,
+        # Lê além do que a condição abaixo exige: truncar aqui encurtaria o fim do
+        # silêncio, e a parte 2 de um split abriria dentro dele.
+        word["end"] + _CONFIRM_SCAN_AHEAD,
+        settings.end_confirm_below_speech_db,
+        settings.end_confirm_min_quiet,
+    )
+    for run_start, run_end in runs:
+        if run_end >= word["end"] - _CONFIRM_TAIL_SLACK and run_start <= word["end"] + _CONFIRM_LOOKAHEAD:
+            return run_start, run_end
+    return None
+
+
+def _cut_after_quiet(run: tuple[float, float]) -> float:
+    """O respiro acontece dentro do silêncio, sem chegar à fala seguinte."""
+    return min(run[0] + settings.end_breath, run[1])
+
+
+def _cut_after_word(word: dict, next_word: Optional[dict]) -> float:
+    """Sem confirmação do áudio: o timestamp, com respiro até a palavra seguinte."""
+    cut = word["end"] + settings.end_breath
+    if next_word is not None:
+        cut = min(cut, next_word["start"])
+    return max(cut, word["end"])
+
+
+def _find_split_point(
+    words: List[dict],
+    target_time: float,
+    levels: Optional[AudioLevels] = None,
+    earliest: Optional[float] = None,
+    latest: Optional[float] = None,
+) -> float:
     """
     Encontra o ponto de corte mais natural próximo de target_time.
 
-    Prioriza fim de frases (pontuação). Se não encontrar em ±10s,
-    retorna o tempo da pausa mais longa na janela.
-    """
-    window = 10.0  # segundos de tolerância para buscar quebra natural
+    A ordem é: fim de frase confirmado pelo áudio, fim de frase, a pausa mais
+    longa, e só então o próprio alvo. Pausa vem depois porque uma pausa no meio
+    do raciocínio deixa a parte 1 terminando numa frase aberta.
 
+    `earliest` e `latest` garantem que as duas partes caibam nos limites de
+    duração. Sem eles, procurar longe do meio devolveria uma parte acima do teto,
+    que o laço de `analyze_virality` descarta inteira.
+    """
+    window = settings.split_sentence_window
+
+    best_confirmed: Optional[float] = None
     best_sentence_end: Optional[float] = None
     best_pause: Optional[tuple[float, float]] = None  # (gap_duration, time)
+
+    def closer(candidate: float, current: Optional[float]) -> bool:
+        return current is None or abs(candidate - target_time) < abs(current - target_time)
 
     for i, word in enumerate(words):
         t = word["end"]
         if abs(t - target_time) > window:
             continue
+        if (earliest is not None and t < earliest) or (latest is not None and t > latest):
+            continue
 
         # Fim de frase
-        if word["text"].rstrip().endswith((".", "!", "?", "...")):
-            if best_sentence_end is None or abs(t - target_time) < abs(best_sentence_end - target_time):
+        if _ends_sentence(word["text"]):
+            if closer(t, best_sentence_end):
                 best_sentence_end = t
+            if closer(t, best_confirmed) and _confirmed_cut(word, levels) is not None:
+                best_confirmed = t
 
         # Pausa entre palavras
         if i + 1 < len(words):
@@ -125,6 +210,8 @@ def _find_split_point(words: List[dict], target_time: float) -> float:
                 if best_pause is None or gap > best_pause[0]:
                     best_pause = (gap, word["end"])
 
+    if best_confirmed is not None:
+        return best_confirmed
     if best_sentence_end is not None:
         return best_sentence_end
     if best_pause is not None:
@@ -132,29 +219,69 @@ def _find_split_point(words: List[dict], target_time: float) -> float:
     return target_time
 
 
-def _split_clip(clip_data: dict, words: List[dict], max_duration: int) -> List[dict]:
+def _split_boundaries(
+    words: List[dict], split_point: float, levels: Optional[AudioLevels]
+) -> tuple[float, float]:
+    """
+    Onde a parte 1 termina e a parte 2 começa.
+
+    Não são o mesmo instante: o que há entre as duas é tempo morto, e cortar
+    ambas no fim da palavra faz a parte 2 abrir nele (0,69s num clipe real).
+    """
+    index = next((i for i, w in enumerate(words) if w["end"] == split_point), None)
+    if index is None:
+        return split_point, split_point  # caiu no alvo: não há palavra para alinhar
+
+    word = words[index]
+    next_word = words[index + 1] if index + 1 < len(words) else None
+    run = _confirmed_cut(word, levels)
+    if run is None:
+        part1_end = _cut_after_word(word, next_word)
+        part2_start = next_word["start"] if next_word else part1_end
+    else:
+        part1_end = _cut_after_quiet(run)
+        # O áudio volta antes do timestamp? Vale o áudio, para não comer a fala.
+        part2_start = min(next_word["start"], run[1]) if next_word else run[1]
+    return part1_end, max(part1_end, part2_start)
+
+
+def _split_clip(
+    clip_data: dict,
+    words: List[dict],
+    max_duration: int,
+    levels: Optional[AudioLevels] = None,
+    min_duration: float = 0,
+) -> List[dict]:
     """
     Divide um clip longo em duas partes com corte em ponto natural.
 
     Retorna lista de 1 ou 2 dicts, cada um com campos start/end/part_number/parent_start.
     """
-    duration = clip_data["end"] - clip_data["start"]
+    start, end = clip_data["start"], clip_data["end"]
+    duration = end - start
     if duration <= max_duration:
         return [clip_data]
 
-    mid_target = clip_data["start"] + duration / 2
+    mid_target = start + duration / 2
 
     # Filtra palavras dentro do clip
-    clip_words = [w for w in words if w["start"] >= clip_data["start"] and w["end"] <= clip_data["end"]]
-    split_point = _find_split_point(clip_words, mid_target)
+    clip_words = [w for w in words if w["start"] >= start and w["end"] <= end]
+    # Janela absurda (mais que dois tetos) não tem ponto que sirva: o limite cai e
+    # a rede de segurança depois do divisor é quem recusa as partes.
+    earliest: Optional[float] = max(start + min_duration, end - max_duration)
+    latest: Optional[float] = min(start + max_duration, end - min_duration)
+    if earliest > latest:
+        earliest = latest = None
+    split_point = _find_split_point(clip_words, mid_target, levels, earliest, latest)
+    part1_end, part2_start = _split_boundaries(clip_words, split_point, levels)
 
     part1 = dict(clip_data)
-    part1["end"] = split_point
+    part1["end"] = part1_end
     part1["part_number"] = 1
     part1["parent_start"] = clip_data["start"]
 
     part2 = dict(clip_data)
-    part2["start"] = split_point
+    part2["start"] = part2_start
     part2["part_number"] = 2
     part2["parent_start"] = clip_data["start"]
 
@@ -165,6 +292,116 @@ def _split_clip(clip_data: dict, words: List[dict], max_duration: int) -> List[d
     )
 
     return [part1, part2]
+
+
+def _ends_on_reaction(
+    end: float,
+    last_word: dict,
+    gaps: List[Gap],
+    levels: Optional[AudioLevels],
+) -> bool:
+    """O corte termina numa risada ou no barulho do fato, depois de acabar a fala."""
+    if any(
+        gap.is_event and gap.start <= end <= gap.end + _REACTION_GAP_TOLERANCE
+        for gap in gaps
+    ):
+        return True
+    if levels is None or end - last_word["end"] < _REACTION_MIN_AFTER_WORD:
+        return False
+    after = levels.p90(last_word["end"], end)
+    return after is not None and after >= levels.speech_level + _REACTION_ABOVE_SPEECH_DB
+
+
+def _close_clip_end(
+    job_id: str,
+    clip: dict,
+    words: List[dict],
+    gaps: List[Gap],
+    levels: Optional[AudioLevels],
+    min_duration: float,
+    max_duration: float,
+) -> None:
+    """
+    Faz o fim do clipe cair no fim de uma frase.
+
+    A ordem de preferência é: fim de frase à frente confirmado pelo áudio, fim de
+    frase atrás confirmado, e só então um fim que só a pontuação sustenta — e esse
+    fica registrado, porque pode sair com a palavra cortada. Sem nada disso o
+    corte fica onde estava, também registrado.
+
+    Um fim definido pela imagem só afrouxa (ver _refine_bounds_with_vision), e um
+    fim na reação não é frase aberta: ali o silêncio da fala é o melhor do clipe.
+    """
+    start, end = float(clip["start"]), float(clip["end"])
+    window = f"[{start:.1f}-{end:.1f}]"
+
+    last_index = next(
+        (i for i in range(len(words) - 1, -1, -1) if words[i]["start"] < end), None
+    )
+    if last_index is None or words[last_index]["end"] <= start:
+        logger.warning(f"[{job_id}] Clip {window}: sem fala no corte — fim mantido")
+        return
+
+    if _ends_on_reaction(end, words[last_index], gaps, levels):
+        logger.info(f"[{job_id}] Clip {window}: termina na reação — fim mantido")
+        return
+
+    # Janela maior que o teto vai ser dividida: quem precisa caber é cada parte.
+    longest = max_duration if end - start <= max_duration else 2 * max_duration
+    locked = bool(clip.get("_end_locked"))
+
+    def fits(cut: float) -> bool:
+        return min_duration <= cut - start <= longest and (not locked or cut >= end)
+
+    def next_of(index: int) -> Optional[dict]:
+        return words[index + 1] if index + 1 < len(words) else None
+
+    forward = [
+        i for i in range(last_index, len(words))
+        if words[i]["end"] - end <= settings.end_extend_max and _ends_sentence(words[i]["text"])
+    ]
+    # Recuar nunca é opção com o fim travado, mesmo que `fits` deixasse.
+    backward = [] if locked else [
+        i for i in range(last_index - 1, -1, -1)
+        if end - words[i]["end"] <= settings.end_retreat_max
+        and words[i]["end"] > start
+        and _ends_sentence(words[i]["text"])
+    ]
+
+    chosen: Optional[float] = None
+    note = ""
+    for index in forward + backward:
+        run = _confirmed_cut(words[index], levels)
+        if run is not None and fits(_cut_after_quiet(run)):
+            chosen = _cut_after_quiet(run)
+            note = f"fim de frase em {words[index]['text']!r}, confirmado no áudio"
+            break
+
+    if chosen is None:
+        for index in forward + backward:
+            cut = _cut_after_word(words[index], next_of(index))
+            if fits(cut):
+                chosen = cut
+                note = (
+                    f"fim de frase em {words[index]['text']!r} SEM confirmação no "
+                    f"áudio: a palavra pode sair cortada"
+                )
+                break
+
+    if chosen is None:
+        logger.warning(
+            f"[{job_id}] Clip {window}: nenhum fim de frase serve dentro dos "
+            f"limites — fim mantido, termina em {words[last_index]['text']!r}"
+        )
+        reason = f"Fim mantido em {end:.1f}s: nenhum fim de frase serve dentro dos limites."
+        clip["trim_reason"] = f"{clip.get('trim_reason', '').strip()} {reason}".strip()
+        return
+
+    clip["end"] = chosen
+    log = logger.warning if "SEM confirmação" in note else logger.info
+    log(f"[{job_id}] Clip {window}: fim {end:.2f}s → {chosen:.2f}s, {note}")
+    reason = f"Fim ajustado de {end:.1f}s para {chosen:.1f}s: {note}."
+    clip["trim_reason"] = f"{clip.get('trim_reason', '').strip()} {reason}".strip()
 
 
 def _merge_adjacent(
@@ -483,6 +720,9 @@ async def _refine_bounds_with_vision(
                 f"[{new_start:.1f}-{new_end:.1f}]."
             )
             clip["start"], clip["end"] = new_start, new_end
+            # O fim agora contém o acontecimento: daqui em diante só pode afrouxar.
+            if new_end > end:
+                clip["_end_locked"] = True
             logger.info(
                 f"[{job_id}] Corte [{start:.1f}-{end:.1f}] aberto para "
                 f"[{new_start:.1f}-{new_end:.1f}] pela imagem"
@@ -541,6 +781,7 @@ async def analyze_virality(
     gaps: Optional[List[Gap]] = None,
     video_path: Optional[str] = None,
     clip_mode: str = "individual",
+    audio_path: Optional[str] = None,
 ) -> AnalysisResult:
     """
     Analisa a transcrição completa e retorna segmentos com alto potencial viral.
@@ -562,6 +803,8 @@ async def analyze_virality(
             o prompt e alimentam o resgate de cortes que começam depois do fato.
         video_path: Vídeo em disco. Presente, a imagem entra na decisão dos
             limites de cada corte (ver _refine_bounds_with_vision).
+        audio_path: Áudio em disco. Presente, é ele que confirma onde a fala
+            parou de verdade (ver _close_clip_end).
 
     Returns:
         AnalysisResult com lista de ViralClip filtrados e notas da análise.
@@ -772,6 +1015,19 @@ async def analyze_virality(
             job_id, video_path, filtered, words, max_dur
         )
 
+    # Thread própria: ler o WAV de um vídeo de horas não pode parar o servidor.
+    levels = (
+        await asyncio.to_thread(measure_levels, job_id, audio_path, words)
+        if audio_path and filtered
+        else None
+    )
+
+    # Depois da imagem, que pode ter movido o fim, e antes do split: quem divide
+    # precisa do fim definitivo, e a parte 2 herda esse fim.
+    for c in filtered:
+        if not c["_segments"]:
+            _close_clip_end(job_id, c, words, gaps or [], levels, min_dur, max_dur)
+
     # Divide clips longos — partes que ficarem abaixo da duração mínima são descartadas
     final_clips_data: List[dict] = []
     for c in filtered:
@@ -780,7 +1036,7 @@ async def analyze_virality(
             # jogada que a costura existe para manter inteira.
             final_clips_data.append(c)
             continue
-        for part in _split_clip(c, words, max_dur):
+        for part in _split_clip(c, words, max_dur, levels, min_dur):
             part_dur = part["end"] - part["start"]
             if part_dur < min_dur:
                 logger.debug(
