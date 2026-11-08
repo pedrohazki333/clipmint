@@ -1,3 +1,5 @@
+import type { ClipStyle } from "./clipStyle";
+
 export type SubtitleMode = "word_highlight" | "traditional" | "none";
 
 /**
@@ -89,6 +91,8 @@ export interface Profile {
   avatar: string | null;
   default_layout_mode: LayoutMode;
   default_subtitle_mode: SubtitleMode;
+  /** O visual dos clipes. Em perfil antigo, derivado do que ele já tinha. */
+  style: ClipStyle;
   /** Caixa da facecam congelada para este canal. Nula = detectar a cada vídeo. */
   facecam_rect: FacecamRect | null;
   /** Derivadas dos jobs e clipes — nenhum contador é mantido em coluna. */
@@ -103,6 +107,8 @@ export interface ProfilePayload {
   avatar: string | null;
   default_layout_mode: LayoutMode;
   default_subtitle_mode: SubtitleMode;
+  /** Omitido, o estilo atual do perfil fica como está. */
+  style?: ClipStyle;
   /** Omitida, a edição SOLTA a caixa: editar o perfil o reescreve por inteiro. */
   facecam_rect?: FacecamRect | null;
 }

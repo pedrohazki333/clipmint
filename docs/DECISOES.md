@@ -2139,6 +2139,29 @@ geometria sobre o `.ass` que passou com o defeito, e só o render de verdade o m
 Validado com os mesmos cortes, no estilo padrão: 4 clipes, 88px de verdade, nenhuma linha
 encolhida, nada nas áreas seguras, contraste mínimo de 5,51:1.
 
+### D140. A tela de estilo mostra o clipe nas medidas do render, sem renderizar
+
+O estilo entra no formulário do perfil, gravado pelo mesmo "Salvar" do resto, com uma prévia
+em CSS ao lado, em 405x720 (escala 0,375). Ela responde a cada cor escolhida, e por isso não
+pode ir ao servidor: as regras de contraste e as medidas existem nos dois lados
+(`lib/clipStyle.ts`). `test_clip_style_parity.py` compara as duas cópias, pela mesma ideia do
+`test_layouts.py`. Medido num navegador de verdade, a faixa, o título e a legenda da prévia caem
+nas posições do render, e a Archivo é a mesma, com a largura certa.
+
+**Cor ilegível é avisada na hora** e trava o salvar. O servidor recusa do mesmo jeito, e o
+aviso só evita montar o visual inteiro para descobrir no botão.
+
+**Banner e faixa antigos só aparecem no modo streamer**, o único que ainda os usa. Mostrar os
+dois painéis num perfil de podcast seriam duas respostas para "qual a cor do título?". O @ do
+estilo também não alimenta a faixa do streamer: lá continua valendo o nome do `bar_style.json`.
+
+**A prévia encolhe inteira em tela estreita.** Só limitar a largura deformava o quadro. É uma
+prévia de visual: o rosto é um desenho e o texto é um exemplo, então a capa escolhida e um título
+de três linhas só aparecem no clipe de verdade.
+
+Salvar pela tela foi testado de ponta a ponta com um perfil descartável, apagado no fim, e salvar
+o `hzpodclips` faz o estilo derivado virar linha no banco com os mesmos valores.
+
 ---
 
 ## Adiado, com destino definido

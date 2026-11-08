@@ -15,6 +15,7 @@ export const DEFAULT_FONT = "condensed";
  * para julgar peso e proporção; a fonte final é a instalada no servidor.
  */
 export const FONT_STACKS: Record<string, { family: string; weight: number }> = {
+  archivo: { family: "var(--font-archivo), sans-serif", weight: 800 },
   condensed: { family: "'DejaVu Sans Condensed', 'Arial Narrow', sans-serif", weight: 700 },
   sans: { family: "'DejaVu Sans', Arial, sans-serif", weight: 700 },
   inter: { family: "Inter, system-ui, sans-serif", weight: 700 },

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import Script from "next/script";
 import { cookies } from "next/headers";
-import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
+import { Archivo, IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
 
 import { AUTH_COOKIE } from "@/lib/auth";
 import { IS_PUBLIC_BUILD, SESSION_COOKIE } from "@/lib/build";
@@ -35,6 +35,14 @@ const plexMono = IBM_Plex_Mono({
   display: "swap",
 });
 
+/** A fonte dos clipes, para a prévia da tela de estilo sair igual ao render. */
+const archivo = Archivo({
+  subsets: ["latin", "latin-ext"],
+  axes: ["wdth"],
+  variable: "--font-archivo",
+  display: "swap",
+});
+
 export const metadata: Metadata = {
   title: "ClipMint",
   description: "Gere clips virais a partir de vídeos do YouTube",
@@ -54,7 +62,10 @@ export default async function RootLayout({
   );
 
   return (
-    <html lang="pt-BR" className={`${plexSans.variable} ${plexMono.variable}`}>
+    <html
+      lang="pt-BR"
+      className={`${plexSans.variable} ${plexMono.variable} ${archivo.variable}`}
+    >
       <body className="min-h-screen bg-base font-sans text-body text-ink antialiased">
         <header className="border-b border-line px-4 py-4 sm:px-6">
           <div className="mx-auto flex max-w-4xl items-center gap-3">

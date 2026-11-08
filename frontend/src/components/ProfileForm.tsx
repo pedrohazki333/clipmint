@@ -18,8 +18,10 @@ import {
   type BrandSnapshot,
   type FontOption,
 } from "@/lib/brand";
+import { defaultStyle, styleProblems, type ClipStyle } from "@/lib/clipStyle";
 import type { LayoutMode, Profile, SubtitleMode } from "@/lib/types";
 import BrandSettings from "@/components/BrandSettings";
+import ClipStyleEditor from "@/components/ClipStyleEditor";
 import { bannerValido } from "@/components/BannerColorSettings";
 import { barValida } from "@/components/BarStyleSettings";
 import LayoutModeSelector from "@/components/LayoutModeSelector";
@@ -66,6 +68,8 @@ export default function ProfileForm({ profile }: Props) {
   );
   const [erro, setErro] = useState("");
   const [salvando, setSalvando] = useState(false);
+  // Em perfil antigo a API já devolve o estilo derivado do que ele tinha configurado.
+  const [style, setStyle] = useState<ClipStyle>(profile?.style ?? defaultStyle());
 
   // ── Marca ───────────────────────────────────────────────────────────────────
   const [brand, setBrand] = useState<BrandDraft>(draftPadrao());
@@ -122,7 +126,8 @@ export default function ProfileForm({ profile }: Props) {
     );
   }
 
-  const marcaValida = bannerValido(brand.banner) && barValida(brand.bar);
+  const marcaValida =
+    bannerValido(brand.banner) && barValida(brand.bar) && styleProblems(style).length === 0;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -134,6 +139,7 @@ export default function ProfileForm({ profile }: Props) {
       avatar,
       default_layout_mode: layout,
       default_subtitle_mode: subtitle,
+      style,
     };
 
     // O id que já existe: o do perfil em edição, ou o de um create que deu
@@ -281,6 +287,18 @@ export default function ProfileForm({ profile }: Props) {
         </div>
 
         {/*
+          O estilo vem primeiro: é o que mais muda a cara do clipe.
+        */}
+        <ClipStyleEditor
+          value={style}
+          onChange={setStyle}
+          layout={layout}
+          mode={subtitle}
+          fonts={fonts}
+          disabled={salvando}
+        />
+
+        {/*
           Editando, a marca só existe depois que `loadBrandDraft` volta — e até
           lá `brand` vale o padrão de fábrica. Mostrar os painéis nesse estado
           exibe cores que NÃO são as do perfil como se fossem, e quem abre a
@@ -304,6 +322,7 @@ export default function ProfileForm({ profile }: Props) {
             onChange={mudarMarca}
             fonts={fonts}
             disabled={salvando}
+            showStreamerPanels={layout === "streamer"}
           />
         )}
 

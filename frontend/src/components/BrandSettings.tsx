@@ -27,6 +27,7 @@ export default function BrandSettings({
   onChange,
   fonts,
   disabled,
+  showStreamerPanels = true,
 }: {
   source: SourceType;
   profileId?: string;
@@ -34,6 +35,7 @@ export default function BrandSettings({
   onChange: (v: BrandDraft) => void;
   fonts: FontOption[];
   disabled?: boolean;
+  showStreamerPanels?: boolean;
 }) {
   const escopo = { source, profileId };
 
@@ -58,18 +60,24 @@ export default function BrandSettings({
           savedUrl={profileId ? getClipWatermarkUrl(escopo) : undefined}
           disabled={disabled}
         />
-        <BannerColorSettings
-          value={draft.banner}
-          onChange={(banner) => onChange({ ...draft, banner })}
-          fonts={fonts}
-          disabled={disabled}
-        />
-        <BarStyleSettings
-          value={draft.bar}
-          onChange={(bar) => onChange({ ...draft, bar })}
-          fonts={fonts}
-          disabled={disabled}
-        />
+        {/* Banner e faixa são do modo streamer. Nos outros layouts o visual vem do
+            estilo do clipe, e mostrar os dois seria duas respostas para a mesma pergunta. */}
+        {showStreamerPanels && (
+          <>
+            <BannerColorSettings
+              value={draft.banner}
+              onChange={(banner) => onChange({ ...draft, banner })}
+              fonts={fonts}
+              disabled={disabled}
+            />
+            <BarStyleSettings
+              value={draft.bar}
+              onChange={(bar) => onChange({ ...draft, bar })}
+              fonts={fonts}
+              disabled={disabled}
+            />
+          </>
+        )}
       </div>
     </div>
   );
