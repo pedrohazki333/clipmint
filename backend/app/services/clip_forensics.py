@@ -466,18 +466,31 @@ def parse_cut_times(output: str) -> list[float]:
     return times
 
 
-async def detect_cuts(video_path: str, threshold: Optional[float] = None) -> list[float]:
+async def detect_cuts(
+    video_path: str,
+    threshold: Optional[float] = None,
+    start: Optional[float] = None,
+    duration: Optional[float] = None,
+) -> list[float]:
     """
     Onde a edição corta de um plano para outro.
+
+    Com `start` e `duration` olha só esse trecho, e os tempos devolvidos são
+    relativos ao `start`.
 
     Falha silenciosa: o resto da perícia continua valendo sem isto.
     """
     threshold = (
         threshold if threshold is not None else settings.forensics_scene_threshold
     )
+    seek: list[str] = []
+    if start is not None:
+        seek += ["-ss", f"{start:.3f}"]
+    if duration is not None:
+        seek += ["-t", f"{duration:.3f}"]
     try:
         _, stdout, stderr = await _run([
-            "ffmpeg", "-v", "info", "-i", video_path,
+            "ffmpeg", "-v", "info", *seek, "-i", video_path,
             "-filter:v", f"select='gt(scene,{threshold})',metadata=print:file=-",
             "-an", "-f", "null", "-",
         ], _CUTS_TIMEOUT)

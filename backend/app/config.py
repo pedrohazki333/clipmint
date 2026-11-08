@@ -380,6 +380,17 @@ class Settings(BaseSettings):
     end_confirm_min_quiet: float = 0.3
     # Janela, em volta do meio, em que o divisor procura fim de frase.
     split_sentence_window: float = 20.0
+    # O começo se sustenta sozinho (ver D133). Muletas que saem do início do clipe
+    # de podcast. A segunda lista só sai quando vem seguida de vírgula ou pausa,
+    # porque sem isso ela é conteúdo: "Olha o que ele fez", "Assim que eu cheguei".
+    opening_fillers: list[str] = ["na verdade", "então", "aí", "né", "e"]
+    opening_fillers_need_pause: list[str] = ["tipo", "bom", "olha", "assim", "mano", "cara", "não"]
+    # Quantas muletas seguidas podem sair, e até quanto tempo. O limite é em
+    # muletas, não em palavras: "Não, na verdade," são duas muletas e 0,68s.
+    opening_filler_max_count: int = 2
+    opening_filler_max_seconds: float = 1.5
+    # Troca de câmera nestes primeiros segundos mostra outra pessoa de relance.
+    opening_scene_window: float = 0.5
     # Face tracking: quando desligado, o crop 9:16 fica estático no centro do
     # frame e o MediaPipe nem chega a rodar (render bem mais rápido).
     face_tracking_enabled: bool = False

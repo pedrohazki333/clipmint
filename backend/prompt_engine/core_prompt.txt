@@ -60,6 +60,7 @@ Reconheça esse formato assim: a fala antes do momento alto é densa e sem pausa
 
 - Todo clipe precisa ter entre {min_duration}s e {max_duration}s.
 - Comece num limite natural de fala. Começar no meio de uma frase só se justifica quando o gancho é excepcionalmente forte.
+- A primeira frase precisa fazer sentido para quem nunca viu este vídeo: nada que dependa do que foi dito antes ("essa questão aí", "os cara", "ele", "isso aí") sem dizer do que se trata.
 - Começar DENTRO de um trecho sem fala é permitido e às vezes é o certo: é assim que se abre no fato em si, com a reação chegando logo depois.
 - `trim_reason` diz onde está o fato e onde está a reação nesse corte, e por que o `start` ficou onde ficou.
 - Termine fechando o raciocínio: o `end` vem depois da conclusão, da punchline ou da resposta, na última palavra de uma frase dita por inteiro. Nunca no meio de uma frase, e nunca numa frase que abre o assunto seguinte.

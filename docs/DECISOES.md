@@ -1864,6 +1864,52 @@ com 0,69s de silêncio. É uma mudança deliberada do que
 
 Sem áudio legível, tudo isso cai para os timestamps e registra, sem derrubar o job.
 
+### D133. O começo do clipe se sustenta sozinho
+
+Os três melhores clipes de um podcast real abriam em muleta ou em frase presa ao
+contexto: "Na verdade, essa questão aí...", "Na verdade, eu perdi 200 mil...", "Aí
+os cara vai num debate...". O segundo tinha um gancho perfeito em "eu perdi".
+
+Três coisas passam a acontecer depois da imagem e antes de fechar o fim:
+
+**O início sai de dentro da palavra, para a borda mais próxima.** `_snap_to_word`
+só rodava no início vindo da visão. O modelo arredonda em décimos, e os inícios
+caíam com o finzinho da palavra anterior no primeiro quadro. Borda mais próxima,
+e não sempre para trás: `Não,` em 155,58 com início em 155,60 era a intenção e
+entra; `experiência?` terminando em 229,51 com início em 229,50 não era e sai.
+
+**Muletas saem, só no podcast.** As listas estão em config, e são duas: as de
+sempre ("na verdade", "então", "aí", "né", "e") e as que só contam seguidas de
+vírgula ou pausa ("tipo", "bom", "olha", "assim", "mano", "cara", "não"). Sem a
+segunda regra, "Olha o que ele fez" e "Assim que eu cheguei" perdiam a primeira
+palavra e deixavam de ser português. No gameplay nada sai, porque "olha" e "espera"
+são a preparação que o `core_prompt` manda incluir.
+
+O limite pedido era de 2 palavras ou 1,5s. Ficou em **2 muletas ou 1,5s**, por
+causa do clipe que motivou isto: "Não, na verdade, essa questão" são 3 palavras e
+0,68s. Contando palavras, ele saía igual. "Não" entrou na segunda lista pelo mesmo
+motivo: ao abrir um clipe com vírgula, é resposta a uma pergunta que ninguém viu.
+
+**Troca de câmera antes de qualquer fala é pulada.** Mas só se não houver palavra
+antes dela e o áudio concordar. A primeira versão só olhava a palavra exatamente
+sobre a troca, passou em todos os testes, e no vídeo real avançou o início até
+230,35s, comendo "eu perdi 200 mil seguidores": o timestamp espremia essas palavras
+num vão de 0,08s antes da troca, com o áudio falando. Trocar de câmera com alguém
+falando é normal, e uma pessoa errada por 0,3s custa menos que a frase. Na prática
+isso quase só age quando o início cai em silêncio. Foi a retirada da muleta que
+resolveu o clipe que tinha o problema.
+
+Um início definido pela imagem ou pelo resgate por áudio passa intacto: ele protege
+um fato, e tudo isto só avança. `_rescue_event_starts` e `_refine_bounds_with_vision`
+agora deixam `_start_locked` no clipe quando recuam o início.
+
+**O que regra nenhuma resolve:** tirar "Aí" de "Aí os cara vai num debate" deixa "os
+cara vai num debate", que continua sem contexto. Isso depende do modelo escolher
+outro início, e por isso o prompt mudou em dois níveis. No `core_prompt` fica o que
+vale para todo nicho: a primeira frase faz sentido para quem nunca viu o vídeo. "O
+clipe começa na afirmação de impacto" fica só em `PODCAST_CRITERIA`, porque no
+gameplay o core manda começar na preparação, e as duas regras se contradiriam.
+
 ---
 
 ## Adiado, com destino definido

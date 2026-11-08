@@ -57,6 +57,7 @@ Um momento excelente que não conversa com nenhum compilado fica de fora. Só de
 PODCAST_CRITERIA = """## Critérios para PODCAST
 
 - Gancho verbal nos primeiros 3s: existe uma afirmação contra-intuitiva, uma revelação, uma pergunta em aberto, ou um sinal de autoridade/credibilidade logo de cara? Introduções ("então hoje eu vim falar sobre...") são fracas — penalize.
+- Abertura na frase mais forte: se o trecho tem uma afirmação de impacto ("eu perdi 200 mil seguidores numa noite"), o clipe começa NELA, e não na frase que leva até ela. Não abra em muleta ou conector ("na verdade", "então", "aí", "tipo", "mano").
 - Arco de resolução: o trecho tem começo, meio e fim dentro de si mesmo (não depende de contexto anterior do podcast pra fazer sentido)?
 - Densidade de informação/emoção: há silêncios longos DE ÁUDIO BAIXO, hesitação, ou divagação que quebram o ritmo? Isso derruba completion rate. Atenção: trecho sem fala mas com áudio alto é o oposto disso — é risada da mesa ou reação a algo acontecendo, e costuma ser o melhor pedaço do corte.
 - Potencial de debate: a afirmação é polêmica ou opinativa o suficiente pra gerar comentários discordando ou concordando com força?

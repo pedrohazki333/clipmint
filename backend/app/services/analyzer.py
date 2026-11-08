@@ -34,6 +34,7 @@ from app.prompts.viral_analysis import (
 )
 from app.services import vision
 from app.services.audio_events import AudioLevels, Gap, measure_levels, rescue_start
+from app.services.clip_forensics import detect_cuts
 from app.services.moderation_terms import find_risky_terms
 from prompt_engine.prompt_builder import PromptBuilder
 
@@ -292,6 +293,165 @@ def _split_clip(
     )
 
     return [part1, part2]
+
+
+# O que a transcrição gruda numa palavra sem fazer parte dela.
+_WORD_PUNCTUATION = ".,;:!?…—–-\"'”’»«()[]"
+# Pausa depois da palavra que conta como a vírgula que a transcrição não pôs.
+_FILLER_PAUSE = 0.2
+# Depois da troca de câmera: um quadro, para não abrir no último do plano anterior.
+_ONE_FRAME = 0.04
+
+
+def _plain(text: str) -> str:
+    return text.strip().strip(_WORD_PUNCTUATION).lower()
+
+
+def _snap_start(words: List[dict], start: float) -> float:
+    """
+    Tira o início de dentro de uma palavra, para a borda mais próxima.
+
+    O modelo arredonda em décimos, então um início cai em 229,50 com `experiência?`
+    terminando em 229,51: sobra o finzinho da palavra anterior no primeiro quadro.
+    Quando a borda mais próxima é o começo, a palavra era a intenção e entra.
+    """
+    for index, word in enumerate(words):
+        if word["start"] < start < word["end"]:
+            if start - word["start"] <= word["end"] - start:
+                return word["start"]
+            return words[index + 1]["start"] if index + 1 < len(words) else word["end"]
+    return start
+
+
+def _filler_length(words: List[dict], index: int) -> int:
+    """Quantas palavras a partir de `index` formam uma muleta. Zero se não formam."""
+    for filler in settings.opening_fillers:
+        tokens = filler.split()
+        chunk = words[index:index + len(tokens)]
+        if [_plain(w["text"]) for w in chunk] == tokens:
+            return len(tokens)
+
+    word = words[index]
+    if _plain(word["text"]) not in settings.opening_fillers_need_pause:
+        return 0
+    if word["text"].rstrip().endswith((",", ";", ":", "…", "...", "-", "—", "–")):
+        return 1
+    following = words[index + 1] if index + 1 < len(words) else None
+    if following is not None and following["start"] - word["end"] >= _FILLER_PAUSE:
+        return 1
+    return 0
+
+
+def _start_after_fillers(words: List[dict], start: float) -> Optional[float]:
+    """Onde a primeira palavra de conteúdo começa, se o clipe abre em muleta."""
+    first = next((i for i, w in enumerate(words) if w["start"] >= start), None)
+    if first is None:
+        return None
+
+    index = first
+    for _ in range(settings.opening_filler_max_count):
+        length = _filler_length(words, index)
+        if not length or index + length >= len(words):
+            break
+        if words[index + length]["start"] - start > settings.opening_filler_max_seconds:
+            break
+        index += length
+
+    return words[index]["start"] if index > first else None
+
+
+async def _skip_opening_scene_cut(
+    job_id: str,
+    clip: dict,
+    words: List[dict],
+    video_path: str,
+    min_duration: float,
+    levels: Optional[AudioLevels] = None,
+) -> None:
+    """
+    Abre depois da troca de câmera, se ela cai antes de qualquer fala.
+
+    Trocar de câmera com alguém falando é normal, e nesse caso o início fica: uma
+    pessoa errada por 0,3s custa menos que a frase. Medido no clipe real: a troca
+    em 230,31s caía num vão do timestamp, e pular até ela comia "eu perdi 200 mil
+    seguidores", o próprio gancho. Por isso o áudio também precisa concordar: as
+    palavras desse trecho estavam espremidas, e o áudio seguia falando.
+    """
+    start, end = float(clip["start"]), float(clip["end"])
+    cuts = await detect_cuts(
+        video_path, start=start, duration=settings.opening_scene_window
+    )
+    if not cuts:
+        return
+
+    cut = start + max(cuts)
+    spoken = any(w["start"] < cut and w["end"] > start for w in words)
+    if not spoken and levels is not None:
+        level = levels.p90(start, cut)
+        spoken = (
+            level is not None
+            and level > levels.speech_level - settings.end_confirm_below_speech_db
+        )
+    if spoken:
+        logger.info(
+            f"[{job_id}] Clip [{start:.1f}-{end:.1f}]: troca de câmera em {cut:.2f}s "
+            f"com fala antes dela — início mantido"
+        )
+        return
+
+    upcoming = next((w["start"] for w in words if w["start"] >= cut), None)
+    new_start = cut + _ONE_FRAME
+    if upcoming is not None:
+        new_start = min(new_start, upcoming)
+    if end - new_start < min_duration:
+        return
+
+    clip["start"] = new_start
+    note = f"Início avançado de {start:.2f}s para {new_start:.2f}s: troca de câmera na abertura."
+    clip["trim_reason"] = f"{clip.get('trim_reason', '').strip()} {note}".strip()
+    logger.info(f"[{job_id}] Clip [{start:.1f}-{end:.1f}]: {note}")
+
+
+async def _clean_opening(
+    job_id: str,
+    clip: dict,
+    words: List[dict],
+    video_path: Optional[str],
+    min_duration: float,
+    is_podcast: bool,
+    levels: Optional[AudioLevels] = None,
+) -> None:
+    """
+    Faz o clipe abrir numa palavra inteira e, no podcast, sem muleta.
+
+    Um início definido pela imagem ou pelo resgate por áudio está protegendo um
+    fato, e só afrouxa: esses passam intactos. No gameplay a
+    muleta fica, porque "olha" e "espera" são a preparação que o prompt manda
+    incluir, e a troca de plano costuma ser a própria jogada.
+    """
+    if clip.get("_start_locked"):
+        return
+
+    start, end = float(clip["start"]), float(clip["end"])
+    snapped = _snap_start(words, start)
+    if snapped != start and end - snapped >= min_duration:
+        clip["start"] = snapped
+        logger.info(f"[{job_id}] Clip [{start:.2f}-{end:.1f}]: início alinhado em {snapped:.2f}s")
+
+    if not is_podcast:
+        return
+
+    current = float(clip["start"])
+    after = _start_after_fillers(words, current)
+    if after is not None and end - after >= min_duration:
+        removed = " ".join(w["text"] for w in words if current <= w["start"] < after)
+        clip["start"] = after
+        note = f"Início avançado de {current:.2f}s para {after:.2f}s: sem a muleta {removed!r}."
+        clip["trim_reason"] = f"{clip.get('trim_reason', '').strip()} {note}".strip()
+        logger.info(f"[{job_id}] Clip [{current:.1f}-{end:.1f}]: {note}")
+
+    if video_path:
+        await _skip_opening_scene_cut(job_id, clip, words, video_path, min_duration, levels)
 
 
 def _ends_on_reaction(
@@ -621,6 +781,8 @@ def _rescue_event_starts(
             continue
 
         clip["start"] = new_start
+        # O início agora contém o fato: daqui em diante nada pode avançá-lo.
+        clip["_start_locked"] = True
         note = (
             f"Início recuado de {start:.1f}s para {new_start:.1f}s: o corte "
             f"começava depois de {event.duration:.0f}s de áudio alto "
@@ -720,9 +882,11 @@ async def _refine_bounds_with_vision(
                 f"[{new_start:.1f}-{new_end:.1f}]."
             )
             clip["start"], clip["end"] = new_start, new_end
-            # O fim agora contém o acontecimento: daqui em diante só pode afrouxar.
+            # Os limites agora contêm o acontecimento: daqui em diante só afrouxam.
             if new_end > end:
                 clip["_end_locked"] = True
+            if new_start < start:
+                clip["_start_locked"] = True
             logger.info(
                 f"[{job_id}] Corte [{start:.1f}-{end:.1f}] aberto para "
                 f"[{new_start:.1f}-{new_end:.1f}] pela imagem"
@@ -1022,10 +1186,13 @@ async def analyze_virality(
         else None
     )
 
-    # Depois da imagem, que pode ter movido o fim, e antes do split: quem divide
-    # precisa do fim definitivo, e a parte 2 herda esse fim.
+    # Depois da imagem, que pode ter movido os limites, e antes do split: quem
+    # divide precisa dos limites definitivos. O começo vem primeiro porque o
+    # fechamento do fim confere a duração a partir dele.
+    is_podcast = (source_type or DEFAULT_SOURCE_TYPE).lower() == "podcast"
     for c in filtered:
         if not c["_segments"]:
+            await _clean_opening(job_id, c, words, video_path, min_dur, is_podcast, levels)
             _close_clip_end(job_id, c, words, gaps or [], levels, min_dur, max_dur)
 
     # Divide clips longos — partes que ficarem abaixo da duração mínima são descartadas
