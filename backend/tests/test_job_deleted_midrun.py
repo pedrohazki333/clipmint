@@ -77,7 +77,7 @@ def test_laco_de_render_para_no_primeiro_clip_apos_o_delete(db_temporario, monke
             await db.commit()
         return "/tmp/fake.mp4", 123
 
-    monkeypatch.setattr(pipeline, "cut_and_crop", falso_render)
+    monkeypatch.setattr(pipeline, "cut_cover", falso_render)
 
     async def cenario():
         async with db_temporario() as db:

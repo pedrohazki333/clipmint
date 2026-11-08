@@ -41,7 +41,10 @@ ALL_LAYOUTS: tuple[str, ...] = tuple(_LAYOUTS)
 #: O que cada modo faz, na linguagem de quem escolhe.
 LAYOUT_LABELS: dict[str, tuple[str, str]] = {
     "fullscreen": ("Tela cheia", "Quem fala ocupa a tela toda, com título e legenda por cima"),
-    "cover": ("Capa + banner", "Capa com o rosto, título em destaque e o vídeo embaixo"),
+    "cover": (
+        "Capa + faixa",
+        "A reação mais forte do clipe em cima, o título no meio e quem fala embaixo",
+    ),
     "streamer": ("Facecam + gameplay", "A câmera em cima, o jogo embaixo"),
     "crop": ("Crop vertical", "Recorte 9:16 no centro, sem camadas"),
     "original": (

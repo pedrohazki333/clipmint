@@ -2073,6 +2073,47 @@ a cada render.
 mudou: mesmos cortes, comparação direta e custo de API zero. `reanalyze_job` aceita
 `--layout`.
 
+### D138. A capa é a reação de outra pessoa, achada pelo áudio e pelo cenário
+
+A capa do layout B é uma prévia: um quadro parado da reação mais forte DENTRO do clipe. A
+regra antiga pegava o rosto mais expressivo falando, ou seja, quem já estava na tela
+embaixo, de boca aberta porque estava no meio de uma palavra. `cover_picker.py` aplica as
+regras da especificação, e `choose_cover` não abre vídeo, para dar para testar a sério:
+outra pessoa em momento alto, outra pessoa, a expressão mais forte de quem fala, e só sem
+nenhuma reação um rosto neutro, dito no log, que registra a regra que decidiu.
+
+Três peças que a especificação presumia prontas não existiam:
+
+**Momento alto não vem dos buracos de `audio_events`.** Eles exigem 3s sem fala, e o
+vídeo medido tinha zero: a risada acontece com alguém falando. São picos de 1s a pelo menos
+4 dB acima da fala, medidos no próprio trecho.
+
+**"Pessoa diferente" é câmera diferente.** O MediaPipe detecta rosto, mas não reconhece
+pessoa, e a transcrição não separa quem fala. Num podcast, porém, cada um tem câmera fixa,
+e o cenário a identifica: o histograma de cor das laterais do quadro, onde quem fala não
+fica. Quem fala é a câmera com mais tempo no clipe. A alternativa era perguntar ao modelo de
+visão, que entende melhor a cena, mas custa por clipe e já devolveu respostas opostas para
+a mesma janela (ver `_refine_bounds_with_vision`). O dono escolheu a local. A câmera é por
+quadro, e não por plano: a troca cai entre duas amostras, e herdar do plano rotulava a
+pessoa errada perto da emenda.
+
+**Expressão não é só boca aberta.** O microfone cobre a boca de quem fala perto dele, então
+a nota soma abertura com largura do sorriso, medida contra a distância entre os olhos, que
+não muda com a expressão.
+
+Medido no job real: em 4 de 4 clipes a capa mostra outra pessoa, e a de 198s é a gargalhada.
+Custa de 6 a 9s e 314 MB por clipe. A limitação é conhecida: um podcast de câmera única
+não tem "outra câmera", e cai na expressão de quem fala, mesmo com duas pessoas no quadro.
+
+A faixa tem texto de x=53 a x=909, porque ela cruza a coluna da direita do TikTok (y de 800
+a 1500), medida que a especificação não trazia. Quem fala é recortado em 1350x1080, sem
+ampliar a fonte, e por isso o painel fica mais nítido que o layout A. O `cut_and_crop` antigo
+saiu do pipeline e só resta nos testes de caracterização.
+
+Dois efeitos do recorte mais largo, sem decisão ainda: a legenda em y≈1205 cai na testa de
+quem fala, porque o painel começa em 1056, e o logo da fonte aparece quando a detecção não
+roda: ela pede 2 cenas amostradas, e um clipe quase sem troca de câmera não as tem.
+
 ---
 
 ## Adiado, com destino definido

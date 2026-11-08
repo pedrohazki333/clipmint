@@ -48,8 +48,8 @@ export const LAYOUT_LABELS: Record<LayoutMode, { nome: string; descricao: string
     descricao: "Quem fala ocupa a tela toda, com título e legenda por cima",
   },
   cover: {
-    nome: "Capa + banner",
-    descricao: "Capa com o rosto, título em destaque e o vídeo embaixo",
+    nome: "Capa + faixa",
+    descricao: "A reação mais forte do clipe em cima, o título no meio e quem fala embaixo",
   },
   streamer: {
     nome: "Facecam + gameplay",

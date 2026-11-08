@@ -54,7 +54,13 @@ from app.services.subtitler import (
     generate_ass_subtitles,
     generate_styled_captions,
 )
-from app.services.title_card import generate_fullscreen_title
+from app.services.cover_picker import generate_reaction_cover
+from app.services.title_card import (
+    BAND_H,
+    BAND_Y,
+    generate_cover_band,
+    generate_fullscreen_title,
+)
 from app.services.watermark import (
     clip_watermark_path,
     detect_brand_regions,
@@ -79,6 +85,11 @@ BANNER_CENTER_Y = COVER_H
 # proporção da faixa do streamer (streamer_bar_frac × altura do canvas), para
 # as duas contas terem a mesma espessura de faixa no feed.
 COVER_BAR_H = int(CANVAS_H * 0.029) // 2 * 2
+
+# Layout B (ver docs/LAYOUTS_V2.md): capa, faixa e quem fala.
+COVER_V2_H = BAND_Y
+COVER_V2_SPEAKER_Y = BAND_Y + BAND_H
+COVER_V2_SPEAKER_H = CANVAS_H - COVER_V2_SPEAKER_Y
 
 # Passo de interpolação dos comandos de crop (s) — 1/30s = atualização por frame
 TRACK_CMD_INTERVAL = 1 / 30
@@ -472,6 +483,122 @@ def _subtitle_tail(
     )
 
 
+async def _face_crop_filter(
+    job_id: str,
+    clip_id: str,
+    video_path: str,
+    start_time: float,
+    end_time: float,
+    clip_dir: Path,
+    aspect: float,
+) -> str:
+    """
+    O recorte nesta proporção, acompanhando o rosto.
+
+    Sempre roda o tracker, mesmo com `face_tracking_enabled` desligado: aquela chave é
+    do render antigo, e nos layouts A e B quem fala é o layout. Sem rosto detectado, o
+    tracker devolve o recorte central.
+    """
+    tracking = await track_faces(video_path, start_time, end_time)
+    src_width, src_height = await get_video_dimensions(video_path)
+    crop_w, crop_h = _crop_dimensions(src_width, src_height, aspect)
+    cy = _clamp(
+        int(src_height * tracking["center_y"] - crop_h / 2), 0, src_height - crop_h
+    )
+    logger.info(
+        f"[{job_id}] Clip {clip_id}: fonte {src_width}x{src_height}, recorte "
+        f"{crop_w}x{crop_h}, rosto: {tracking['method']} ({tracking['confidence']:.0%})"
+    )
+
+    keyframes = tracking.get("keyframes", [])
+    if tracking["method"] == "mediapipe" and len(keyframes) >= 2:
+        cmd_path = str(clip_dir / f"{clip_id}_track.cmd")
+        x0 = _write_track_commands(
+            cmd_path, keyframes, end_time - start_time, src_width, crop_w
+        )
+        return (
+            f"sendcmd=f={_escape_filter_path(cmd_path)},"
+            f"crop@dyn={crop_w}:{crop_h}:{x0}:{cy}"
+        )
+    x0 = _crop_x(tracking["center_x"], src_width, crop_w)
+    return f"crop={crop_w}:{crop_h}:{x0}:{cy}"
+
+
+async def cut_cover(
+    job_id: str,
+    clip_id: str,
+    video_path: str,
+    start_time: float,
+    end_time: float,
+    words: list[dict],
+    subtitle_mode: str,
+    banner_text: str = "",
+    keyword: Optional[str] = None,
+    style: Optional[ClipStyle] = None,
+    source_type: str | None = None,
+    profile_id: str | None = None,
+) -> tuple[str, int]:
+    """
+    Layout B: a capa em cima, a faixa do título no meio e quem fala embaixo.
+
+      ┌──────────────┐ 0
+      │     CAPA     │  um quadro parado: a prévia da reação mais forte do clipe
+      ├──────────────┤ 800
+      │    FAIXA     │  título e @, uma vez só
+      ├──────────────┤ 1056
+      │  QUEM FALA   │  com face tracking e a legenda em y≈1205
+      └──────────────┘ 1920
+    """
+    style = style or ClipStyle()
+    clip_dir = settings.clips_dir / job_id
+    clip_dir.mkdir(parents=True, exist_ok=True)
+    duration = end_time - start_time
+    logger.info(
+        f"[{job_id}] Capa + faixa {clip_id}: [{start_time:.1f}s–{end_time:.1f}s] ({duration:.1f}s)"
+    )
+
+    inputs, parts, src_label, n_inputs = await _brand_layers(
+        video_path, start_time, end_time, source_type, profile_id
+    )
+
+    # Um depois do outro, como no resto do render: os dois carregam o MediaPipe.
+    crop_filter = await _face_crop_filter(
+        job_id, clip_id, video_path, start_time, end_time, clip_dir,
+        CANVAS_W / COVER_V2_SPEAKER_H,
+    )
+    brand = await asyncio.to_thread(detect_brand_regions, video_path, start_time, end_time)
+    cover_path = str(clip_dir / f"{clip_id}_cover.png")
+    rule = await asyncio.to_thread(
+        generate_reaction_cover,
+        video_path, start_time, end_time, cover_path, CANVAS_W, COVER_V2_H,
+        watermark_path=user_watermark_path(source_type, profile_id),
+        qr_regions=brand["qr"],
+        static_regions=brand["static"],
+    )
+    logger.info(f"[{job_id}] Capa de {clip_id}: {rule}")
+
+    band_path = str(clip_dir / f"{clip_id}_band.png")
+    await asyncio.to_thread(generate_cover_band, banner_text, keyword, style, band_path)
+
+    capa_idx, faixa_idx = n_inputs, n_inputs + 1
+    inputs += ["-i", cover_path, "-i", band_path]
+    parts.append(
+        f"[{src_label}]{crop_filter},"
+        f"scale={CANVAS_W}:{COVER_V2_SPEAKER_H}:flags=lanczos,"
+        f"pad={CANVAS_W}:{CANVAS_H}:0:{COVER_V2_SPEAKER_Y}:black[base]"
+    )
+    parts.append(f"[base][{capa_idx}:v]overlay=0:0[withcover]")
+    parts.append(f"[withcover][{faixa_idx}:v]overlay=0:{BAND_Y}[withband]")
+
+    _subtitle_tail(
+        parts, "withband", clip_dir, clip_id, words, start_time, end_time, subtitle_mode,
+        style=style, layout="cover",
+    )
+
+    final_path = str(clip_dir / f"{clip_id}.mp4")
+    return await _encode(job_id, clip_id, inputs, ";".join(parts), duration, final_path)
+
+
 async def cut_fullscreen(
     job_id: str,
     clip_id: str,
@@ -489,9 +616,7 @@ async def cut_fullscreen(
     """
     Layout A: quem fala ocupa o quadro inteiro, com título e legenda por cima.
 
-    O rosto é sempre acompanhado, mesmo com `face_tracking_enabled` desligado: aquela
-    chave é do modo capa, e aqui o recorte 9:16 é o layout inteiro. Sem rosto detectado,
-    o tracker devolve o recorte central.
+    As medidas estão em docs/LAYOUTS_V2.md.
     """
     style = style or ClipStyle()
     clip_dir = settings.clips_dir / job_id
@@ -504,30 +629,9 @@ async def cut_fullscreen(
     inputs, parts, src_label, n_inputs = await _brand_layers(
         video_path, start_time, end_time, source_type, profile_id
     )
-    tracking = await track_faces(video_path, start_time, end_time)
-
-    src_width, src_height = await get_video_dimensions(video_path)
-    crop_w, crop_h = _crop_dimensions(src_width, src_height, CANVAS_W / CANVAS_H)
-    cy = _clamp(
-        int(src_height * tracking["center_y"] - crop_h / 2), 0, src_height - crop_h
+    crop_filter = await _face_crop_filter(
+        job_id, clip_id, video_path, start_time, end_time, clip_dir, CANVAS_W / CANVAS_H
     )
-
-    keyframes = tracking.get("keyframes", [])
-    if tracking["method"] == "mediapipe" and len(keyframes) >= 2:
-        cmd_path = str(clip_dir / f"{clip_id}_track.cmd")
-        x0 = _write_track_commands(cmd_path, keyframes, duration, src_width, crop_w)
-        crop_filter = (
-            f"sendcmd=f={_escape_filter_path(cmd_path)},"
-            f"crop@dyn={crop_w}:{crop_h}:{x0}:{cy}"
-        )
-    else:
-        x0 = _crop_x(tracking["center_x"], src_width, crop_w)
-        crop_filter = f"crop={crop_w}:{crop_h}:{x0}:{cy}"
-    logger.info(
-        f"[{job_id}] Tela cheia {clip_id}: fonte {src_width}x{src_height}, recorte "
-        f"{crop_w}x{crop_h}, rosto: {tracking['method']} ({tracking['confidence']:.0%})"
-    )
-
     parts.append(
         f"[{src_label}]{crop_filter},scale={CANVAS_W}:{CANVAS_H}:flags=lanczos[base]"
     )
