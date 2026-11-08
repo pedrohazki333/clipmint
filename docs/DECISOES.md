@@ -2038,6 +2038,41 @@ nome, o que permite renomear a família.
 O `fullscreen` só entra na lista de layouts na fatia dele. Antes disso, seria um botão
 sem renderizador por trás.
 
+### D137. Layout A, com legenda montada por largura e estilo em todos os layouts
+
+O `fullscreen` (`clipper.cut_fullscreen`) é o padrão do podcast novo: quem fala ocupa o
+quadro, título no topo, legenda em y=1205. Quem já tem perfil fica no layout que escolheu.
+
+**O rosto é sempre acompanhado neste layout**, mesmo com `FACE_TRACKING_ENABLED=false`.
+Aquela chave é do modo capa, onde o tracking é um refinamento, e aqui o recorte 9:16 é o
+layout inteiro. Medido num trecho real: pico de 730 MB, abaixo do render puro, porque
+tracking e encoder rodam em sequência (D135).
+
+**O título é uma imagem, e a legenda é ASS.** O título fica parado o clipe todo, com caixa
+por linha, e uma imagem sobreposta uma vez é o mais barato e o mais exato. A legenda muda
+a cada palavra, e aí o ASS é o que não custa memória.
+
+**A linha da legenda é montada por largura**, no lugar de 3 palavras fixas. Centrada em
+x=540 e sem entrar na coluna da direita do TikTok, sobram 742px depois de descontar a
+caixa e o contorno, e 20% das linhas de 3 palavras a 88px passavam disso, medido em 2062
+linhas reais. Fim de frase também fecha a linha, e uma palavra que nem sozinha coube
+encolhe em vez de vazar. A cor destacada troca sem aumentar a palavra: o aumento de 112%
+do modo antigo faria a linha pular a cada palavra e passar da largura medida.
+
+**O estilo vale em todos os layouts**, com a posição de cada um. `crop` usa a mesma do A,
+`streamer` mantém a margem calculada pela geometria dele, e `original` calcula pela
+resolução da fonte. O modo antigo usava PlayRes de 1080x1920 num vídeo deitado, o que
+esticava as letras. `word_highlight`, `traditional` e `none` continuam, e o gerador sem
+estilo fica só como reserva para quem chama o render sem estilo.
+
+**O ASS recebe uma pasta só com a fonte pedida.** Sem `fontsdir`, o libass trocaria a fonte
+sem avisar; apontando para a pasta do sistema, carregaria centenas de arquivos em memória
+a cada render.
+
+`scripts/rerender_job` renderiza de novo sem chamar a análise, para quando só o visual
+mudou: mesmos cortes, comparação direta e custo de API zero. `reanalyze_job` aceita
+`--layout`.
+
 ---
 
 ## Adiado, com destino definido

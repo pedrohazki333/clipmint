@@ -40,7 +40,7 @@ interface Props {
  */
 function inferSourceType(layout: LayoutMode): SourceType | null {
   if (layout === "streamer") return "gameplay";
-  if (layout === "cover") return "podcast";
+  if (layout === "cover" || layout === "fullscreen") return "podcast";
   return null;
 }
 
@@ -48,7 +48,7 @@ export default function UrlInput({
   onSubmit,
   isLoading,
   lockedSource,
-  defaultLayout = "cover",
+  defaultLayout = "fullscreen",
   defaultSubtitle,
 }: Props) {
   const [url, setUrl] = useState("");

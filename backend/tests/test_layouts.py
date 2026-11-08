@@ -1,7 +1,8 @@
 """
 Qual layout serve a qual rubrica.
 
-Dois dos quatro modos presumem coisas sobre o conteúdo: a **capa** é escolhida
+Três dos cinco modos presumem coisas sobre o conteúdo: a **tela cheia** segue um
+rosto falando, a **capa** é escolhida
 pelo quadro mais expressivo de um ROSTO falando (num gameplay ela pega uma tela
 de jogo, que não diz nada), e a **facecam empilhada** precisa de uma câmera
 separada do gameplay (num podcast o vídeo inteiro já é a câmera). Os outros dois
@@ -36,7 +37,7 @@ _PESSOAL_TS = (
 @pytest.mark.parametrize(
     "nicho,esperado",
     [
-        ("podcast", ("cover", "crop", "original")),
+        ("podcast", ("fullscreen", "cover", "crop", "original")),
         ("gameplay", ("streamer", "crop", "original")),
         ("siege", ("streamer", "crop", "original")),
     ],
@@ -189,6 +190,7 @@ URL = "https://youtu.be/dQw4w9WgXcQ"
 @pytest.mark.parametrize(
     "nicho,layout,esperado",
     [
+        ("podcast", "fullscreen", 201),
         ("podcast", "cover", 201),
         ("podcast", "crop", 201),
         ("podcast", "original", 201),
@@ -197,6 +199,7 @@ URL = "https://youtu.be/dQw4w9WgXcQ"
         ("gameplay", "crop", 201),
         ("gameplay", "original", 201),
         ("gameplay", "cover", 422),     # a capa procura um rosto falando
+        ("gameplay", "fullscreen", 422),  # não há rosto falando para seguir
     ],
 )
 def test_combinacoes_pela_api(cliente, nicho, layout, esperado):
@@ -220,7 +223,7 @@ def test_a_recusa_diz_o_que_serve(cliente):
 
 
 @pytest.mark.parametrize(
-    "nicho,esperado", [("podcast", "cover"), ("gameplay", "streamer")]
+    "nicho,esperado", [("podcast", "fullscreen"), ("gameplay", "streamer")]
 )
 def test_layout_omitido_cai_no_primeiro_da_rubrica(cliente, nicho, esperado):
     """

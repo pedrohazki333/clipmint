@@ -26,7 +26,7 @@ SEMENTES: dict[str, dict[str, str]] = {
     "podcast": {
         "name": "Podcast",
         "avatar": "mic",
-        "default_layout_mode": "cover",
+        "default_layout_mode": "fullscreen",
         "default_subtitle_mode": "word_highlight",
     },
     "gameplay": {

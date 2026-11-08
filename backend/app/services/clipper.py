@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from app.clip_style import ClipStyle
 from app.config import settings
 from app.services.face_tracker import track_faces, static_tracking, SNAP_THRESHOLD
 from app.services.facecam import (
@@ -46,7 +47,14 @@ from app.services.layout import (
     generate_divider_bar,
     streamer_geometry,
 )
-from app.services.subtitler import FONT_SIZE_WORD, generate_ass_subtitles
+from app.services.fonts import install_for_render
+from app.services.subtitler import (
+    FONT_SIZE_WORD,
+    caption_geometry,
+    generate_ass_subtitles,
+    generate_styled_captions,
+)
+from app.services.title_card import generate_fullscreen_title
 from app.services.watermark import (
     clip_watermark_path,
     detect_brand_regions,
@@ -141,6 +149,7 @@ async def cut_and_crop(
     # Perfil que originou o clipe. Decide de qual pasta vêm os presets de
     # marca; None = os do nicho, que é o comportamento de sempre.
     profile_id: str | None = None,
+    style: Optional[ClipStyle] = None,
 ) -> tuple[str, int]:
     """
     Corta o segmento e monta o clip final: capa + banner + vídeo com face
@@ -317,20 +326,10 @@ async def cut_and_crop(
             f"y={bar_bottom} ({bar_name!r})"
         )
 
-    if subtitle_mode != "none":
-        ass_path = str(clip_dir / f"{clip_id}.ass")
-        generate_ass_subtitles(
-            words=words,
-            start_time=start_time,
-            end_time=end_time,
-            subtitle_mode=subtitle_mode,
-            output_path=ass_path,
-        )
-        parts.append(
-            f"[{last_label}]ass={_escape_filter_path(ass_path)},setsar=1[outv]"
-        )
-    else:
-        parts.append(f"[{last_label}]setsar=1[outv]")
+    _subtitle_tail(
+        parts, last_label, clip_dir, clip_id, words, start_time, end_time, subtitle_mode,
+        style=style, layout="cover",
+    )
 
     chain = ";".join(parts)
 
@@ -423,22 +422,133 @@ def _subtitle_tail(
     start_time: float,
     end_time: float,
     subtitle_mode: str,
+    style: Optional[ClipStyle] = None,
+    layout: str = "crop",
+    canvas_w: int = CANVAS_W,
+    canvas_h: int = CANVAS_H,
+    margin_v: Optional[int] = None,
 ) -> None:
-    """Fecha a cadeia com a legenda queimada (ou só o setsar, sem ela)."""
-    if subtitle_mode != "none":
-        ass_path = str(clip_dir / f"{clip_id}.ass")
+    """
+    Fecha a cadeia com a legenda queimada (ou só o setsar, sem ela).
+
+    Com estilo, a legenda sai na fonte e na cor dele, na posição deste layout. A fonte
+    vai junto para uma pasta própria: sem o `fontsdir`, o libass cairia na fonte do
+    sistema sem dizer nada.
+    """
+    if subtitle_mode == "none":
+        parts.append(f"[{last_label}]setsar=1[outv]")
+        return
+
+    ass_path = str(clip_dir / f"{clip_id}.ass")
+    if style is None:
         generate_ass_subtitles(
             words=words,
             start_time=start_time,
             end_time=end_time,
             subtitle_mode=subtitle_mode,
             output_path=ass_path,
+            canvas_w=canvas_w,
+            canvas_h=canvas_h,
+            margin_v=margin_v,
         )
-        parts.append(
-            f"[{last_label}]ass={_escape_filter_path(ass_path)},setsar=1[outv]"
+        fonts = ""
+    else:
+        family, pasta = install_for_render(style.fonte, "legenda", clip_dir)
+        generate_styled_captions(
+            words=words,
+            start_time=start_time,
+            end_time=end_time,
+            subtitle_mode=subtitle_mode,
+            output_path=ass_path,
+            style=style,
+            geometry=caption_geometry(
+                layout, style.legenda.tamanho, canvas_w, canvas_h, margin_v
+            ),
+            family=family,
+        )
+        fonts = f":fontsdir={_escape_filter_path(str(pasta))}"
+    parts.append(
+        f"[{last_label}]ass={_escape_filter_path(ass_path)}{fonts},setsar=1[outv]"
+    )
+
+
+async def cut_fullscreen(
+    job_id: str,
+    clip_id: str,
+    video_path: str,
+    start_time: float,
+    end_time: float,
+    words: list[dict],
+    subtitle_mode: str,
+    banner_text: str = "",
+    keyword: Optional[str] = None,
+    style: Optional[ClipStyle] = None,
+    source_type: str | None = None,
+    profile_id: str | None = None,
+) -> tuple[str, int]:
+    """
+    Layout A: quem fala ocupa o quadro inteiro, com título e legenda por cima.
+
+    O rosto é sempre acompanhado, mesmo com `face_tracking_enabled` desligado: aquela
+    chave é do modo capa, e aqui o recorte 9:16 é o layout inteiro. Sem rosto detectado,
+    o tracker devolve o recorte central.
+    """
+    style = style or ClipStyle()
+    clip_dir = settings.clips_dir / job_id
+    clip_dir.mkdir(parents=True, exist_ok=True)
+    duration = end_time - start_time
+    logger.info(
+        f"[{job_id}] Tela cheia {clip_id}: [{start_time:.1f}s–{end_time:.1f}s] ({duration:.1f}s)"
+    )
+
+    inputs, parts, src_label, n_inputs = await _brand_layers(
+        video_path, start_time, end_time, source_type, profile_id
+    )
+    tracking = await track_faces(video_path, start_time, end_time)
+
+    src_width, src_height = await get_video_dimensions(video_path)
+    crop_w, crop_h = _crop_dimensions(src_width, src_height, CANVAS_W / CANVAS_H)
+    cy = _clamp(
+        int(src_height * tracking["center_y"] - crop_h / 2), 0, src_height - crop_h
+    )
+
+    keyframes = tracking.get("keyframes", [])
+    if tracking["method"] == "mediapipe" and len(keyframes) >= 2:
+        cmd_path = str(clip_dir / f"{clip_id}_track.cmd")
+        x0 = _write_track_commands(cmd_path, keyframes, duration, src_width, crop_w)
+        crop_filter = (
+            f"sendcmd=f={_escape_filter_path(cmd_path)},"
+            f"crop@dyn={crop_w}:{crop_h}:{x0}:{cy}"
         )
     else:
-        parts.append(f"[{last_label}]setsar=1[outv]")
+        x0 = _crop_x(tracking["center_x"], src_width, crop_w)
+        crop_filter = f"crop={crop_w}:{crop_h}:{x0}:{cy}"
+    logger.info(
+        f"[{job_id}] Tela cheia {clip_id}: fonte {src_width}x{src_height}, recorte "
+        f"{crop_w}x{crop_h}, rosto: {tracking['method']} ({tracking['confidence']:.0%})"
+    )
+
+    parts.append(
+        f"[{src_label}]{crop_filter},scale={CANVAS_W}:{CANVAS_H}:flags=lanczos[base]"
+    )
+    last_label = "base"
+
+    title_path = str(clip_dir / f"{clip_id}_title.png")
+    overlay = await asyncio.to_thread(
+        generate_fullscreen_title, banner_text, keyword, style, title_path
+    )
+    if overlay is not None:
+        inputs += ["-i", title_path]
+        parts.append(f"[{last_label}][{n_inputs}:v]overlay={overlay.x}:{overlay.y}[titled]")
+        last_label = "titled"
+
+    _subtitle_tail(
+        parts, last_label, clip_dir, clip_id, words, start_time, end_time, subtitle_mode,
+        style=style, layout="fullscreen",
+    )
+
+    final_path = str(clip_dir / f"{clip_id}.mp4")
+    return await _encode(job_id, clip_id, inputs, ";".join(parts), duration, final_path)
 
 
 async def cut_vertical(
@@ -451,6 +561,7 @@ async def cut_vertical(
     subtitle_mode: str,
     source_type: str | None = None,
     profile_id: str | None = None,
+    style: Optional[ClipStyle] = None,
     **_ignorados,
 ) -> tuple[str, int]:
     """
@@ -489,7 +600,8 @@ async def cut_vertical(
         f"scale={CANVAS_W}:{CANVAS_H}:flags=lanczos[base]"
     )
     _subtitle_tail(
-        parts, "base", clip_dir, clip_id, words, start_time, end_time, subtitle_mode
+        parts, "base", clip_dir, clip_id, words, start_time, end_time, subtitle_mode,
+        style=style, layout="crop",
     )
 
     final_path = str(clip_dir / f"{clip_id}.mp4")
@@ -506,6 +618,7 @@ async def cut_original(
     subtitle_mode: str,
     source_type: str | None = None,
     profile_id: str | None = None,
+    style: Optional[ClipStyle] = None,
     **_ignorados,
 ) -> tuple[str, int]:
     """
@@ -537,7 +650,8 @@ async def cut_original(
     # filter_complex não teria como nomear a cadeia para o -map.
     parts.append(f"[{src_label}]null[base]")
     _subtitle_tail(
-        parts, "base", clip_dir, clip_id, words, start_time, end_time, subtitle_mode
+        parts, "base", clip_dir, clip_id, words, start_time, end_time, subtitle_mode,
+        style=style, layout="original", canvas_w=src_width, canvas_h=src_height,
     )
 
     final_path = str(clip_dir / f"{clip_id}.mp4")
@@ -558,6 +672,7 @@ async def cut_and_stack(
     # marca; None = os do nicho, que é o comportamento de sempre.
     profile_id: str | None = None,
     banner_text: str = "",
+    style: Optional[ClipStyle] = None,
 ) -> tuple[str, int]:
     """
     Monta o clip no layout de live de streamer: facecam em cima, faixa com a
@@ -777,23 +892,11 @@ async def cut_and_stack(
         next_input += 1
         last_label = "withwm"
 
-    if subtitle_mode != "none":
-        ass_path = str(clip_dir / f"{clip_id}.ass")
-        generate_ass_subtitles(
-            words=words,
-            start_time=start_time,
-            end_time=end_time,
-            subtitle_mode=subtitle_mode,
-            output_path=ass_path,
-            canvas_w=geo.canvas_w,
-            canvas_h=geo.canvas_h,
-            margin_v=_streamer_caption_margin(geo),
-        )
-        parts.append(
-            f"[{last_label}]ass={_escape_filter_path(ass_path)},setsar=1[outv]"
-        )
-    else:
-        parts.append(f"[{last_label}]setsar=1[outv]")
+    _subtitle_tail(
+        parts, last_label, clip_dir, clip_id, words, start_time, end_time, subtitle_mode,
+        style=style, layout="streamer", canvas_w=geo.canvas_w, canvas_h=geo.canvas_h,
+        margin_v=_streamer_caption_margin(geo),
+    )
 
     final_path = str(clip_dir / f"{clip_id}.mp4")
 

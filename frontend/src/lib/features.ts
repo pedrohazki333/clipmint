@@ -74,7 +74,7 @@ export const PUBLIC_NICHES: Niche[] = [
     description:
       "Avalia gancho verbal, arco de resolução, frase-momento e potencial de debate",
     accent: "hover:border-mint",
-    layout: "cover",
+    layout: "fullscreen",
   },
   {
     source: "gameplay",

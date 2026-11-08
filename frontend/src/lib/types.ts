@@ -7,7 +7,7 @@ export type SubtitleMode = "word_highlight" | "traditional" | "none";
  * separada do jogo) e por isso só valem em certas rubricas; `crop` e `original`
  * não presumem nada. Ver lib/layouts.ts.
  */
-export type LayoutMode = "cover" | "streamer" | "crop" | "original";
+export type LayoutMode = "fullscreen" | "cover" | "streamer" | "crop" | "original";
 
 /**
  * Muda a rubrica da análise e define a conta no cronograma de postagem.

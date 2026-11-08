@@ -34,7 +34,7 @@ from sqlalchemy import delete, select, update
 from app.config import settings
 from app.database import AsyncSessionLocal
 from app.errors import user_message
-from app.models import Job, Transcript, Clip
+from app.models import Job, Profile, Transcript, Clip
 from app.services.downloader import VideoMetadata, download_video, ensure_media
 from app.services.transcriber import transcribe_audio
 from app.services.analyzer import AnalysisResult, ViralClip, analyze_virality
@@ -43,6 +43,7 @@ from app.services.scene_events import describe_events
 from app.services.clipper import (
     cut_and_crop,
     cut_and_stack,
+    cut_fullscreen,
     cut_original,
     cut_vertical,
 )
@@ -59,6 +60,8 @@ from app.services import r6_hud
 from app.services import usage as usage_service
 from app.services import usage_monitor
 from app.services import segments as segments_service
+from app.clip_style import style_for_job
+from app.services.hook_keyword import pick_keyword
 from app.services.memory_guard import render_slot
 from app.services.segments import compact_segments, remap_words, remap_words_keeping
 from app.workers import joblock
@@ -126,6 +129,8 @@ class _ClipTask:
     rendered: bool = False
     # Trechos costurados num clipe só (vazio = corte contínuo)
     segments: list = field(default_factory=list)
+    # A palavra do título que sai na cor da marca.
+    keyword: str | None = None
 
 
 #: Teto de marcas guardadas. Um job retomado várias vezes acumula transições, e
@@ -481,6 +486,9 @@ async def _tasks_from_db(job_id: str) -> list[_ClipTask]:
             start=clip.start_time,
             end=clip.end_time,
             banner_text=_banner_text(clip.hook, clip.suggested_title),
+            keyword=pick_keyword(
+                _banner_text(clip.hook, clip.suggested_title), clip.hook_keyword
+            ),
             segments=_parse_segments_json(clip.segments_json),
             rendered=(
                 clip.status == "ready"
@@ -551,6 +559,9 @@ async def _create_clip_records(
                     end=vc.end,
                     segments=list(vc.segments),
                     banner_text=_banner_text(vc.hook, vc.suggested_title),
+                    keyword=pick_keyword(
+                        _banner_text(vc.hook, vc.suggested_title), vc.hook_keyword
+                    ),
                 )
             )
 
@@ -703,6 +714,8 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
             manual_ranges = _parse_segments_json(job.manual_clips)
             manual_mode = job.manual_mode or "only"
             facecam_json = job.facecam_rect
+            perfil_do_job = await db.get(Profile, job.profile_id) if job.profile_id else None
+            clip_style = style_for_job(job, perfil_do_job)
             saved_media = {
                 "video_title": job.video_title,
                 "channel_name": job.channel_name,
@@ -937,9 +950,24 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                             words, task.segments, source_type, clip_mode, total
                         )
 
+                    if layout_mode == "fullscreen":
+                        file_path, file_size = await cut_fullscreen(
+                            job_id=job_id,
+                            clip_id=task.clip_id,
+                            video_path=source_path,
+                            start_time=clip_start,
+                            end_time=clip_end,
+                            words=clip_words,
+                            subtitle_mode=subtitle_mode,
+                            banner_text=task.banner_text,
+                            keyword=task.keyword,
+                            style=clip_style,
+                            source_type=source_type,
+                            profile_id=profile_id,
+                        )
                     # Os dois modos sem camada nenhuma não precisam de facecam
                     # nem de capa — vão direto ao render.
-                    if layout_mode in ("crop", "original"):
+                    elif layout_mode in ("crop", "original"):
                         render = (
                             cut_vertical if layout_mode == "crop" else cut_original
                         )
@@ -953,6 +981,7 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                             subtitle_mode=subtitle_mode,
                             source_type=source_type,
                             profile_id=profile_id,
+                            style=clip_style,
                         )
                     elif layout_mode == "streamer":
                         # O layout da live muda ao longo do vídeo: cada clip tem a
@@ -983,6 +1012,7 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                             source_type=source_type,
                             profile_id=profile_id,
                             banner_text=task.banner_text,
+                            style=clip_style,
                         )
                     else:
                         file_path, file_size = await cut_and_crop(
@@ -996,6 +1026,7 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                             banner_text=task.banner_text,
                             source_type=source_type,
                             profile_id=profile_id,
+                            style=clip_style,
                         )
 
                 await _update_clip(

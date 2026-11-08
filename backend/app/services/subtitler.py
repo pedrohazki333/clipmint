@@ -10,7 +10,10 @@ Modos:
 """
 
 import logging
+from dataclasses import dataclass
 from typing import List, Optional
+
+from app.services.fonts import load_font
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +175,227 @@ def _generate_traditional_events(
     return events
 
 
+# ─── Legenda do estilo do clipe ───────────────────────────────────────────────
+
+#: Fatores de P/M/G. M são as medidas da especificação (docs/LAYOUTS_V2.md).
+_SIZE_FACTORS = {"P": 0.85, "M": 1.0, "G": 1.15}
+
+# Até onde a linha pode ir. Centrada em x=540 e sem entrar na coluna da direita
+# (x=930), sobram 780px; descontando a caixa da palavra e o contorno, 742. Medido: 20%
+# das linhas de 3 palavras a 88px passam disso, e por isso a linha é montada por largura.
+CAPTION_MAX_WIDTH = 742
+CAPTION_MAX_WORDS = 3
+
+
+@dataclass(frozen=True)
+class CaptionGeometry:
+    """Onde a legenda fica neste layout, já em pixels do canvas."""
+
+    canvas_w: int
+    canvas_h: int
+    center_y: int
+    size: int
+    outline: int
+    max_width: int
+
+
+def caption_geometry(
+    layout: str,
+    tamanho: str = "M",
+    canvas_w: int = 1080,
+    canvas_h: int = 1920,
+    margin_v: Optional[int] = None,
+) -> CaptionGeometry:
+    """
+    A posição da legenda em cada layout.
+
+    `original` mantém a resolução da fonte, que pode ser deitada: a escala sai da menor
+    proporção e a legenda desce para perto da borda, onde costuma ficar num vídeo 16:9.
+    """
+    fator = _SIZE_FACTORS.get(tamanho, 1.0)
+    if layout == "original":
+        k = min(canvas_w / 1080, canvas_h / 1920)
+        size = max(16, round(88 * k * fator))
+        return CaptionGeometry(
+            canvas_w, canvas_h, round(canvas_h * 0.84), size,
+            max(2, round(9 * k)), round(canvas_w * 0.9),
+        )
+
+    k = canvas_w / 1080
+    base, contorno = (80, 8) if layout == "cover" else (88, 9)
+    size = round(base * k * fator)
+    if margin_v is not None:
+        center_y = canvas_h - margin_v - size // 2
+    else:
+        center_y = round(1205 * canvas_h / 1920)
+    return CaptionGeometry(
+        canvas_w, canvas_h, center_y, size, round(contorno * k), round(CAPTION_MAX_WIDTH * k)
+    )
+
+
+def _ass_color(hex_color: str) -> str:
+    """#RRGGBB → &HBBGGRR&, a ordem invertida que o ASS usa."""
+    return f"&H{hex_color[5:7]}{hex_color[3:5]}{hex_color[1:3]}&".upper()
+
+
+def _ass_text(text: str) -> str:
+    """Tira o que o ASS leria como comando em vez de texto."""
+    return text.replace("\\", "").replace("{", "").replace("}", "")
+
+
+def group_caption_lines(
+    words: List[dict], font, max_width: float, max_words: int = CAPTION_MAX_WORDS
+) -> List[List[dict]]:
+    """
+    Agrupa as palavras em linhas que cabem na largura.
+
+    Fim de frase fecha a linha, mesmo que ainda caiba mais: emendar o começo da frase
+    seguinte na mesma linha atrapalha mais a leitura do que uma linha curta.
+    """
+    lines: List[List[dict]] = []
+    current: List[dict] = []
+    for word in words:
+        candidate = " ".join(w["text"] for w in current + [word])
+        if current and (len(current) >= max_words or font.getlength(candidate) > max_width):
+            lines.append(current)
+            current = []
+        current.append(word)
+        if word["text"].rstrip().endswith((".", "!", "?", "…")):
+            lines.append(current)
+            current = []
+    if current:
+        lines.append(current)
+    return lines
+
+
+def _line_scale(line: List[dict], font, max_width: float) -> str:
+    """Reduz só a linha que nem sozinha coube: uma palavra enorme não pode vazar."""
+    width = font.getlength(" ".join(w["text"] for w in line))
+    if width <= max_width:
+        return ""
+    percent = int(100 * max_width / width)
+    return rf"\fscx{percent}\fscy{percent}"
+
+
+def _styled_header(family: str, geo: CaptionGeometry) -> str:
+    return f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: {geo.canvas_w}
+PlayResY: {geo.canvas_h}
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Caption,{family},{geo.size},{COLOR_WHITE},&H000000FF,{COLOR_BLACK_OUTLINE},&H00000000,0,0,0,0,100,100,0,0,1,{geo.outline},0,5,0,0,0,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+
+
+def _color_events(
+    lines: List[List[dict]],
+    start_offset: float,
+    geo: CaptionGeometry,
+    color: str,
+    font,
+) -> List[str]:
+    """Estilo "cor": a linha inteira na tela, e a palavra falada na cor escolhida."""
+    events: List[str] = []
+    active_color = _ass_color(color)
+    white = _ass_color("#FFFFFF")
+    position = rf"\an5\pos({geo.canvas_w // 2},{geo.center_y})"
+
+    for line_index, line in enumerate(lines):
+        next_start = (
+            lines[line_index + 1][0]["start"] - start_offset
+            if line_index + 1 < len(lines)
+            else None
+        )
+        scale = _line_scale(line, font, geo.max_width)
+        for active, word in enumerate(line):
+            start = max(0.0, word["start"] - start_offset)
+            if active + 1 < len(line):
+                end = line[active + 1]["start"] - start_offset
+            else:
+                end = word["end"] - start_offset + LINE_HOLD
+                if next_start is not None:
+                    end = min(end, next_start)
+            if end <= start:
+                continue
+            parts = []
+            for index, w in enumerate(line):
+                text = _ass_text(w["text"])
+                parts.append(
+                    rf"{{\1c{active_color}}}{text}{{\1c{white}}}" if index == active else text
+                )
+            events.append(
+                f"Dialogue: 0,{_ass_time(start)},{_ass_time(end)},Caption,,0,0,0,,"
+                f"{{{position}{scale}}}{' '.join(parts)}"
+            )
+    return events
+
+
+def _block_events(
+    lines: List[List[dict]], start_offset: float, geo: CaptionGeometry, font
+) -> List[str]:
+    """Modo `traditional`: o bloco de palavras, sem destaque nenhum."""
+    position = rf"\an5\pos({geo.canvas_w // 2},{geo.center_y})"
+    events: List[str] = []
+    for line in lines:
+        start = line[0]["start"] - start_offset
+        end = line[-1]["end"] - start_offset
+        if start < 0 or end <= start:
+            continue
+        text = " ".join(_ass_text(w["text"]) for w in line)
+        scale = _line_scale(line, font, geo.max_width)
+        events.append(
+            f"Dialogue: 0,{_ass_time(start)},{_ass_time(end)},Caption,,0,0,0,,"
+            f"{{{position}{scale}}}{text}"
+        )
+    return events
+
+
+def generate_styled_captions(
+    words: List[dict],
+    start_time: float,
+    end_time: float,
+    subtitle_mode: str,
+    output_path: str,
+    style,
+    geometry: CaptionGeometry,
+    family: str,
+) -> None:
+    """
+    A legenda com o estilo do perfil, em qualquer layout.
+
+    Os três modos continuam: `word_highlight` destaca a palavra falada, `traditional`
+    mostra blocos sem destaque e `none` não gera nada.
+    """
+    if subtitle_mode == "none":
+        return
+
+    segment_words = [
+        {**w, "end": min(w["end"], end_time)}
+        for w in words
+        if start_time <= w["start"] < end_time
+    ]
+    if not segment_words:
+        logger.warning(f"No words found between {start_time:.1f}s and {end_time:.1f}s")
+        return
+
+    font = load_font(style.fonte, "legenda", geometry.size)
+    lines = group_caption_lines(segment_words, font, geometry.max_width)
+    if subtitle_mode == "word_highlight":
+        events = _color_events(lines, start_time, geometry, style.legenda.cor, font)
+    else:
+        events = _block_events(lines, start_time, geometry, font)
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(_styled_header(family, geometry) + "\n".join(events) + "\n")
+    logger.info(f"Subtitles written to: {output_path} ({len(events)} events)")
+
+
 def generate_ass_subtitles(
     words: List[dict],
     start_time: float,
@@ -183,7 +407,7 @@ def generate_ass_subtitles(
     margin_v: Optional[int] = None,
 ) -> None:
     """
-    Gera arquivo .ASS de legendas para um segmento de vídeo.
+    Gera arquivo .ASS de legendas para um segmento de vídeo, sem estilo de perfil.
 
     Args:
         words: Lista de palavras com timestamps globais do vídeo original.

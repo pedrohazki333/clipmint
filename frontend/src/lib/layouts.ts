@@ -10,9 +10,9 @@ import type { LayoutMode, SourceType } from "./types";
  * vira um botão que o servidor recusa; só lá, uma opção que ninguém vê.
  * `backend/tests/test_layouts.py` compara os dois.
  *
- * Dois modos presumem coisas sobre o conteúdo: a **capa** é escolhida pelo
- * quadro mais expressivo de um rosto falando, e a **facecam empilhada** precisa
- * de uma câmera separada do gameplay. Os outros dois não presumem nada.
+ * Três modos presumem coisas sobre o conteúdo: a **tela cheia** segue um rosto
+ * falando, a **capa** é escolhida entre os rostos do clipe, e a **facecam empilhada**
+ * precisa de uma câmera separada do gameplay. Os outros dois não presumem nada.
  */
 
 /**
@@ -23,6 +23,7 @@ import type { LayoutMode, SourceType } from "./types";
  * que o build público não tem viajaria no bundle dele como valor desta tabela.
  */
 export const BASE_LAYOUT_RUBRICS: Record<LayoutMode, SourceType[]> = {
+  fullscreen: ["podcast"],
   cover: ["podcast"],
   streamer: ["gameplay"],
   crop: [],
@@ -42,6 +43,10 @@ export const LAYOUT_RUBRICS: Record<LayoutMode, SourceType[]> = Object.fromEntri
 ) as Record<LayoutMode, SourceType[]>;
 
 export const LAYOUT_LABELS: Record<LayoutMode, { nome: string; descricao: string }> = {
+  fullscreen: {
+    nome: "Tela cheia",
+    descricao: "Quem fala ocupa a tela toda, com título e legenda por cima",
+  },
   cover: {
     nome: "Capa + banner",
     descricao: "Capa com o rosto, título em destaque e o vídeo embaixo",

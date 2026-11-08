@@ -59,7 +59,7 @@ export default function ProfileForm({ profile }: Props) {
   );
   const [avatar, setAvatar] = useState(avatarKey(profile?.avatar));
   const [layout, setLayout] = useState<LayoutMode>(
-    profile?.default_layout_mode ?? "cover",
+    profile?.default_layout_mode ?? "fullscreen",
   );
   const [subtitle, setSubtitle] = useState<SubtitleMode>(
     profile?.default_subtitle_mode ?? "word_highlight",

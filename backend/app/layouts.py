@@ -3,9 +3,9 @@ Quais layouts existem, e qual rubrica pode usar cada um.
 
 Dois deles são feitos para um tipo de conteúdo e não fazem sentido no outro:
 
-  - **cover** monta capa + banner sobre o vídeo, e a capa é escolhida pelo
-    quadro mais expressivo de um ROSTO falando. Num gameplay ela pega um frame
-    de tela de jogo, que não diz nada.
+  - **fullscreen** segue um rosto falando pela tela inteira, e **cover** monta capa
+    + faixa, com a capa escolhida entre os rostos do clipe. Num gameplay não há rosto
+    falando para seguir, e a capa pegaria um frame de tela de jogo, que não diz nada.
   - **streamer** empilha facecam sobre gameplay. Num podcast não há facecam
     separada para empilhar — o vídeo inteiro já é a câmera.
 
@@ -22,6 +22,10 @@ from pydantic import AfterValidator
 
 #: layout → rubricas que o aceitam. Vazio = serve a todas.
 _LAYOUTS: dict[str, tuple[str, ...]] = {
+    # Quem fala na tela inteira, com face tracking, título e legenda por cima. É o
+    # primeiro porque é o padrão do podcast: o primeiro da lista é o que vale quando
+    # ninguém escolhe.
+    "fullscreen": ("podcast",),
     # Capa (rosto expressivo) + banner de título + vídeo com face tracking.
     "cover": ("podcast",),
     # Facecam empilhada sobre o gameplay, com faixa no meio.
@@ -36,6 +40,7 @@ ALL_LAYOUTS: tuple[str, ...] = tuple(_LAYOUTS)
 
 #: O que cada modo faz, na linguagem de quem escolhe.
 LAYOUT_LABELS: dict[str, tuple[str, str]] = {
+    "fullscreen": ("Tela cheia", "Quem fala ocupa a tela toda, com título e legenda por cima"),
     "cover": ("Capa + banner", "Capa com o rosto, título em destaque e o vídeo embaixo"),
     "streamer": ("Facecam + gameplay", "A câmera em cima, o jogo embaixo"),
     "crop": ("Crop vertical", "Recorte 9:16 no centro, sem camadas"),

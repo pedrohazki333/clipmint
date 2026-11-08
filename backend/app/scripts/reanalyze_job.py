@@ -2,6 +2,7 @@
 Reanalisa um vídeo já baixado, com a rubrica atual.
 
     cd backend && .venv/bin/python -m app.scripts.reanalyze_job <job_id>
+    ... reanalyze_job <job_id> --layout fullscreen
 
 O retry normal (POST /api/jobs/<id>/retry) preserva a análise: ele existe para
 terminar o que faltou, não para repensar os cortes. Quando o que mudou foi o
@@ -24,6 +25,7 @@ from sqlalchemy import delete, select
 
 from app.config import settings
 from app.database import AsyncSessionLocal
+from app.layouts import layout_allowed
 from app.models import Clip, Job
 from app.workers import joblock
 from app.workers.pipeline import run_pipeline
@@ -47,10 +49,23 @@ async def _job_exists(job_id: str) -> bool:
         return result.scalar_one_or_none() is not None
 
 
-async def _run(job_id: str) -> None:
+async def _set_layout(job_id: str, layout: str) -> None:
+    async with AsyncSessionLocal() as db:
+        job = (await db.execute(select(Job).where(Job.id == job_id))).scalar_one()
+        if not layout_allowed(layout, job.source_type):
+            print(f"O layout {layout} não serve à rubrica {job.source_type}.", file=sys.stderr)
+            raise SystemExit(1)
+        job.layout_mode = layout
+        await db.commit()
+
+
+async def _run(job_id: str, layout: str | None = None) -> None:
     if not await _job_exists(job_id):
         print(f"Job {job_id} não existe.", file=sys.stderr)
         raise SystemExit(1)
+
+    if layout:
+        await _set_layout(job_id, layout)
 
     discarded = await _discard_analysis(job_id)
     logging.info(f"[{job_id}] {discarded} clip(s) da análise anterior descartados")
@@ -59,11 +74,12 @@ async def _run(job_id: str) -> None:
 
 
 def main() -> None:
-    if len(sys.argv) != 2:
+    if len(sys.argv) not in (2, 4) or (len(sys.argv) == 4 and sys.argv[2] != "--layout"):
         print(__doc__.strip(), file=sys.stderr)
         raise SystemExit(2)
 
     job_id = sys.argv[1]
+    layout = sys.argv[3] if len(sys.argv) == 4 else None
 
     # Mesma guarda do resume_job: dois processos no mesmo job corrompem os
     # arquivos um do outro, e aqui a mensagem chega em quem digitou o comando.
@@ -81,7 +97,7 @@ def main() -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    asyncio.run(_run(job_id))
+    asyncio.run(_run(job_id, layout))
 
 
 if __name__ == "__main__":

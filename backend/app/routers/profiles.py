@@ -37,8 +37,8 @@ class ProfileCreate(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     source_type: SourceTypeField
     avatar: str | None = None
-    # Sem default fixo: "cover" só serve a podcast. Omitido, cai no primeiro
-    # layout que a rubrica escolhida aceita.
+    # Sem default fixo: cada rubrica tem o seu. Omitido, cai no primeiro layout que a
+    # rubrica escolhida aceita.
     default_layout_mode: Optional[str] = None
     default_subtitle_mode: str = "word_highlight"
     # Omitido: na criação vale o padrão; na edição o estilo atual fica como está. Quem
