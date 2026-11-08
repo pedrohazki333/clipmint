@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.clip_style import ClipStyle, style_for_profile
 from app.database import get_db
 from app.deps import current_user
 from app.features import SourceTypeField
@@ -40,6 +41,9 @@ class ProfileCreate(BaseModel):
     # layout que a rubrica escolhida aceita.
     default_layout_mode: Optional[str] = None
     default_subtitle_mode: str = "word_highlight"
+    # Omitido: na criação vale o padrão; na edição o estilo atual fica como está. Quem
+    # só renomeia um perfil não pode perder o visual dele por não ter mandado o campo.
+    style: Optional[ClipStyle] = None
 
     @field_validator("name")
     @classmethod
@@ -89,6 +93,8 @@ class ProfileResponse(BaseModel):
     avatar: str | None
     default_layout_mode: str
     default_subtitle_mode: str
+    # O estilo em vigor. Em perfil antigo, derivado do que ele já tinha.
+    style: ClipStyle = Field(default_factory=ClipStyle)
     # Contagens que a tela de perfis mostra. Derivadas dos jobs e clips que já
     # existem — nenhum contador é mantido em coluna, para não haver dois números
     # que possam discordar.
@@ -97,6 +103,19 @@ class ProfileResponse(BaseModel):
     last_generated_at: str | None = None
 
     model_config = {"from_attributes": True}
+
+    @classmethod
+    def de(cls, perfil: Profile) -> "ProfileResponse":
+        """A resposta com o estilo resolvido, que não é uma coluna do perfil."""
+        return cls(
+            id=perfil.id,
+            name=perfil.name,
+            source_type=perfil.source_type,
+            avatar=perfil.avatar,
+            default_layout_mode=perfil.default_layout_mode,
+            default_subtitle_mode=perfil.default_subtitle_mode,
+            style=style_for_profile(perfil),
+        )
 
 
 async def _do_usuario(profile_id: str, user: User, db: AsyncSession) -> Profile:
@@ -150,7 +169,7 @@ async def _com_contagens(
     saida = []
     for p in perfis:
         n_jobs, ultimo = jobs_por_perfil.get(p.id, (0, None))
-        resposta = ProfileResponse.model_validate(p)
+        resposta = ProfileResponse.de(p)
         resposta.job_count = n_jobs
         resposta.clip_count = clips_por_perfil.get(p.id, 0)
         resposta.last_generated_at = ultimo.isoformat() if ultimo else None
@@ -187,12 +206,15 @@ async def create_profile(
         avatar=valid_avatar(payload.avatar),
         default_layout_mode=payload.default_layout_mode,
         default_subtitle_mode=payload.default_subtitle_mode,
+        # Perfil novo nasce com o estilo gravado: quem não tem linha aqui é só quem é
+        # anterior ao esquema.
+        style_json=(payload.style or ClipStyle()).model_dump_json(),
     )
     db.add(perfil)
     await db.commit()
     await db.refresh(perfil)
     logger.info(f"Perfil '{perfil.name}' criado ({perfil.source_type}) por {user.email}")
-    return ProfileResponse.model_validate(perfil)
+    return ProfileResponse.de(perfil)
 
 
 @router.get("/{profile_id}", response_model=ProfileResponse)
@@ -224,9 +246,11 @@ async def update_profile(
     perfil.avatar = valid_avatar(payload.avatar)
     perfil.default_layout_mode = payload.default_layout_mode
     perfil.default_subtitle_mode = payload.default_subtitle_mode
+    if payload.style is not None:
+        perfil.style_json = payload.style.model_dump_json()
     await db.commit()
     await db.refresh(perfil)
-    return ProfileResponse.model_validate(perfil)
+    return ProfileResponse.de(perfil)
 
 
 @router.delete("/{profile_id}", status_code=204)

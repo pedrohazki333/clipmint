@@ -186,6 +186,7 @@ class ClipResponse(BaseModel):
     trim_reason: Optional[str] = None
     segments_json: Optional[str] = None
     hook: Optional[str]
+    hook_keyword: Optional[str] = None
     reason: Optional[str]
     tags_json: Optional[str]
     suggested_title: Optional[str]

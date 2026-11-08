@@ -138,6 +138,30 @@ def preset_path(
 _ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "branding"
 
 
+#: As fontes do render. Ficam no repositório porque, ao contrário da de emoji (10 MB),
+#: são pequenas e sem elas o clipe sairia com a fonte trocada sem aviso nenhum.
+_FONT_ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+
+
+def fonts_dir() -> Path:
+    """Onde ficam as fontes do branding, a mesma pasta da fonte de emoji."""
+    path = settings.branding_dir / "fonts"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _seed_fonts() -> None:
+    """Mesma regra dos presets abaixo: copia o que falta e não toca no que existe."""
+    if not _FONT_ASSETS_DIR.is_dir():
+        return
+    destino = fonts_dir()
+    for arquivo in sorted(_FONT_ASSETS_DIR.iterdir()):
+        alvo = destino / arquivo.name
+        if arquivo.is_file() and not alvo.exists():
+            shutil.copy2(arquivo, alvo)
+            logger.info(f"Fonte instalada: {alvo.name}")
+
+
 def seed_clipmint_defaults() -> None:
     """
     Põe os presets de fábrica no storage, se faltarem.
@@ -151,6 +175,7 @@ def seed_clipmint_defaults() -> None:
     com a marca do dono da instalação (era o que acontecia), mas pior do que
     sair com a do ClipMint.
     """
+    _seed_fonts()
     if not _ASSETS_DIR.is_dir():
         return
     destino = clipmint_defaults_dir()

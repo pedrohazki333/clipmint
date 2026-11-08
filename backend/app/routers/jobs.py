@@ -26,6 +26,7 @@ from app.database import get_db
 from app.deps import current_user, owned_by
 from app.features import SourceTypeField, billing_enabled
 from app.layouts import LAYOUT_LABELS, layout_allowed, layouts_for
+from app.clip_style import ClipStyle, style_for_profile
 from app.models import Clip, CreditLedger, FacecamReport, Job, Profile, Transcript, User
 from app.prompts.viral_analysis import default_source_type
 from app.schemas import (
@@ -136,6 +137,11 @@ async def create_job(
         # senão o palpite pelo layout — que é como sempre funcionou.
         source_type=nicho,
         clip_mode=payload.clip_mode,
+        # Cópia, e não referência: mudar o perfil depois não muda um job já feito,
+        # nem ao retomá-lo.
+        style_json=(
+            style_for_profile(perfil) if perfil else ClipStyle()
+        ).model_dump_json(),
         # Guardado já em segundos: a anotação "3:24" é conveniência de quem
         # digita, não formato de trabalho. A ORDEM digitada é preservada.
         manual_clips=(

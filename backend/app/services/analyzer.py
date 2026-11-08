@@ -35,6 +35,7 @@ from app.prompts.viral_analysis import (
 from app.services import vision
 from app.services.audio_events import AudioLevels, Gap, measure_levels, rescue_start
 from app.services.clip_forensics import detect_cuts
+from app.services.hook_keyword import pick_keyword
 from app.services.moderation_terms import find_risky_terms
 from app.services.segments import segments_without_pauses, total_duration
 from prompt_engine.prompt_builder import PromptBuilder
@@ -76,6 +77,8 @@ class ViralClip:
     suggested_title: str
     reason: str
     tags: List[str]
+    # A palavra do título que sai na cor da marca. Sempre presente no próprio título.
+    hook_keyword: Optional[str] = None
     # Eixos da rubrica, 0-10 cada. O cronograma de postagem escolhe o clip de
     # cada horário por um eixo específico, então eles são guardados um a um.
     hook_score: Optional[float] = None
@@ -1287,13 +1290,15 @@ async def analyze_virality(
     viral_clips: List[ViralClip] = []
     for c in final_clips_data:
         axes = c.get("_axes", {})
+        # O banner usa 'hook'; a rubrica nova chama isso de
+        # suggested_hook_caption. Aceita os dois nomes.
+        hook = c.get("suggested_hook_caption") or c.get("hook", "")
         viral_clips.append(ViralClip(
             start=float(c["start"]),
             end=float(c["end"]),
             score=c.get("_score", 0.0),
-            # O banner usa 'hook'; a rubrica nova chama isso de
-            # suggested_hook_caption. Aceita os dois nomes.
-            hook=c.get("suggested_hook_caption") or c.get("hook", ""),
+            hook=hook,
+            hook_keyword=pick_keyword(hook, c.get("hook_keyword")),
             suggested_title=c.get("suggested_title", ""),
             reason=c.get("reason", ""),
             tags=c.get("tags", []),

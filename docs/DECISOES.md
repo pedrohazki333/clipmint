@@ -1995,6 +1995,49 @@ timeout do ffmpeg usa `taskkill /T` no lugar de `os.killpg`, que não existe no 
 Os testes de timeout passaram a usar processos Python em vez de `sleep` e `sh`, e as 6
 falhas conhecidas do Windows acabaram.
 
+### D136. Um estilo por perfil, com contraste medido contra o fundo que ele usa
+
+O visual estava espalhado em `banner_colors.json`, `bar_style.json`, nos defaults do
+perfil e em constantes do render. `app/clip_style.py` passa a ser o lugar: `ClipStyle`
+com marca, legenda, título, @ e fonte, em `profiles.style_json`.
+
+**Layout e modo de legenda ficaram nas colunas que já existiam.** A criação de job
+depende delas, e duplicar criaria dois valores que podem discordar. Cada dado fica em
+um lugar, e a tela os mostra juntos.
+
+**O job guarda uma cópia na criação** (`jobs.style_json`), pela mesma regra do
+`source_type`: mudar o perfil afeta os próximos jobs, e retomar um job antigo não
+muda a cara dele.
+
+**A migração lê e não grava.** Perfil antigo tem `style_json` nulo e o estilo é derivado
+dos JSONs dele a cada leitura; só vira linha quando a pessoa salvar um. Assim os JSONs
+continuam intactos para o modo streamer, que segue lendo deles, e voltar de versão não
+encontra nada mudado. Quem não configurou nada mantém a palavra amarela de hoje, e não
+ganha o padrão novo sem ter pedido: o padrão vale para perfil novo.
+
+**Contraste é regra e é relativo.** Cor livre abaixo de 4,5:1 é recusada com 422, porque
+título ilegível é clipe perdido. A primeira proposta media contra o #0B0B0C fixo e teria
+trocado o azul do `hzpodclips` por outra cor. O dono corrigiu: o banner azul com letra
+amarela é marca registrada e identidade da página. Por isso existem `titulo.fundo` e
+`titulo.texto`, e a medida é contra o fundo em uso, em que o amarelo sobre esse azul
+passa. Uma cor antiga fora da regra vira o padrão em vez de recusar o perfil, porque foi
+escolhida antes de a regra existir.
+
+**A palavra-chave vem da análise**, no campo novo `hook_keyword`, porque quem entendeu
+o clipe é o modelo. Como é resposta de modelo e o título é o que vai para a tela, a
+palavra precisa estar nele; sem isso, ou em job antigo, uma heurística escolhe, com
+número primeiro e depois a palavra mais longa fora da lista de palavras comuns. Fica em
+`clips.hook_keyword` porque re-renderizar não chama a análise.
+
+**As fontes ficam no repositório**, ao contrário da de emoji, que tem 10 MB. A Archivo é
+variável e o libass não escolhe eixos, então cada peso e largura da especificação vira
+um arquivo com família própria (`scripts/gerar_fontes_archivo.py`), de 118 KB cada,
+copiado no startup para `storage/branding/fonts`. A licença OFL da Archivo não reserva
+nome, o que permite renomear a família.
+
+O `fullscreen` só entra na lista de layouts na fatia dele. Antes disso, seria um botão
+sem renderizador por trás.
+
 ---
 
 ## Adiado, com destino definido

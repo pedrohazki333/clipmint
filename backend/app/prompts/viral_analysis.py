@@ -264,6 +264,7 @@ Retorne SOMENTE JSON válido — sem markdown, sem texto fora do JSON.
       "verdict": "post",
       "trim_reason": "Começa direto na afirmação polêmica e termina na frase-momento, sem a divagação de 15s que vinha antes.",
       "suggested_hook_caption": "Ninguém fala sobre isso",
+      "hook_keyword": "Ninguém",
       "suggested_title": "A verdade escondida sobre [tema]",
       "reason": "Gancho de revelação com afirmação contra-intuitiva, tensão construída por história pessoal e um soundbite final que pede compartilhamento.",
       "weak_points": ["hesitação curta aos 31s, não chega a quebrar o ritmo"],
@@ -276,6 +277,7 @@ Retorne SOMENTE JSON válido — sem markdown, sem texto fora do JSON.
 Regras do JSON:
 - `verdict` é "post" quando o trecho está pronto para publicar, ou "revisar_corte" quando vale a pena mas o corte precisa de ajuste humano. Trechos que você descartaria simplesmente não entram na lista.
 - `weak_points` lista os pontos que derrubam retenção; use lista vazia quando não houver.
+- `hook_keyword` é UMA palavra, copiada do `suggested_hook_caption`, que sai em destaque na tela: a que carrega o impacto da frase (o número, o nome, a ação), nunca um artigo ou uma preposição.
 - `final_score` é a média ponderada dos cinco eixos (retention 30%, hook 25%, shareability 20%, comment_bait 15%, loopability 10%), numa escala de 0 a 100.
 {moderation_rule}
 

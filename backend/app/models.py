@@ -228,6 +228,9 @@ class Profile(Base):
     # dado, sem mudar o que ele significa.
     default_layout_mode = Column(String, nullable=False, default="cover")
     default_subtitle_mode = Column(String, nullable=False, default="word_highlight")
+    # O visual dos clipes, validado por app/clip_style.py. Nulo em perfil anterior a
+    # este campo: o estilo dele é derivado dos JSONs de marca que ele já tinha.
+    style_json = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -274,6 +277,9 @@ class Job(Base):
     # Caixa da facecam em frações da fonte, JSON {x,y,w,h,confidence,method}.
     # Detectada no 1º clip e reusada nos demais; editável pelo usuário.
     facecam_rect = Column(Text, nullable=True)
+    # Cópia do estilo do perfil na criação: mudar o perfil não reescreve o passado.
+    # Nulo em job anterior ao esquema, que usa o do perfil (ver app/clip_style.py).
+    style_json = Column(Text, nullable=True)
     status = Column(String, default="queued")  # queued|downloading|transcribing|analyzing|clipping|done|error
     error_message = Column(String, nullable=True)
     # Por que este job terminou sem clips. Um job 'done' com zero clips tem mais
@@ -449,6 +455,9 @@ class Clip(Base):
     # Nulo = clipe contínuo comum entre start_time e end_time.
     segments_json = Column(Text, nullable=True)
     hook = Column(String, nullable=True)
+    # A palavra do título que sai na cor da marca. Guardada porque re-renderizar não
+    # chama a análise de novo (ver services/hook_keyword.py).
+    hook_keyword = Column(String, nullable=True)
     reason = Column(String, nullable=True)
     tags_json = Column(String, nullable=True)       # JSON array de tags
     suggested_title = Column(String, nullable=True)

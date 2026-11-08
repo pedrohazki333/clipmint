@@ -533,6 +533,7 @@ async def _create_clip_records(
                 trim_reason=vc.trim_reason,
                 segments_json=json.dumps(vc.segments) if vc.segments else None,
                 hook=vc.hook,
+                hook_keyword=vc.hook_keyword,
                 reason=vc.reason,
                 tags_json=json.dumps(vc.tags),
                 suggested_title=vc.suggested_title,
