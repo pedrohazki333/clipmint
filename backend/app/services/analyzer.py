@@ -36,6 +36,7 @@ from app.services import vision
 from app.services.audio_events import AudioLevels, Gap, measure_levels, rescue_start
 from app.services.clip_forensics import detect_cuts
 from app.services.moderation_terms import find_risky_terms
+from app.services.segments import segments_without_pauses, total_duration
 from prompt_engine.prompt_builder import PromptBuilder
 
 logger = logging.getLogger(__name__)
@@ -452,6 +453,62 @@ async def _clean_opening(
 
     if video_path:
         await _skip_opening_scene_cut(job_id, clip, words, video_path, min_duration, levels)
+
+
+def _trim_pauses(job_id: str, clip: dict, levels: AudioLevels, min_duration: float) -> None:
+    """
+    Tira o tempo morto de um clipe contínuo, deixando-o costurado.
+
+    A pausa vem do áudio, e não do vão entre palavras, por dois motivos medidos:
+    os silêncios que mais se notam estavam DENTRO de timestamps (`pé.` tem 1,15s
+    calado), e um vão de 2,85s era fala, com as palavras espremidas noutro lugar.
+    Como só sai o que mede silêncio, risada e reação não têm como ser cortadas.
+    """
+    start, end = float(clip["start"]), float(clip["end"])
+    pauses = levels.quiet_runs(
+        start, end, settings.trim_pause_below_speech_db, settings.trim_pause_min
+    )
+    segments = segments_without_pauses(start, end, pauses, settings.trim_pause_margin)
+    kept = total_duration(segments)
+    removed = (end - start) - kept
+    window = f"[{start:.1f}-{end:.1f}]"
+
+    if removed <= settings.trim_pause_min_total:
+        return
+    if kept < min_duration:
+        logger.info(f"[{job_id}] Clip {window}: sem as pausas ficaria abaixo do mínimo — mantido")
+        return
+
+    if len(segments) == 1:
+        clip["start"], clip["end"] = segments[0]  # não há emenda: é só o limite
+    else:
+        clip["_segments"] = segments
+    note = f"Tempo morto removido: {removed:.1f}s em {len(pauses)} pausa(s)."
+    clip["trim_reason"] = f"{clip.get('trim_reason', '').strip()} {note}".strip()
+    logger.info(f"[{job_id}] Clip {window}: {note} {end - start:.1f}s → {kept:.1f}s")
+
+
+def _trim_clip_pauses(
+    job_id: str,
+    clips: List[dict],
+    levels: Optional[AudioLevels],
+    min_duration: float,
+    source_type: Optional[str],
+    clip_mode: str,
+) -> None:
+    """
+    Só no podcast. No gameplay o silêncio é tensão, e uma emenda quebra a jogada.
+
+    Compilado fica de fora: os trechos dele já são a montagem, e o pipeline remapeia
+    as palavras dele descartando o que cai fora, regra que aqui apagaria legenda.
+    """
+    if not settings.trim_pauses_enabled or levels is None:
+        return
+    if (source_type or DEFAULT_SOURCE_TYPE).lower() != "podcast" or clip_mode == "compilation":
+        return
+    for clip in clips:
+        if not clip["_segments"]:
+            _trim_pauses(job_id, clip, levels, min_duration)
 
 
 def _ends_on_reaction(
@@ -1221,6 +1278,10 @@ async def analyze_virality(
                 )
                 continue
             final_clips_data.append(part)
+
+    # Por último: depois do split, cada parte é um clipe com a própria linha do
+    # tempo, e costurar antes impediria o divisor (ele não divide costurado).
+    _trim_clip_pauses(job_id, final_clips_data, levels, min_dur, source_type, clip_mode)
 
     # Converte para dataclasses
     viral_clips: List[ViralClip] = []

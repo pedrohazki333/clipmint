@@ -444,7 +444,8 @@ class Clip(Base):
     verdict = Column(String, nullable=True)         # post | revisar_corte
     weak_points_json = Column(String, nullable=True)  # JSON array de trechos fracos
     trim_reason = Column(String, nullable=True)     # por que o corte é esse
-    # Trechos costurados num clipe só, JSON [[ini,fim],...] (só Siege).
+    # Trechos costurados num clipe só, JSON [[ini,fim],...] (Siege, compilado e
+    # clipes de podcast que perderam tempo morto).
     # Nulo = clipe contínuo comum entre start_time e end_time.
     segments_json = Column(Text, nullable=True)
     hook = Column(String, nullable=True)

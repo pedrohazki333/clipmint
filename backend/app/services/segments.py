@@ -18,7 +18,7 @@ import logging
 import os
 from typing import Iterable, Optional
 
-from app.utils.ffmpeg import run_ffmpeg
+from app.utils.ffmpeg import get_duration, run_ffmpeg
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,90 @@ def remap_words(words: list[dict], segments: list[tuple[float, float]]) -> list[
     return remapped
 
 
+def segments_without_pauses(
+    start: float,
+    end: float,
+    pauses: Iterable[tuple[float, float]],
+    margin: float,
+) -> list[tuple[float, float]]:
+    """
+    O intervalo sem as pausas, deixando `margin` de cada lado de cada uma.
+
+    A margem é o que evita a emenda seca, em que uma palavra emenda na outra sem
+    fôlego. Pausa no início do clipe sai sem margem nesse lado: lá não há fala antes.
+    """
+    kept: list[tuple[float, float]] = []
+    cursor = start
+    for pause_start, pause_end in pauses:
+        keep_until = pause_start + margin if pause_start > start else start
+        resume_at = pause_end - margin if pause_end < end else end
+        if resume_at <= keep_until:
+            continue  # curta demais para sobrar algo depois das margens
+        if keep_until > cursor:
+            kept.append((cursor, keep_until))
+        cursor = resume_at
+    if end > cursor:
+        kept.append((cursor, end))
+    return kept
+
+
+# Palavra que ficou sem tempo próprio ainda precisa de um instante na legenda.
+_MIN_WORD_ON_SCREEN = 0.05
+
+
+def _stitched_position(time: float, segments: list[tuple[float, float]]) -> float:
+    """Onde um instante da fonte cai na linha do tempo costurada."""
+    offset = 0.0
+    for start, end in segments:
+        if time < start:
+            return offset  # caiu no que saiu: vai para a próxima emenda
+        if time <= end:
+            return offset + time - start
+        offset += end - start
+    return offset
+
+
+def remap_words_keeping(
+    words: list[dict],
+    segments: list[tuple[float, float]],
+    stitched_duration: Optional[float] = None,
+) -> list[dict]:
+    """
+    Como `remap_words`, mas nenhuma palavra do intervalo some.
+
+    No tempo morto do Siege a palavra que caiu fora do trecho saiu mesmo do vídeo.
+    Numa pausa de podcast não: o que sai é medido como silêncio no áudio, então uma
+    palavra com timestamp lá dentro foi dita em outro instante. `para noite.` aparece
+    num silêncio de 1s, dita logo antes dele. Sumir com ela apagaria da legenda uma
+    fala que continua no vídeo.
+
+    `stitched_duration` é a duração REAL do arquivo costurado. Cada trecho arredonda
+    para cima no limite do quadro, e a soma dos arredondamentos atrasaria a legenda
+    a cada emenda: medido, 0,18s em 6 trechos. Sem ela, vale a soma nominal.
+    """
+    if not segments:
+        return []
+    first, last = segments[0][0], segments[-1][1]
+    nominal = total_duration(segments)
+    total = stitched_duration or nominal
+    scale = total / nominal if nominal else 1.0
+
+    remapped: list[dict] = []
+    for word in words:
+        if word["start"] < first or word["start"] >= last:
+            continue
+        moved = dict(word)
+        moved["start"] = min(
+            _stitched_position(word["start"], segments) * scale, total - _MIN_WORD_ON_SCREEN
+        )
+        moved["end"] = min(
+            max(_stitched_position(word["end"], segments) * scale, moved["start"] + _MIN_WORD_ON_SCREEN),
+            total,
+        )
+        remapped.append(moved)
+    return remapped
+
+
 async def compact_segments(
     job_id: str,
     clip_id: str,
@@ -62,11 +146,15 @@ async def compact_segments(
     output_path: str,
 ) -> float:
     """
-    Concatena os trechos num único arquivo. Devolve a duração resultante.
+    Concatena os trechos num único arquivo. Devolve a duração REAL dele.
 
     Cada trecho entra como uma ENTRADA própria com `-ss`, e não como um filtro
     de corte sobre o vídeo inteiro: assim o ffmpeg busca direto no ponto em vez
     de decodificar os 40 minutos da fonte para descartar quase tudo.
+
+    Real, e não a soma dos trechos, porque quem chama usa isto como fim do render:
+    cada trecho arredonda para cima no limite do quadro, e a soma nominal cortava
+    os últimos 0,18s de um clipe de 6 trechos, justo o respiro depois da frase.
     """
     inputs: list[str] = []
     for start, end in segments:
@@ -85,11 +173,16 @@ async def compact_segments(
         description=f"Costura {len(segments)} trecho(s) do clip {clip_id}",
     )
 
-    duration = total_duration(segments)
+    nominal = total_duration(segments)
+    try:
+        duration = await get_duration(output_path)
+    except (RuntimeError, ValueError) as exc:
+        logger.warning(f"[{job_id}] Clip {clip_id}: sem a duração real ({exc}) — vale a nominal")
+        duration = nominal
     logger.info(
         f"[{job_id}] Clip {clip_id}: {len(segments)} trecho(s) costurado(s) "
         f"→ {duration:.1f}s (tempo morto removido: "
-        f"{segments[-1][1] - segments[0][0] - duration:.1f}s)"
+        f"{segments[-1][1] - segments[0][0] - nominal:.1f}s)"
     )
     return duration
 

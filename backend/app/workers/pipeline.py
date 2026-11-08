@@ -59,7 +59,7 @@ from app.services import r6_hud
 from app.services import usage as usage_service
 from app.services import usage_monitor
 from app.services import segments as segments_service
-from app.services.segments import compact_segments, remap_words
+from app.services.segments import compact_segments, remap_words, remap_words_keeping
 from app.workers import joblock
 
 logger = logging.getLogger(__name__)
@@ -260,6 +260,26 @@ def _skip_locked(job_id: str) -> bool:
         return False
     logger.info(f"[{job_id}] Em processamento pelo PID {pid} — não reconciliado")
     return True
+
+
+def _stitched_words(
+    words: list[dict],
+    segments: list[tuple[float, float]],
+    source_type: str,
+    clip_mode: str,
+    stitched_duration: float | None = None,
+) -> list[dict]:
+    """
+    As palavras na linha do tempo do arquivo costurado.
+
+    Num podcast individual o que saiu foi só silêncio medido, então palavra nenhuma
+    some (ver analyzer._trim_pauses). No Siege e no compilado o que ficou de fora
+    saiu do vídeo, e a legenda sai junto. Decidido pelo job, e não guardado por
+    clipe, porque nesses dois casos o resto é impossível: só eles têm outra costura.
+    """
+    if source_type == "podcast" and clip_mode != "compilation":
+        return remap_words_keeping(words, segments, stitched_duration)
+    return remap_words(words, segments)
 
 
 def _parse_segments_json(raw: str | None) -> list[tuple[float, float]]:
@@ -890,8 +910,9 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
 
             compacted: str | None = None
             try:
-                # Clip costurado (Siege): os trechos viram um arquivo só, e o
-                # render trabalha nele como se fosse um vídeo comum. É o que
+                # Clip costurado (Siege, compilado, pausas do podcast): os trechos
+                # viram um arquivo só, e o render trabalha nele como se fosse um
+                # vídeo comum. É o que
                 # mantém facecam, faixa, banner e legendas sem mexer no
                 # filtergraph — ele nunca sabe que houve emenda.
                 source_path = metadata.video_path
@@ -908,7 +929,9 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                     )
                     source_path = compacted
                     clip_start, clip_end = 0.0, total
-                    clip_words = remap_words(words, task.segments)
+                    clip_words = _stitched_words(
+                        words, task.segments, source_type, clip_mode, total
+                    )
 
                 # Os dois modos sem camada nenhuma não precisam de facecam
                 # nem de capa — vão direto ao render.

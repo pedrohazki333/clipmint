@@ -198,10 +198,14 @@ def generate_ass_subtitles(
     if subtitle_mode == "none":
         return
 
-    # Filtra palavras do segmento
+    # Filtra palavras do segmento. Vale onde a palavra COMEÇA: o fim do clipe pode
+    # cair num silêncio escondido no timestamp dela, como no `mano?` que dura 1,6s
+    # com 0,8s calado. Exigir o fim lá dentro apagava da legenda uma palavra dita
+    # por inteiro.
     segment_words = [
-        w for w in words
-        if w["start"] >= start_time and w["end"] <= end_time
+        {**w, "end": min(w["end"], end_time)}
+        for w in words
+        if start_time <= w["start"] < end_time
     ]
 
     if not segment_words:

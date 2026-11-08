@@ -391,6 +391,16 @@ class Settings(BaseSettings):
     opening_filler_max_seconds: float = 1.5
     # Troca de câmera nestes primeiros segundos mostra outra pessoa de relance.
     opening_scene_window: float = 0.5
+    # Tempo morto no meio do clipe de podcast (ver D134). Sai o silêncio medido no
+    # áudio, a partir da duração mínima, deixando uma margem de cada lado. -25 dB
+    # separa bem no vídeo medido: pausa real fica em -48 dBFS ou menos, contra -23
+    # da fala, e risada e conversa ao fundo ficam bem acima disso.
+    trim_pauses_enabled: bool = True
+    trim_pause_min: float = 0.5
+    trim_pause_margin: float = 0.12
+    trim_pause_below_speech_db: float = 25.0
+    # Abaixo disto não compensa costurar: é uma emenda a mais por quase nada.
+    trim_pause_min_total: float = 0.3
     # Face tracking: quando desligado, o crop 9:16 fica estático no centro do
     # frame e o MediaPipe nem chega a rodar (render bem mais rápido).
     face_tracking_enabled: bool = False

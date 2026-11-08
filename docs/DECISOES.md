@@ -1910,6 +1910,56 @@ vale para todo nicho: a primeira frase faz sentido para quem nunca viu o vídeo.
 clipe começa na afirmação de impacto" fica só em `PODCAST_CRITERIA`, porque no
 gameplay o core manda começar na preparação, e as duas regras se contradiriam.
 
+### D134. O tempo morto do podcast sai pelo áudio, nunca pelo vão entre palavras
+
+Os silêncios que mais se notavam nos clipes reais estavam aos 3,10s e aos 5,90s. O
+plano era achar pausas pelo vão entre palavras, mas **nenhum dos dois aparece assim**:
+o de 1,15s está dentro do timestamp de `pé.`, e o de 1,00s no meio de palavras
+espremidas. E o maior vão do mesmo clipe (2,85s) era fala, porque as palavras dela
+estavam com timestamp noutro lugar. Pelo vão, o clipe perdia 1,7s e mantinha os dois
+silêncios. Pelo áudio, perde 3,25s e nenhum deles fica.
+
+Por isso `_trim_pauses` usa só o áudio: sai o que mede ao menos 25 dB abaixo da fala,
+por ao menos 0,5s, deixando 0,12s de cada lado. O RMS de 50ms da D132 resolve o que o
+ebur128 não resolve em pausa curta. A régua separa bem no vídeo medido: pausa real
+fica em -48 dBFS ou menos, contra -23 da fala. **Risada e reação ficam por construção**,
+e não por exceção: a regra só enxerga silêncio. A pausa de 1,84s que era risada, 9,8
+dB acima da fala, nunca vira candidata.
+
+Só no podcast individual, com `trim_pauses_enabled` e removendo mais de 0,3s. No
+gameplay o silêncio é tensão. No compilado os trechos já são a montagem. E fica por
+último, depois do split, porque o divisor não mexe em clipe costurado.
+
+A infraestrutura de costura é a do Siege, e três coisas dela não serviam como estavam:
+
+**`remap_words` apagaria legenda.** Ela descarta palavra que não cabe inteira num
+trecho, o certo no Siege, onde o que ficou de fora saiu do vídeo. Aqui só saiu
+silêncio, então uma palavra com timestamp lá dentro foi dita em outro instante:
+`para noite.` aparece num silêncio, dita logo antes dele. `remap_words_keeping` não
+deixa nenhuma sumir, e o Siege continua com a antiga. Quem escolhe é o job, porque
+podcast individual não tem outra costura.
+
+**`compact_segments` devolvia a duração errada.** O arquivo é maior que a soma dos
+trechos, porque cada um arredonda para cima no limite do quadro: 32,20s contra 32,02s
+em 6 trechos. Esse valor vira o fim do render, então os últimos 0,18s saíam cortados,
+justo o respiro da D132, e a legenda atrasava a cada emenda. Agora devolve a duração
+medida no arquivo, e a legenda do podcast escala por ela. Isso também vale para o
+Siege, que ganha os mesmos centésimos no fim. Medido num arquivo real: o silêncio de
+cada emenda cai no máximo 0,08s da posição esperada e as trocas de câmera em 0,04s,
+sempre no mesmo sentido, então áudio e imagem não se separam.
+
+**`generate_ass_subtitles` só aceitava palavra inteira dentro do clipe.** Com o fim
+caindo num silêncio escondido no timestamp (D132), `mano?` foi dita e sumiria da
+legenda. Vale onde a palavra começa, com o fim limitado ao do clipe.
+
+O `ClipCard` mostra "Costurado de N trechos" nesses clipes. É verdade, e o texto fica
+para a limpeza de jargão da interface.
+
+**O que continua errado:** os timestamps ruins que motivaram as três decisões também
+dessincronizam a legenda, com palavras espremidas em 0,05s que passam sem dar para ler.
+Nenhuma das três corrige isso. É uma fatia própria, a começar por comparar modelos com
+`compare_transcribers`.
+
 ---
 
 ## Adiado, com destino definido
