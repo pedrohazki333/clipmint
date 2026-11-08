@@ -13,7 +13,7 @@ import logging
 from dataclasses import dataclass
 from typing import List, Optional
 
-from app.services.fonts import load_font
+from app.services.fonts import ass_font_size, font_path, load_font
 
 logger = logging.getLogger(__name__)
 
@@ -243,8 +243,19 @@ def _ass_text(text: str) -> str:
     return text.replace("\\", "").replace("{", "").replace("}", "")
 
 
+def _line_width(line: List[dict], font, gap: Optional[float] = None) -> float:
+    """A largura da linha. `gap` troca o espaço normal entre as palavras."""
+    if gap is None:
+        return font.getlength(" ".join(w["text"] for w in line))
+    return sum(font.getlength(w["text"]) for w in line) + gap * (len(line) - 1)
+
+
 def group_caption_lines(
-    words: List[dict], font, max_width: float, max_words: int = CAPTION_MAX_WORDS
+    words: List[dict],
+    font,
+    max_width: float,
+    max_words: int = CAPTION_MAX_WORDS,
+    gap: Optional[float] = None,
 ) -> List[List[dict]]:
     """
     Agrupa as palavras em linhas que cabem na largura.
@@ -255,8 +266,10 @@ def group_caption_lines(
     lines: List[List[dict]] = []
     current: List[dict] = []
     for word in words:
-        candidate = " ".join(w["text"] for w in current + [word])
-        if current and (len(current) >= max_words or font.getlength(candidate) > max_width):
+        if current and (
+            len(current) >= max_words
+            or _line_width(current + [word], font, gap) > max_width
+        ):
             lines.append(current)
             current = []
         current.append(word)
@@ -277,7 +290,7 @@ def _line_scale(line: List[dict], font, max_width: float) -> str:
     return rf"\fscx{percent}\fscy{percent}"
 
 
-def _styled_header(family: str, geo: CaptionGeometry) -> str:
+def _styled_header(family: str, geo: CaptionGeometry, ass_size: int) -> str:
     return f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {geo.canvas_w}
@@ -286,11 +299,37 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Caption,{family},{geo.size},{COLOR_WHITE},&H000000FF,{COLOR_BLACK_OUTLINE},&H00000000,0,0,0,0,100,100,0,0,1,{geo.outline},0,5,0,0,0,1
+Style: Caption,{family},{ass_size},{COLOR_WHITE},&H000000FF,{COLOR_BLACK_OUTLINE},&H00000000,0,0,0,0,100,100,0,0,1,{geo.outline},0,5,0,0,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
+
+
+def _word_states(lines: List[List[dict]], start_offset: float):
+    """
+    Cada estado da legenda: (linha, índice da palavra falada, início, fim).
+
+    Contínuo: cada estado dura até a palavra seguinte assumir, e a linha não pisca entre
+    palavras, mesmo com pausa na fala. A última palavra segura a linha por LINE_HOLD,
+    limitado ao início da linha seguinte.
+    """
+    for line_index, line in enumerate(lines):
+        next_start = (
+            lines[line_index + 1][0]["start"] - start_offset
+            if line_index + 1 < len(lines)
+            else None
+        )
+        for active, word in enumerate(line):
+            start = max(0.0, word["start"] - start_offset)
+            if active + 1 < len(line):
+                end = line[active + 1]["start"] - start_offset
+            else:
+                end = word["end"] - start_offset + LINE_HOLD
+                if next_start is not None:
+                    end = min(end, next_start)
+            if end > start:
+                yield line, active, start, end
 
 
 def _color_events(
@@ -306,33 +345,113 @@ def _color_events(
     white = _ass_color("#FFFFFF")
     position = rf"\an5\pos({geo.canvas_w // 2},{geo.center_y})"
 
-    for line_index, line in enumerate(lines):
-        next_start = (
-            lines[line_index + 1][0]["start"] - start_offset
-            if line_index + 1 < len(lines)
-            else None
-        )
+    for line, active, start, end in _word_states(lines, start_offset):
         scale = _line_scale(line, font, geo.max_width)
-        for active, word in enumerate(line):
-            start = max(0.0, word["start"] - start_offset)
-            if active + 1 < len(line):
-                end = line[active + 1]["start"] - start_offset
-            else:
-                end = word["end"] - start_offset + LINE_HOLD
-                if next_start is not None:
-                    end = min(end, next_start)
-            if end <= start:
-                continue
-            parts = []
-            for index, w in enumerate(line):
-                text = _ass_text(w["text"])
-                parts.append(
-                    rf"{{\1c{active_color}}}{text}{{\1c{white}}}" if index == active else text
-                )
-            events.append(
-                f"Dialogue: 0,{_ass_time(start)},{_ass_time(end)},Caption,,0,0,0,,"
-                f"{{{position}{scale}}}{' '.join(parts)}"
+        parts = []
+        for index, w in enumerate(line):
+            text = _ass_text(w["text"])
+            parts.append(
+                rf"{{\1c{active_color}}}{text}{{\1c{white}}}" if index == active else text
             )
+        events.append(
+            f"Dialogue: 0,{_ass_time(start)},{_ass_time(end)},Caption,,0,0,0,,"
+            f"{{{position}{scale}}}{' '.join(parts)}"
+        )
+    return events
+
+
+#: A caixa da palavra falada, na escala de 1080 de largura.
+BOX_PADDING_X = 19
+BOX_RADIUS = 19
+#: Texto dentro da caixa, a mesma cor em que o contraste do estilo é medido.
+BOX_TEXT_COLOR = "#0B0B0C"
+# Quanto sobra entre a caixa e a palavra vizinha. No teste com o espaço normal da fonte
+# as duas quase encostavam, e a palavra ao lado parecia parte da caixa.
+BOX_NEIGHBOR_GAP = 12
+# Constante que aproxima um quarto de círculo com uma curva de Bézier.
+_BEZIER_CIRCLE = 0.5523
+
+
+def box_word_gap(geo: CaptionGeometry) -> float:
+    return (BOX_PADDING_X + BOX_NEIGHBOR_GAP) * geo.canvas_w / 1080
+
+
+def rounded_box_drawing(left: float, top: float, right: float, bottom: float, radius: float) -> str:
+    """Um retângulo de cantos redondos nos comandos de desenho do ASS (\\p)."""
+    l, t, r, b = round(left), round(top), round(right), round(bottom)
+    rad = min(radius, (r - l) / 2, (b - t) / 2)
+    k = _BEZIER_CIRCLE * rad
+
+    def n(value: float) -> int:
+        return round(value)
+
+    return (
+        f"m {n(l + rad)} {t} l {n(r - rad)} {t} "
+        f"b {n(r - rad + k)} {t} {r} {n(t + rad - k)} {r} {n(t + rad)} "
+        f"l {r} {n(b - rad)} "
+        f"b {r} {n(b - rad + k)} {n(r - rad + k)} {b} {n(r - rad)} {b} "
+        f"l {n(l + rad)} {b} "
+        f"b {n(l + rad - k)} {b} {l} {n(b - rad + k)} {l} {n(b - rad)} "
+        f"l {l} {n(t + rad)} "
+        f"b {l} {n(t + rad - k)} {n(l + rad - k)} {t} {n(l + rad)} {t}"
+    )
+
+
+def _box_events(
+    lines: List[List[dict]],
+    start_offset: float,
+    geo: CaptionGeometry,
+    color: str,
+    font,
+) -> List[str]:
+    """
+    Estilo "caixa": a palavra falada ganha uma caixa na cor escolhida.
+
+    O ASS não faz caixa por palavra, e por isso ela é um desenho vetorial (\\p), medido
+    com as mesmas métricas da fonte que o libass usa. Cada palavra entra com posição
+    própria: deixar o libass distribuir a linha separaria texto e caixa em meio pixel de
+    diferença de medida. Comparado a sobrepor um PNG por estado, em que um clipe tem
+    centenas de estados e cada um é mais uma entrada no filtro, isto é só texto no .ass.
+    """
+    k = geo.canvas_w / 1080
+    gap = box_word_gap(geo)
+    padding, radius = BOX_PADDING_X * k, BOX_RADIUS * k
+    ascent, descent = font.getmetrics()
+    box_color, ink = _ass_color(color), _ass_color(BOX_TEXT_COLOR)
+    y = geo.center_y
+
+    events: List[str] = []
+    for line, active, start, end in _word_states(lines, start_offset):
+        widths = [font.getlength(w["text"]) for w in line]
+        total = _line_width(line, font, gap)
+        factor = min(1.0, geo.max_width / total) if total else 1.0
+        scale = "" if factor == 1.0 else rf"\fscx{int(factor * 100)}\fscy{int(factor * 100)}"
+        height = (ascent + descent) * factor
+        timing = f"{_ass_time(start)},{_ass_time(end)}"
+
+        x = geo.canvas_w / 2 - total * factor / 2
+        for index, (word, width) in enumerate(zip(line, widths)):
+            width *= factor
+            center = x + width / 2
+            text = _ass_text(word["text"])
+            if index == active:
+                box = rounded_box_drawing(
+                    x - padding, y - height / 2, x + width + padding, y + height / 2, radius
+                )
+                events.append(
+                    f"Dialogue: 0,{timing},Caption,,0,0,0,,"
+                    rf"{{\an7\pos(0,0)\bord0\shad0\1c{box_color}\p1}}{box}{{\p0}}"
+                )
+                events.append(
+                    f"Dialogue: 1,{timing},Caption,,0,0,0,,"
+                    rf"{{\an5\pos({center:.1f},{y})\bord0\shad0\1c{ink}{scale}}}{text}"
+                )
+            else:
+                events.append(
+                    f"Dialogue: 1,{timing},Caption,,0,0,0,,"
+                    rf"{{\an5\pos({center:.1f},{y}){scale}}}{text}"
+                )
+            x += width + gap * factor
     return events
 
 
@@ -385,14 +504,20 @@ def generate_styled_captions(
         return
 
     font = load_font(style.fonte, "legenda", geometry.size)
-    lines = group_caption_lines(segment_words, font, geometry.max_width)
-    if subtitle_mode == "word_highlight":
+    caixa = subtitle_mode == "word_highlight" and style.legenda.estilo == "caixa"
+    lines = group_caption_lines(
+        segment_words, font, geometry.max_width, gap=box_word_gap(geometry) if caixa else None
+    )
+    if caixa:
+        events = _box_events(lines, start_time, geometry, style.legenda.cor, font)
+    elif subtitle_mode == "word_highlight":
         events = _color_events(lines, start_time, geometry, style.legenda.cor, font)
     else:
         events = _block_events(lines, start_time, geometry, font)
 
     with open(output_path, "w", encoding="utf-8") as f:
-        f.write(_styled_header(family, geometry) + "\n".join(events) + "\n")
+        ass_size = ass_font_size(font_path(style.fonte, "legenda"), geometry.size)
+        f.write(_styled_header(family, geometry, ass_size) + "\n".join(events) + "\n")
     logger.info(f"Subtitles written to: {output_path} ({len(events)} events)")
 
 

@@ -46,10 +46,13 @@ async def _preparar(args: argparse.Namespace) -> int:
                 raise SystemExit(1)
             job.layout_mode = args.layout
 
+        perfil = await db.get(Profile, job.profile_id) if job.profile_id else None
         if args.estilo_padrao:
-            job.style_json = ClipStyle().model_dump_json()
+            # O padrão do produto, mantendo o @: ele é o nome da conta, e não visual.
+            arroba = style_for_profile(perfil).arroba if perfil else None
+            padrao = ClipStyle(arroba=arroba) if arroba else ClipStyle()
+            job.style_json = padrao.model_dump_json()
         elif args.estilo_do_perfil:
-            perfil = await db.get(Profile, job.profile_id) if job.profile_id else None
             job.style_json = (style_for_profile(perfil) if perfil else ClipStyle()).model_dump_json()
 
         result = await db.execute(

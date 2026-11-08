@@ -15,7 +15,13 @@ from PIL import Image
 from app.clip_style import ClipStyle, CaptionStyle, TitleStyle, contrast_ratio
 from app.config import settings
 from app.services import clipper
-from app.services.fonts import font_family, font_path, install_for_render, load_font
+from app.services.fonts import (
+    ass_font_size,
+    font_family,
+    font_path,
+    install_for_render,
+    load_font,
+)
 from app.services.safe_area import RIGHT_LIMIT_X, Rect, unsafe_areas
 from app.services.subtitler import (
     CAPTION_MAX_WIDTH,
@@ -280,8 +286,24 @@ def test_legenda_usa_a_cor_escolhida(tmp_path):
 
 def test_legenda_usa_a_fonte_o_tamanho_e_o_contorno(tmp_path):
     texto = _gerar(tmp_path, _palavras("eu"))
-    assert "Style: Caption,Archivo ClipMint Legenda,88," in texto
+    # O Fontsize do ASS é a altura de linha nas métricas de Windows: na Archivo, 1,51.
+    assert "Style: Caption,Archivo ClipMint Legenda,133," in texto
     assert ",1,9,0,5," in texto  # BorderStyle 1, contorno 9, sem sombra, centralizada
+
+
+def test_fontsize_le_a_metrica_de_cada_fonte():
+    """Na Arial a mesma conta dá outro número: não pode ser uma constante da Archivo."""
+    assert ass_font_size(font_path("archivo", "legenda"), 88) == 133
+    assert ass_font_size(font_path("archivo", "titulo"), 100) == 151
+
+
+def test_fontsize_sem_metrica_legivel_usa_a_do_pillow(tmp_path, monkeypatch):
+    from app.services import fonts
+
+    monkeypatch.setattr(fonts, "_win_line_height", lambda path: None)
+    assert ass_font_size(font_path("archivo", "legenda"), 88) == sum(
+        load_font("archivo", "legenda", 88).getmetrics()
+    )
 
 
 def test_legenda_fica_no_centro_da_especificacao(tmp_path):

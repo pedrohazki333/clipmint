@@ -2114,6 +2114,31 @@ Dois efeitos do recorte mais largo, sem decisão ainda: a legenda em y≈1205 ca
 quem fala, porque o painel começa em 1056, e o logo da fonte aparece quando a detecção não
 roda: ela pede 2 cenas amostradas, e um clipe quase sem troca de câmera não as tem.
 
+### D139. Legenda "caixa" em desenho vetorial, e o Fontsize do ASS não é o tamanho da letra
+
+O ASS não faz caixa por palavra. As duas saídas eram desenhar com os comandos do próprio ASS
+(`\p`), medindo com o Pillow, ou sobrepor um PNG por estado de palavra. **Foi o desenho.** Um
+clipe tem centenas de estados, e cada PNG seria mais uma entrada no filtro do ffmpeg, justo
+onde falta memória (D135). O desenho é só texto no `.ass`. Cada palavra entra com posição
+própria, porque deixar o libass distribuir a linha separaria texto e caixa por uma diferença de
+medida, e o espaço entre palavras é maior que o normal para a caixa não encostar na vizinha.
+
+Pedido do dono: é mais uma opção, e não um substituto. O destaque por cor e os modos
+`traditional` e `none` continuam, e `caixa` é o padrão só de perfil novo.
+
+**O defeito que isso revelou vale para todos os layouts.** O render real saiu com a caixa
+sobrando e as palavras afastadas, e o teste pelo libass mediu 146px de texto onde o Pillow dizia
+212px. O Fontsize do ASS não é o tamanho da letra: o libass escala a fonte para a altura de linha
+caber nele, e mede essa altura pelas métricas de Windows (`OS/2`), como o GDI. O Pillow mede
+pelas tipográficas. Na Archivo são 1,51 e 1,09, então **pedir 88 desenhava letras de 58px**.
+Toda legenda desde a D137 saiu um terço menor que a especificação. Como cada fonte tem o seu valor
+(Arial 1,12, Consolas 1,17), `fonts.ass_font_size` lê a métrica no arquivo em vez de usar uma
+constante, e agora há um teste que passa pelo libass e mede onde a tinta caiu. Foi um teste de
+geometria sobre o `.ass` que passou com o defeito, e só o render de verdade o mostrou.
+
+Validado com os mesmos cortes, no estilo padrão: 4 clipes, 88px de verdade, nenhuma linha
+encolhida, nada nas áreas seguras, contraste mínimo de 5,51:1.
+
 ---
 
 ## Adiado, com destino definido

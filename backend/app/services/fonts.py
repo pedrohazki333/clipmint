@@ -9,9 +9,10 @@ oferece o que está instalado, mas um job pode ser retomado em outra máquina.
 
 import logging
 import shutil
+import struct
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
 from PIL import ImageFont
 
@@ -56,6 +57,44 @@ def load_font(font_key: str, role: Role, size: int) -> ImageFont.FreeTypeFont:
 def font_family(path: Path) -> str:
     """O nome de família, que é como o ASS pede a fonte."""
     return _load(str(path), 16).getname()[0]
+
+
+def _win_line_height(path: Path) -> Optional[float]:
+    """(usWinAscent + usWinDescent) / unitsPerEm, lidos das tabelas do arquivo da fonte."""
+    try:
+        with open(path, "rb") as source:
+            data = source.read(4096)
+            num_tables = struct.unpack(">H", data[4:6])[0]
+            tables: dict[bytes, int] = {}
+            for index in range(num_tables):
+                record = data[12 + index * 16:12 + (index + 1) * 16]
+                tables[record[:4]] = struct.unpack(">I", record[8:12])[0]
+            source.seek(tables[b"head"] + 18)
+            units_per_em = struct.unpack(">H", source.read(2))[0]
+            source.seek(tables[b"OS/2"] + 74)
+            ascent, descent = struct.unpack(">HH", source.read(4))
+    except (OSError, KeyError, struct.error, IndexError):
+        return None
+    if not units_per_em or not ascent + descent:
+        return None
+    return (ascent + descent) / units_per_em
+
+
+def ass_font_size(path: Path, size: int) -> int:
+    """
+    O Fontsize do ASS que desenha letras de `size` pixels.
+
+    O Fontsize do ASS não é o tamanho da letra: o libass escala a fonte para a altura de
+    linha caber nele, e mede essa altura pelas métricas de Windows (`OS/2`), como o GDI.
+    O Pillow mede pelas tipográficas. Na Archivo são 1,51 e 1,09, então pedir 88 desenhava
+    letras de 58px, enquanto tudo que é medido com o Pillow esperava 88: a legenda saía
+    pequena, com a caixa sobrando e as palavras afastadas. Medido no libass de verdade.
+    """
+    ratio = _win_line_height(path)
+    if ratio is None:
+        ascent, descent = _load(str(path), size).getmetrics()
+        return ascent + descent
+    return round(size * ratio)
 
 
 def install_for_render(font_key: str, role: Role, clip_dir: Path) -> tuple[str, Path]:
