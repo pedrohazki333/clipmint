@@ -133,7 +133,7 @@ export default function CaptionPicker({
             }`}
           >
             <SelectedBadge on={ativo} />
-            <span className="flex h-[5rem] items-center justify-center overflow-hidden rounded-md bg-[#1d1d20]">
+            <span className="flex h-16 items-center justify-center overflow-hidden rounded-md bg-[#1d1d20]">
               <Amostra value={opcao.value} style={style} />
             </span>
             <span

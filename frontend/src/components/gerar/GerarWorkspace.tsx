@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Clock3, Loader2, Play, SlidersHorizontal } from "lucide-react";
 
 import ClipModeSelector from "@/components/ClipModeSelector";
@@ -319,6 +319,24 @@ export default function GerarWorkspace({ perfilInicial }: { perfilInicial?: stri
   ].filter(Boolean) as string[];
 
   const metaDuracao = meta.status === "ok" ? duracao(meta.data.duration_seconds) : null;
+
+  // O botão de gerar fica preso ao pé da tela enquanto o lugar dele no fluxo
+  // ainda não apareceu: em notebook e celular os três passos não cabem acima da
+  // dobra, e quem já escolheu tudo não deveria ter que rolar para gerar. O
+  // marcador logo abaixo dele diz quando ele "descolou" — aí some a sombra.
+  const fimDoBotao = useRef<HTMLDivElement>(null);
+  const [preso, setPreso] = useState(false);
+  useEffect(() => {
+    const alvo = fimDoBotao.current;
+    if (!alvo || typeof IntersectionObserver === "undefined") return;
+    // Um lote pode trazer mais de uma mudança; vale a mais recente.
+    const obs = new IntersectionObserver((entradas) => {
+      const e = entradas[entradas.length - 1];
+      setPreso(!e.isIntersecting && e.boundingClientRect.top > 0);
+    });
+    obs.observe(alvo);
+    return () => obs.disconnect();
+  }, []);
   const bloqueado = meta.status === "error" || (meta.status === "ok" && meta.data.is_live);
 
   return (
@@ -327,7 +345,7 @@ export default function GerarWorkspace({ perfilInicial }: { perfilInicial?: stri
       <form
         onSubmit={gerar}
         noValidate
-        className="flex min-w-0 flex-col gap-3.5 px-4 pb-10 pt-7 sm:px-8 lg:px-12 lg:pt-8 xl:pr-8"
+        className="flex min-w-0 flex-col gap-3 px-4 pb-10 pt-6 sm:px-8 lg:px-12 lg:pt-7 xl:pr-8"
       >
         <PageHeader
           variant="display"
@@ -343,9 +361,9 @@ export default function GerarWorkspace({ perfilInicial }: { perfilInicial?: stri
           </p>
         )}
 
-        <div className="mt-2 flex flex-col gap-3">
+        <div className="mt-1 flex flex-col gap-2.5">
           {/* 01 — link */}
-          <section className="rounded-lg bg-inset px-4 pb-4 pt-4 sm:px-6">
+          <section className="rounded-lg bg-inset px-4 py-3.5 sm:px-6">
             <StepHeader number="01" title="Link do vídeo" id="cm-passo-1" />
             <div className="mt-3">
               <VideoLinkField
@@ -359,7 +377,7 @@ export default function GerarWorkspace({ perfilInicial }: { perfilInicial?: stri
           </section>
 
           {/* 02 — legenda */}
-          <section className="rounded-lg bg-inset px-4 pb-4 pt-4 sm:px-6">
+          <section className="rounded-lg bg-inset px-4 py-3.5 sm:px-6">
             <StepHeader
               number="02"
               title="Tipo de legenda"
@@ -372,7 +390,7 @@ export default function GerarWorkspace({ perfilInicial }: { perfilInicial?: stri
           </section>
 
           {/* 03 — layout */}
-          <section className="rounded-lg bg-inset px-4 pb-4 pt-4 sm:px-6">
+          <section className="rounded-lg bg-inset px-4 py-3.5 sm:px-6">
             <StepHeader
               number="03"
               title="Layout do clipe"
@@ -508,8 +526,14 @@ export default function GerarWorkspace({ perfilInicial }: { perfilInicial?: stri
 
         {IS_PUBLIC_BUILD && <LowBalanceBanner />}
 
-        {/* O botão de gerar */}
-        <div className="mt-1.5">
+        {/* O botão de gerar — preso ao pé da tela até o lugar dele aparecer */}
+        <div
+          className={`sticky bottom-0 z-20 -mx-4 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 transition-[background-color,box-shadow] duration-200 sm:-mx-8 sm:px-8 lg:-mx-12 lg:px-12 xl:-mr-8 xl:pr-8 ${
+            preso
+              ? "border-t border-line bg-base/92 shadow-[0_-10px_28px_-18px_rgba(36,36,36,0.45)] backdrop-blur-md"
+              : "border-t border-transparent"
+          }`}
+        >
           <button
             type="submit"
             disabled={enviando || enviado || bloqueado}
@@ -549,6 +573,7 @@ export default function GerarWorkspace({ perfilInicial }: { perfilInicial?: stri
             </p>
           )}
         </div>
+        <div ref={fimDoBotao} aria-hidden className="-mt-3 h-px" />
       </form>
 
       {/* ── Painel contextual ─────────────────────────────────────────────── */}

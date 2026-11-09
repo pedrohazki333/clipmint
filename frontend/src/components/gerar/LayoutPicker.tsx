@@ -19,7 +19,7 @@ function Diagrama({ layout }: { layout: LayoutMode }) {
   const legenda = "var(--color-mint-strong)";
 
   return (
-    <svg viewBox="0 0 30 52" className="h-11 w-auto" aria-hidden focusable="false">
+    <svg viewBox="0 0 30 52" className="h-10 w-auto" aria-hidden focusable="false">
       {layout === "original" ? (
         <>
           <rect x="1" y="1" width="28" height="50" rx="3.5" fill="none" stroke={videoClaro} strokeWidth="1.5" />
@@ -96,7 +96,7 @@ export default function LayoutPicker({
             title={LAYOUT_LABELS[layout].descricao}
             onClick={() => onChange(layout)}
             onKeyDown={(e) => radioKeyDown(e, available, value, onChange)}
-            className={`group relative flex w-[6.25rem] flex-shrink-0 snap-start flex-col items-center gap-2 rounded-lg border-2 bg-raised px-1 pb-2 pt-3 transition-colors duration-150 sm:w-auto ${
+            className={`group relative flex w-[6.25rem] flex-shrink-0 snap-start flex-col items-center gap-2 rounded-lg border-2 bg-raised px-1 pb-2 pt-2.5 transition-colors duration-150 sm:w-auto ${
               ativo ? "border-mint-strong" : "border-transparent hover:border-line-strong"
             }`}
           >

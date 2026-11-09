@@ -46,7 +46,7 @@ export default function VideoLinkField({
   return (
     <div>
       <div
-        className={`flex min-h-14 items-center gap-3 rounded-md border bg-raised pl-4 pr-1.5 transition-[border-color,box-shadow] duration-150 focus-within:border-ink focus-within:shadow-[0_0_0_1px_var(--color-ink)] ${
+        className={`flex min-h-12 items-center gap-3 rounded-md border bg-raised pl-4 pr-1.5 transition-[border-color,box-shadow] duration-150 focus-within:border-ink focus-within:shadow-[0_0_0_1px_var(--color-ink)] ${
           error ? "border-danger" : "border-line hover:border-line-strong"
         }`}
       >
@@ -64,7 +64,7 @@ export default function VideoLinkField({
           aria-labelledby={labelledBy}
           aria-invalid={!!error}
           aria-describedby={error ? "cm-url-erro" : undefined}
-          className="min-w-0 flex-1 bg-transparent py-3 text-[0.9375rem] text-ink placeholder:text-ink-muted focus:outline-none focus-visible:outline-none disabled:opacity-50"
+          className="min-w-0 flex-1 bg-transparent py-2.5 text-[0.9375rem] text-ink placeholder:text-ink-muted focus:outline-none focus-visible:outline-none disabled:opacity-50"
         />
         {value && !disabled && (
           <button
