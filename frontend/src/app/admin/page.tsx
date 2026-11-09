@@ -90,7 +90,7 @@ export default function AdminPage() {
             type="month"
             value={mes}
             onChange={(e) => setMes(e.target.value || mesAtual())}
-            className="tabular rounded-sm border border-line bg-inset px-2 py-1 text-body text-ink focus:border-mint focus:outline-none"
+            className="tabular rounded-sm border border-line bg-inset px-2 py-1 text-body text-ink focus:border-ink focus:outline-none"
           />
         </label>
       </div>

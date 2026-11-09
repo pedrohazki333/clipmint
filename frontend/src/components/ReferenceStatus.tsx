@@ -79,7 +79,7 @@ export default function ReferenceStatus({
             key={etapa.key}
             aria-current={ativa ? "step" : undefined}
             className={`flex items-center gap-1.5 text-label ${
-              ativa ? "font-medium text-ink" : feita ? "text-mint" : "text-ink-muted"
+              ativa ? "font-medium text-ink" : feita ? "text-mint-ink" : "text-ink-muted"
             }`}
           >
             {feita ? (

@@ -130,7 +130,7 @@ export default function BarStyleSettings({
             maxLength={MAX_NAME}
             onChange={(e) => onChange({ ...value, name: e.target.value })}
             placeholder={BAR_DEFAULT_NAME}
-            className="w-40 rounded-sm border border-line bg-inset px-2 py-1.5 text-body text-ink outline-none focus:border-mint disabled:opacity-50"
+            className="w-40 rounded-sm border border-line bg-inset px-2 py-1.5 text-body text-ink outline-none focus:border-ink disabled:opacity-50"
           />
         </div>
       </div>
@@ -141,7 +141,7 @@ export default function BarStyleSettings({
       </p>
 
       {!barValida(value) && (
-        <p className="rounded-sm bg-amber-900/15 px-3 py-2 text-label text-amber-500/80">
+        <p className="rounded-sm bg-running-soft px-3 py-2 text-label text-running">
           Use hexadecimal no formato #RRGGBB (ex: {DEFAULT_BG}).
         </p>
       )}

@@ -54,7 +54,7 @@ function PasswordForm() {
         onChange={(e) => setPassword(e.target.value)}
         autoFocus
         placeholder="Senha"
-        className="w-full rounded-sm border border-line bg-raised px-4 py-2.5 text-ink placeholder-ink-muted outline-none focus:border-mint"
+        className="w-full rounded-sm border border-line bg-raised px-4 py-2.5 text-ink placeholder-ink-muted outline-none focus:border-ink"
       />
 
       {error && <p className="text-body text-danger">{error}</p>}
@@ -62,7 +62,7 @@ function PasswordForm() {
       <button
         type="submit"
         disabled={submitting || !password}
-        className="w-full rounded-sm bg-mint-strong px-4 py-2.5 font-medium text-white transition hover:bg-mint disabled:cursor-not-allowed disabled:opacity-50"
+        className="w-full rounded-sm bg-mint-strong px-4 py-2.5 font-medium text-ink transition hover:bg-mint disabled:cursor-not-allowed disabled:opacity-50"
       >
         {submitting ? "Entrando..." : "Entrar"}
       </button>

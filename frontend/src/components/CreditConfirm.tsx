@@ -78,7 +78,7 @@ export default function CreditConfirm({
               {dá && (
                 <div className="flex items-baseline justify-between gap-3">
                   <dt className="text-ink-dim">Fica com</dt>
-                  <dd className="tabular text-mint">
+                  <dd className="tabular text-mint-ink">
                     {formatarCreditos(sobra)}
                   </dd>
                 </div>
@@ -117,7 +117,7 @@ export default function CreditConfirm({
           {!carregando && !erro && estimativa && !dá && (
             <Link
               href="/recarga"
-              className="rounded-sm bg-running px-3 py-1.5 text-body font-semibold text-base transition-opacity hover:opacity-90"
+              className="rounded-sm bg-running px-3 py-1.5 text-body font-semibold text-white transition-opacity hover:opacity-90"
             >
               Recarregar
             </Link>
@@ -128,7 +128,7 @@ export default function CreditConfirm({
               type="button"
               onClick={onConfirm}
               disabled={enviando}
-              className="rounded-sm bg-mint px-3 py-1.5 text-body font-semibold text-base transition-opacity hover:opacity-90 disabled:opacity-50"
+              className="rounded-sm bg-mint px-3 py-1.5 text-body font-semibold text-ink transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               {enviando ? "Iniciando…" : "Gerar clips"}
             </button>

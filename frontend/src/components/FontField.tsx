@@ -48,7 +48,7 @@ export default function FontField({ value, onChange, disabled, fonts, label = "F
         value={value}
         disabled={disabled || fonts.length === 0}
         onChange={(e) => onChange(e.target.value)}
-        className="rounded-sm bg-inset border border-line px-2 py-1.5 text-body text-ink outline-none focus:border-mint disabled:opacity-50"
+        className="rounded-sm bg-inset border border-line px-2 py-1.5 text-body text-ink outline-none focus:border-ink disabled:opacity-50"
       >
         {options.map((f) => (
           <option key={f.key} value={f.key}>

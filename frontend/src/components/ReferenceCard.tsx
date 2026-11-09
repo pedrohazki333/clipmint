@@ -38,7 +38,7 @@ export default function ReferenceCard({ reference }: { reference: Reference }) {
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           {r.published && (
-            <span className="rounded-full bg-mint-soft border border-mint/30 px-2.5 py-0.5 text-label text-mint">
+            <span className="rounded-full bg-mint-soft border border-mint/30 px-2.5 py-0.5 text-label text-mint-ink">
               aprendido
             </span>
           )}

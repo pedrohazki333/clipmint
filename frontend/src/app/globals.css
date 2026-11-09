@@ -1,71 +1,90 @@
 @import "tailwindcss";
 
 /**
- * Tokens do ClipMint.
+ * Tokens do ClipMint — direção "Editorial Tech".
  *
- * Antes desta passada havia 14 cinzas soltos em ~380 usos, 5 raios de borda
- * para o mesmo papel e nenhuma fonte definida — o app rodava na fonte padrão do
- * navegador. Tudo que decide a aparência agora mora aqui.
+ * Área de trabalho clara e quente, navegação escura, e duas cores de marca com
+ * papéis que não se misturam:
  *
- * Os neutros não são o cinza do Tailwind: levam um traço de verde do próprio
- * acento, então a interface parece tingida pela marca em vez de "tema escuro
- * padrão". É sutil de propósito — quem usa não deve notar a escolha, só sentir
- * que o app tem dono.
+ *   - **menta** (#8FECC8) é seleção e identidade: item ativo, opção escolhida,
+ *     botão primário comum. Nunca é cor de TEXTO sobre fundo claro (contraste de
+ *     ~1,4:1). Onde a menta precisa "falar" em texto, entra `mint-ink`, o verde
+ *     escuro derivado dela, que passa no AA.
+ *   - **coral** (#FF395E) é criação: o botão de gerar e os marcadores editoriais.
+ *     Texto branco sobre coral dá ~3,5:1, então só em texto grande e em negrito.
+ *
+ * Todos os componentes falam por estes nomes (`base`, `raised`, `ink`...), que
+ * já existiam no tema escuro anterior. Trocar os valores aqui é o que muda o app
+ * inteiro de uma vez — e o tema antigo continua disponível em `.theme-legacy`,
+ * para a landing, que fica fora deste redesign.
  */
 @theme {
   /* ── Superfícies ─────────────────────────────────────────────────────────
-     Três profundidades, e só três: página, o que está sobre ela, e o que está
-     afundado nela (campo de texto, poço). Uma quarta só criaria dúvida. */
-  --color-base: #0b0f0d;
-  --color-raised: #121714;
-  --color-inset: #1a211d;
-  /* Um degrau acima do raised, para o que está em foco ou sob o cursor. */
-  --color-hover: #1c2420;
+     Página, o que está sobre ela, e o que está afundado nela (poço, campo). */
+  --color-base: #f7f7f4;
+  --color-raised: #ffffff;
+  --color-inset: #efefea;
+  --color-hover: #e8e8e2;
 
-  /* ── Fios ────────────────────────────────────────────────────────────────
-     `line` é a borda normal; `line-strong` só onde a separação precisa ser
-     lida como estrutura, não como sugestão. */
-  --color-line: #232b27;
-  --color-line-strong: #35403a;
+  /* ── Fios ──────────────────────────────────────────────────────────────── */
+  --color-line: #e2e2dc;
+  --color-line-strong: #c9c9c1;
 
   /* ── Texto ───────────────────────────────────────────────────────────────
-     Três níveis. `muted` é o piso: abaixo dele o contraste cai do mínimo
-     legível em fundo escuro. */
-  --color-ink: #e6ede9;
-  --color-ink-dim: #93a29b;
-  --color-ink-muted: #6b7a73;
+     `muted` é o piso: passa 4,5:1 até sobre o `inset`, o fundo mais escuro em
+     que texto pequeno aparece. */
+  --color-ink: #242424;
+  --color-ink-dim: #4a4a4a;
+  --color-ink-muted: #66665f;
 
-  /* ── Acento ──────────────────────────────────────────────────────────────
-     O verde que já era a identidade (o antigo emerald-400). */
-  --color-mint: #34d399;
-  --color-mint-strong: #10b981;
-  --color-mint-soft: #34d3991a;
+  /* ── Menta: seleção e identidade ─────────────────────────────────────────
+     `mint-strong` é o preenchimento do botão primário; `mint`, o hover dele e
+     o item ativo. Os dois levam texto `ink` por cima, nunca branco. */
+  --color-mint: #7fe6be;
+  --color-mint-strong: #8fecc8;
+  --color-mint-soft: #ddf8ec;
+  /* A menta quando ela precisa ser lida: link, número em destaque, status. */
+  --color-mint-ink: #0a6b4d;
+
+  /* ── Coral: criação ─────────────────────────────────────────────────────── */
+  --color-coral: #ff395e;
+  --color-coral-strong: #e8264c;
+  --color-coral-soft: #ffe3e9;
+
+  /* ── Navegação escura ───────────────────────────────────────────────────── */
+  --color-sidebar: #202022;
+  --color-sidebar-raised: #2a2a2d;
+  --color-sidebar-line: #36363a;
+  --color-sidebar-text: #f7f7f4;
+  --color-sidebar-muted: #a6a6a0;
 
   /* ── Estados ─────────────────────────────────────────────────────────────
-     Um trio, sempre com o mesmo par: cor da tinta e cor do fundo suave. */
-  --color-running: #fbbf24;
-  --color-running-soft: #fbbf241a;
-  --color-danger: #f87171;
-  --color-danger-soft: #f871711a;
-  --color-ok: #34d399;
-  --color-ok-soft: #34d3991a;
+     Tinta escura o bastante para texto pequeno sobre o fundo claro, e um fundo
+     suave do mesmo tom. */
+  --color-running: #8a5300;
+  --color-running-soft: #fff1d6;
+  --color-danger: #b8183a;
+  --color-danger-soft: #fde8ec;
+  --color-ok: #0a6b4d;
+  --color-ok-soft: #ddf8ec;
 
-  /* ── Raio ────────────────────────────────────────────────────────────────
-     Três, no lugar dos cinco que havia. `sm` para o que se clica, `md` para o
-     que contém, `full` para pílula e ponto. */
-  --radius-sm: 8px;
-  --radius-md: 14px;
+  /* ── Raio ──────────────────────────────────────────────────────────────── */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
 
   /* ── Tipografia ──────────────────────────────────────────────────────────
-     As variáveis vêm do next/font (ver app/layout.tsx), que hospeda as fontes
-     junto do app — sem requisição a terceiros. */
-  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+     As variáveis vêm do next/font (ver app/layout.tsx): as fontes são
+     hospedadas junto do app, sem requisição a terceiros. */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-space-grotesk), var(--font-inter), ui-sans-serif, sans-serif;
+  --font-condensed: var(--font-barlow-condensed), var(--font-space-grotesk), sans-serif;
   --font-mono: var(--font-plex-mono), ui-monospace, "SF Mono", monospace;
+  /* A fonte dos clipes, para prévias que mostram o que sai no vídeo. */
+  --font-clip: var(--font-archivo), sans-serif;
 
-  /* Escala de 5 degraus. Antes, 212 dos 244 usos eram text-sm ou text-xs: tudo
-     tinha o mesmo peso e nada guiava o olho. */
-  --text-display: 1.75rem;      /* 28px — título de página */
-  --text-display--line-height: 2rem;
+  --text-display: 2.25rem;      /* 36px — título de página */
+  --text-display--line-height: 2.5rem;
   --text-title: 1.125rem;       /* 18px — título de card */
   --text-title--line-height: 1.5rem;
   --text-body: 0.875rem;        /* 14px — corpo */
@@ -74,16 +93,63 @@
   --text-label--line-height: 1rem;
   --text-data: 0.8125rem;       /* 13px — número e timecode, em mono */
   --text-data--line-height: 1rem;
+
+  /* ── Movimento ─────────────────────────────────────────────────────────── */
+  --ease-editorial: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/**
+ * O tema escuro anterior, inteiro, para quem ainda não foi redesenhado.
+ *
+ * Só a landing usa (ela é refeita depois, com clipes reais). Como as utilities do
+ * Tailwind leem as variáveis em tempo de execução, redefinir os nomes num
+ * ancestral basta para tudo dentro dele voltar a ser como era.
+ */
+.theme-legacy {
+  --color-base: #0b0f0d;
+  --color-raised: #121714;
+  --color-inset: #1a211d;
+  --color-hover: #1c2420;
+  --color-line: #232b27;
+  --color-line-strong: #35403a;
+  --color-ink: #e6ede9;
+  --color-ink-dim: #93a29b;
+  --color-ink-muted: #6b7a73;
+  --color-mint: #34d399;
+  --color-mint-strong: #10b981;
+  --color-mint-soft: #34d3991a;
+  --color-mint-ink: #34d399;
+  --color-running: #fbbf24;
+  --color-running-soft: #fbbf241a;
+  --color-danger: #f87171;
+  --color-danger-soft: #f871711a;
+  --color-ok: #34d399;
+  --color-ok-soft: #34d3991a;
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-sans);
+  background: var(--color-base);
+  color: var(--color-ink);
+}
+
+@layer base {
+  /* Títulos falam na fonte editorial; corpo e interface ficam na Inter. */
+  :where(h1, h2, h3) {
+    font-family: var(--font-display);
+    letter-spacing: -0.015em;
+  }
+  .theme-legacy :where(h1, h2, h3) {
+    font-family: inherit;
+    letter-spacing: normal;
+  }
 }
 
 /**
  * Números em coluna.
  *
- * Este app mostra timecode, duração, cinco notas de rubrica e contagem de views
- * em cards repetidos. Com dígitos de largura proporcional eles dançam de uma
- * linha para outra e a nota `8.4` pula de posição a cada card. `tabular-nums`
- * resolve, e é por isso que o mono existe aqui: não é estética, é leitura em
- * coluna.
+ * Timecode, duração, notas da rubrica e contagem de views aparecem em cards
+ * repetidos. Com dígitos proporcionais eles dançam de uma linha para outra.
  */
 .tabular {
   font-family: var(--font-mono);
@@ -92,15 +158,47 @@
 }
 
 /**
- * Foco visível, sempre.
- *
- * O `outline-none` estava espalhado pelos campos sem nada no lugar — quem
- * navega por teclado ficava sem saber onde está.
+ * O marcador editorial "///": três barras inclinadas em coral, desenhadas, e não
+ * digitadas — assim a inclinação e a espessura não dependem da fonte.
  */
-:where(a, button, input, select, textarea, [tabindex]):focus-visible {
-  outline: 2px solid var(--color-mint);
+.cm-slashes {
+  display: inline-block;
+  width: 1.75em;
+  height: 0.8em;
+  background: repeating-linear-gradient(
+    -62deg,
+    transparent 0 0.22em,
+    currentColor 0.22em 0.42em,
+    transparent 0.42em 0.6em
+  );
+  color: var(--color-coral);
+  flex-shrink: 0;
+}
+
+/**
+ * Foco visível, sempre. Em tinta, e não em menta: menta sobre o fundo claro não
+ * passa de 1,4:1, e um anel de foco que não se vê é o mesmo que nenhum.
+ */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-ink);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
+}
+/* Na navegação escura o anel é claro, pelo mesmo motivo ao contrário. */
+.cm-on-dark :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline-color: var(--color-mint-strong);
+}
+.theme-legacy :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline-color: var(--color-mint);
+}
+
+/** A gaveta de navegação do celular entra deslizando, sem quicar. */
+@keyframes cm-drawer-in {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+.cm-drawer {
+  animation: cm-drawer-in 220ms var(--ease-editorial);
 }
 
 /** Quem pediu menos movimento ao sistema não deve receber movimento. */

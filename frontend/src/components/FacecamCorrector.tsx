@@ -198,7 +198,7 @@ function EditorDeCaixa({
         type="button"
         onClick={salvar}
         disabled={salvando}
-        className="rounded-sm bg-mint-strong px-5 py-2.5 text-body font-medium text-base transition-colors hover:bg-mint disabled:opacity-50"
+        className="rounded-sm bg-mint-strong px-5 py-2.5 text-body font-medium text-ink transition-colors hover:bg-mint disabled:opacity-50"
       >
         {salvando ? "Re-renderizando..." : "Re-renderizar com esta caixa"}
       </button>
@@ -334,7 +334,7 @@ export default function FacecamCorrector({
               required
               rows={2}
               placeholder="Ex.: aparece um pedaço do jogo em cima e a cabeça dele fica cortada"
-              className="rounded-sm border border-line bg-base px-3 py-2 text-body text-ink placeholder-ink-muted outline-none focus:border-mint"
+              className="rounded-sm border border-line bg-base px-3 py-2 text-body text-ink placeholder-ink-muted outline-none focus:border-ink"
             />
           </label>
 
@@ -348,7 +348,7 @@ export default function FacecamCorrector({
             <button
               type="submit"
               disabled={enviando || !arquivo || texto.trim().length < 5}
-              className="rounded-sm bg-mint-strong px-5 py-2.5 text-body font-medium text-base transition-colors hover:bg-mint disabled:opacity-50"
+              className="rounded-sm bg-mint-strong px-5 py-2.5 text-body font-medium text-ink transition-colors hover:bg-mint disabled:opacity-50"
             >
               {enviando ? "Analisando o print..." : "Enviar"}
             </button>

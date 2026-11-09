@@ -32,7 +32,7 @@ function fmtTime(s: number | null): string {
 }
 
 function confidenceStyle(c: number): { label: string; cls: string } {
-  if (c >= 0.85) return { label: "Alta", cls: "text-mint" };
+  if (c >= 0.85) return { label: "Alta", cls: "text-mint-ink" };
   if (c >= 0.6) return { label: "Média", cls: "text-running" };
   return { label: "Baixa", cls: "text-danger" };
 }
@@ -139,7 +139,7 @@ export default function ReferencePage() {
     if (!confirm("Excluir esta referência e seus arquivos?")) return;
     try {
       await deleteReference(id);
-      router.push("/");
+      router.push("/perfis");
     } catch (err) {
       setActionError(getApiErrorMessage(err, "Não foi possível excluir."));
     }
@@ -160,7 +160,7 @@ export default function ReferencePage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <Link href="/" className="text-body text-ink-dim hover:text-ink transition-colors">
+      <Link href="/perfis" className="text-body text-ink-dim hover:text-ink transition-colors">
         ← Voltar
       </Link>
 
@@ -200,7 +200,7 @@ export default function ReferencePage() {
       </div>
 
       {ref.published && (
-        <div className="rounded-md bg-mint-soft border border-mint/30 px-4 py-3 text-body text-mint">
+        <div className="rounded-md bg-mint-soft border border-mint/30 px-4 py-3 text-body text-mint-ink">
           ✓ Referência confirmada e adicionada ao aprendizado do ClipMint. Ela agora calibra as
           próximas análises.
         </div>
@@ -242,7 +242,7 @@ export default function ReferencePage() {
             </div>
 
             {ref.alignment_confidence != null && ref.alignment_confidence < 0.6 && (
-              <p className="text-label text-amber-500/90 bg-amber-900/15 rounded px-3 py-2">
+              <p className="text-label text-running bg-running-soft rounded px-3 py-2">
                 Confiança baixa — confira o intervalo abaixo e ajuste se necessário antes de confirmar.
               </p>
             )}
@@ -255,7 +255,7 @@ export default function ReferencePage() {
                   step="0.1"
                   value={startStr}
                   onChange={(e) => setStartStr(e.target.value)}
-                  className="w-28 rounded-sm bg-inset border border-line px-3 py-2 text-ink focus:outline-none focus:border-mint"
+                  className="w-28 rounded-sm bg-inset border border-line px-3 py-2 text-ink focus:outline-none focus:border-ink"
                 />
               </div>
               <div className="flex flex-col gap-1">
@@ -265,7 +265,7 @@ export default function ReferencePage() {
                   step="0.1"
                   value={endStr}
                   onChange={(e) => setEndStr(e.target.value)}
-                  className="w-28 rounded-sm bg-inset border border-line px-3 py-2 text-ink focus:outline-none focus:border-mint"
+                  className="w-28 rounded-sm bg-inset border border-line px-3 py-2 text-ink focus:outline-none focus:border-ink"
                 />
               </div>
               <div className="text-body text-ink-dim pb-2">
@@ -298,7 +298,7 @@ export default function ReferencePage() {
                 <h2 className="text-body font-semibold text-ink">
                   {isStandalone ? "Por que este clipe funciona" : "Por que este corte funciona"}
                 </h2>
-                <span className="rounded-full bg-mint-soft border border-mint/30 px-3 py-1 text-body font-semibold text-mint">
+                <span className="rounded-full bg-mint-soft border border-mint/30 px-3 py-1 text-body font-semibold text-mint-ink">
                   {a.virality_score.toFixed(1)}
                 </span>
               </div>
@@ -367,7 +367,7 @@ export default function ReferencePage() {
                       onClick={() => setPerformance(opt.value)}
                       className={`rounded-sm px-4 py-2 text-body font-medium border transition-colors ${
                         performance === opt.value
-                          ? "bg-mint-strong border-mint text-white"
+                          ? "bg-mint-strong border-mint text-ink"
                           : "bg-inset border-line text-ink hover:bg-hover"
                       }`}
                     >
@@ -384,7 +384,7 @@ export default function ReferencePage() {
                   value={views}
                   onChange={(e) => setViews(e.target.value)}
                   placeholder="ex: 250000"
-                  className="w-48 rounded-sm bg-inset border border-line px-3 py-2 text-ink placeholder-ink-muted focus:outline-none focus:border-mint"
+                  className="w-48 rounded-sm bg-inset border border-line px-3 py-2 text-ink placeholder-ink-muted focus:outline-none focus:border-ink"
                 />
               </div>
 
@@ -397,7 +397,7 @@ export default function ReferencePage() {
                   onChange={(e) => setNotas(e.target.value)}
                   rows={3}
                   placeholder="Ex: o hook nos primeiros 2s + a revelação no meio seguraram até o fim."
-                  className="w-full rounded-sm bg-inset border border-line px-3 py-2 text-ink placeholder-ink-muted focus:outline-none focus:border-mint resize-y"
+                  className="w-full rounded-sm bg-inset border border-line px-3 py-2 text-ink placeholder-ink-muted focus:outline-none focus:border-ink resize-y"
                 />
               </div>
 
@@ -409,13 +409,13 @@ export default function ReferencePage() {
                 <button
                   onClick={handleConfirm}
                   disabled={confirming}
-                  className="rounded-sm bg-mint-strong hover:bg-mint disabled:bg-inset px-6 py-3 font-semibold text-white transition-colors"
+                  className="rounded-sm bg-mint-strong hover:bg-mint disabled:bg-inset px-6 py-3 font-semibold text-ink transition-colors"
                 >
                   {confirming ? "Confirmando..." : "Confirmar e ensinar"}
                 </button>
                 <button
                   onClick={handleDelete}
-                  className="text-label text-ink-dim hover:text-red-400 transition-colors"
+                  className="text-label text-ink-dim hover:text-danger transition-colors"
                 >
                   Excluir referência
                 </button>
@@ -428,7 +428,7 @@ export default function ReferencePage() {
       {ref.status === "error" && (
         <button
           onClick={handleDelete}
-          className="self-start text-label text-ink-dim hover:text-red-400 transition-colors"
+          className="self-start text-label text-ink-dim hover:text-danger transition-colors"
         >
           Excluir referência
         </button>

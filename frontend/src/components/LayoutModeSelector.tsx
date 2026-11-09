@@ -48,7 +48,7 @@ export default function LayoutModeSelector({ value, onChange, source }: Props) {
             aria-pressed={value === modo}
             className={`rounded-sm border px-4 py-2 text-body font-medium transition-colors ${
               value === modo
-                ? "border-mint bg-mint-strong text-base"
+                ? "border-mint bg-mint-strong text-ink"
                 : "border-line bg-inset text-ink hover:border-mint"
             }`}
           >

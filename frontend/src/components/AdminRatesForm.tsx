@@ -72,7 +72,7 @@ export default function AdminRatesForm({
                   setValores({ ...valores, [c.chave]: e.target.value })
                 }
                 inputMode="decimal"
-                className="tabular rounded-sm border border-line bg-inset px-2 py-1.5 text-body text-ink focus:border-mint focus:outline-none"
+                className="tabular rounded-sm border border-line bg-inset px-2 py-1.5 text-body text-ink focus:border-ink focus:outline-none"
               />
               <span className="text-label text-ink-muted">{c.sufixo}</span>
             </label>
@@ -103,11 +103,11 @@ export default function AdminRatesForm({
             type="button"
             onClick={salvar}
             disabled={salvando}
-            className="rounded-sm bg-mint px-3 py-1.5 text-body font-semibold text-base transition-opacity hover:opacity-90 disabled:opacity-50"
+            className="rounded-sm bg-mint px-3 py-1.5 text-body font-semibold text-ink transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             {salvando ? "Salvando…" : "Salvar tarifas"}
           </button>
-          {ok && <span className="text-label text-mint">Salvo</span>}
+          {ok && <span className="text-label text-mint-ink">Salvo</span>}
           {erro && <span className="text-label text-danger">{erro}</span>}
         </div>
       </div>

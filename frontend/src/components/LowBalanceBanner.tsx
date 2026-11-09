@@ -38,7 +38,7 @@ export default function LowBalanceBanner() {
       </p>
       <Link
         href="/recarga"
-        className="rounded-sm bg-running px-3 py-1.5 text-label font-semibold text-base transition-opacity hover:opacity-90"
+        className="rounded-sm bg-running px-3 py-1.5 text-label font-semibold text-white transition-opacity hover:opacity-90"
       >
         Recarregar
       </Link>

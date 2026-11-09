@@ -72,7 +72,7 @@ export default function JobCredits({ job }: { job: JobDetail }) {
             </>
           )}
           .{" "}
-          <Link href="/creditos" className="text-mint hover:text-mint-strong">
+          <Link href="/creditos" className="text-mint-ink hover:text-ink">
             Ver extrato
           </Link>
         </>

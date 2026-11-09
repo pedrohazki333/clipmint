@@ -122,7 +122,7 @@ export default function SchedulePanel({ source }: Props) {
                 {pick ? (
                   <Link
                     href={`/jobs/${pick.job_id}`}
-                    className="block truncate text-body text-ink hover:text-mint transition-colors"
+                    className="block truncate text-body text-ink hover:text-ink transition-colors"
                   >
                     {pick.suggested_title || pick.hook || "Clipe sem título"}
                   </Link>
@@ -138,7 +138,7 @@ export default function SchedulePanel({ source }: Props) {
               </div>
               {pick && (
                 <div className="flex-shrink-0 text-right">
-                  <div className="text-body font-semibold text-mint">
+                  <div className="text-body font-semibold text-mint-ink">
                     {pick.axis_score?.toFixed(1) ?? "–"}
                   </div>
                   <div className="text-[10px] text-ink-muted">no eixo</div>

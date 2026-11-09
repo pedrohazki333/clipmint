@@ -65,7 +65,7 @@ export default function CreditosPage() {
         </span>
         <Link
           href="/recarga"
-          className="ml-auto rounded-sm bg-mint px-3 py-1.5 text-label font-semibold text-base transition-opacity hover:opacity-90"
+          className="ml-auto rounded-sm bg-mint px-3 py-1.5 text-label font-semibold text-ink transition-opacity hover:opacity-90"
         >
           Recarregar
         </Link>
@@ -129,7 +129,7 @@ export default function CreditosPage() {
                         discreto
                           ? "text-ink-muted"
                           : l.amount > 0
-                            ? "text-mint"
+                            ? "text-mint-ink"
                             : "text-ink"
                       }`}
                     >

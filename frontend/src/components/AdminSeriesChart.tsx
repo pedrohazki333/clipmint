@@ -182,7 +182,7 @@ export default function AdminSeriesChart({ serie }: { serie: SerieDia[] }) {
             </p>
             <p
               className={`tabular font-medium ${
-                Number(ativo.lucro_brl) >= 0 ? "text-mint" : "text-danger"
+                Number(ativo.lucro_brl) >= 0 ? "text-mint-ink" : "text-danger"
               }`}
             >
               lucro {Number(ativo.lucro_brl) >= 0 ? "+" : "−"}
@@ -224,7 +224,7 @@ export default function AdminSeriesChart({ serie }: { serie: SerieDia[] }) {
                     </td>
                     <td
                       className={`tabular px-4 py-1.5 text-right font-medium ${
-                        Number(d.lucro_brl) >= 0 ? "text-mint" : "text-danger"
+                        Number(d.lucro_brl) >= 0 ? "text-mint-ink" : "text-danger"
                       }`}
                     >
                       {Number(d.lucro_brl) >= 0 ? "+" : "−"}

@@ -28,7 +28,7 @@ function Delta({ atual, anterior }: { atual: string; anterior: string }) {
   const subiu = v >= 0;
   return (
     <span
-      className={`tabular text-label ${subiu ? "text-mint" : "text-danger"}`}
+      className={`tabular text-label ${subiu ? "text-mint-ink" : "text-danger"}`}
       title={`Mês anterior: ${formatarBRL(anterior)}`}
     >
       {/* O sinal vai escrito, não só na cor: verde e vermelho ficam a ΔE 6,5
@@ -57,7 +57,7 @@ function Bloco({
   nota?: string;
 }) {
   const cor =
-    tom === "bom" ? "text-mint" : tom === "ruim" ? "text-danger" : "text-ink";
+    tom === "bom" ? "text-mint-ink" : tom === "ruim" ? "text-danger" : "text-ink";
   return (
     <div
       className={`flex flex-col gap-0.5 rounded-md border bg-raised px-4 py-3 ${

@@ -33,7 +33,7 @@ import type { PaymentAdmin } from "@/lib/types";
  */
 
 const CAMPO =
-  "rounded-sm border border-line bg-inset px-2 py-1.5 text-body text-ink focus:border-mint focus:outline-none";
+  "rounded-sm border border-line bg-inset px-2 py-1.5 text-body text-ink focus:border-ink focus:outline-none";
 
 function Campo({
   rotulo,
@@ -217,7 +217,7 @@ export default function AdminManualEntry({ onMudou }: { onMudou: () => void }) {
             type="button"
             onClick={lancarPagamento}
             disabled={enviando || !pag.email || !pag.valor_brl}
-            className="self-start rounded-sm bg-mint px-3 py-1.5 text-body font-semibold text-base transition-opacity hover:opacity-90 disabled:opacity-50"
+            className="self-start rounded-sm bg-mint px-3 py-1.5 text-body font-semibold text-ink transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             Lançar pagamento
           </button>
@@ -263,7 +263,7 @@ export default function AdminManualEntry({ onMudou }: { onMudou: () => void }) {
           </button>
         </div>
 
-        {ok && <p className="text-label text-mint">{ok}</p>}
+        {ok && <p className="text-label text-mint-ink">{ok}</p>}
         {erro && (
           <p className="rounded-sm border border-danger/40 bg-danger-soft px-3 py-2 text-body text-danger">
             {erro}
@@ -295,7 +295,7 @@ export default function AdminManualEntry({ onMudou }: { onMudou: () => void }) {
                       className={`rounded-sm border px-1.5 text-label ${
                         p.gateway === "manual"
                           ? "border-line-strong text-ink-dim"
-                          : "border-mint text-mint"
+                          : "border-mint text-mint-ink"
                       }`}
                     >
                       {p.gateway}
@@ -307,7 +307,7 @@ export default function AdminManualEntry({ onMudou }: { onMudou: () => void }) {
                   <td
                     className={`px-4 py-2 text-label ${
                       p.status === "paid"
-                        ? "text-mint"
+                        ? "text-mint-ink"
                         : p.status === "pending"
                           ? "text-ink-muted"
                           : "text-danger"

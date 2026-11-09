@@ -93,7 +93,7 @@ export default function LearnedPatterns() {
           <ul className="mt-4 flex flex-col gap-2">
             {data!.patterns.map((p, i) => (
               <li key={i} className="flex gap-2 text-body text-ink leading-relaxed">
-                <span className="text-mint flex-shrink-0">▹</span>
+                <span className="text-mint-ink flex-shrink-0">▹</span>
                 <span>{p}</span>
               </li>
             ))}
@@ -107,14 +107,14 @@ export default function LearnedPatterns() {
             <button
               onClick={handleClear}
               disabled={busy}
-              className="text-label text-ink-muted hover:text-red-400 transition-colors disabled:opacity-50"
+              className="text-label text-ink-muted hover:text-danger transition-colors disabled:opacity-50"
             >
               Remover
             </button>
           </div>
 
           {data!.stale && (
-            <p className="mt-3 text-label text-amber-500/90 bg-amber-900/15 rounded px-3 py-2">
+            <p className="mt-3 text-label text-running bg-running-soft rounded px-3 py-2">
               Há {available} exemplo{available !== 1 ? "s" : ""} validado
               {available !== 1 ? "s" : ""} agora ({data!.n_examples} usado
               {data!.n_examples !== 1 ? "s" : ""} no cálculo atual). Recalcule para incorporar os

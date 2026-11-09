@@ -240,7 +240,7 @@ export default function ClipStyleEditor({
                 onChange={(e) =>
                   onChange({ ...value, arroba: { ...value.arroba, texto: e.target.value } })
                 }
-                className="w-full max-w-xs rounded-sm border border-line bg-inset px-3 py-2 text-body text-ink placeholder-ink-muted outline-none focus:border-mint"
+                className="w-full max-w-xs rounded-sm border border-line bg-inset px-3 py-2 text-body text-ink placeholder-ink-muted outline-none focus:border-ink"
               />
             )}
           </Grupo>

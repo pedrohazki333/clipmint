@@ -47,7 +47,7 @@ export default function ManualClipsField({
         onChange={(e) => onChange(e.target.value)}
         rows={2}
         placeholder="3:24 - 4:10, 12:05 - 12:40"
-        className="w-full rounded-sm bg-inset border border-line px-4 py-3 text-ink placeholder-ink-muted focus:outline-none focus:border-mint font-mono text-body"
+        className="w-full rounded-sm bg-inset border border-line px-4 py-3 text-ink placeholder-ink-muted focus:outline-none focus:border-ink font-mono text-body"
       />
       <p className="text-label text-ink-dim">
         Um por linha ou separados por vírgula. Aceita <code>3:24</code>,{" "}
@@ -68,7 +68,7 @@ export default function ManualClipsField({
                 title={m.description}
                 className={`px-4 py-2 rounded-sm text-body font-medium transition-colors border ${
                   mode === m.value
-                    ? "bg-mint-strong border-mint text-white"
+                    ? "bg-mint-strong border-mint text-ink"
                     : "bg-inset border-line text-ink hover:border-mint"
                 }`}
               >

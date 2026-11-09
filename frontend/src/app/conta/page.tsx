@@ -70,7 +70,7 @@ export default function ContaPage() {
     <div className="flex flex-col gap-6">
       <div>
         <Link
-          href="/"
+          href="/perfis"
           className="text-label text-ink-dim transition-colors hover:text-ink"
         >
           ← Meus perfis
@@ -86,14 +86,14 @@ export default function ContaPage() {
 
       {/* Identidade */}
       <div className="flex items-center gap-4 rounded-md border border-line bg-raised p-4 sm:p-6">
-        <span className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-full bg-mint-soft text-title font-semibold text-mint">
+        <span className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-full bg-mint-soft text-title font-semibold text-mint-ink">
           {inicial}
         </span>
         <div className="min-w-0">
           <p className="truncate text-title font-semibold text-ink">{nome}</p>
           <p className="truncate text-body text-ink-dim">{user?.email ?? "—"}</p>
           {user?.is_owner && (
-            <span className="mt-1 inline-block rounded-sm border border-mint/40 bg-mint-soft px-2 py-0.5 text-label text-mint">
+            <span className="mt-1 inline-block rounded-sm border border-mint/40 bg-mint-soft px-2 py-0.5 text-label text-mint-ink">
               Administra esta instalação
             </span>
           )}
@@ -145,7 +145,7 @@ export default function ContaPage() {
             </p>
           </div>
           <Link
-            href="/"
+            href="/perfis"
             className="rounded-sm border border-line px-4 py-2 text-body text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
           >
             Ver perfis
@@ -164,7 +164,7 @@ export default function ContaPage() {
           navegadores em que você entrou.
         </p>
         {encerradas !== null && (
-          <p className="mt-3 text-label text-mint">
+          <p className="mt-3 text-label text-mint-ink">
             {encerradas} sessão{encerradas === 1 ? "" : "s"} encerrada
             {encerradas === 1 ? "" : "s"}.
           </p>

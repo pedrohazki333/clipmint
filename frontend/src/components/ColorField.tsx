@@ -39,7 +39,7 @@ export default function ColorField({ label, value, onChange, disabled, fallback 
         placeholder="#RRGGBB"
         maxLength={7}
         className={`w-24 rounded-sm bg-inset border px-2 py-1.5 text-body font-mono text-ink outline-none transition-colors ${
-          valid ? "border-line focus:border-mint" : "border-red-700"
+          valid ? "border-line focus:border-ink" : "border-danger"
         }`}
       />
     </div>

@@ -71,7 +71,7 @@ export default function AccountForm() {
         autoFocus
         autoComplete="email"
         placeholder="seu@email.com"
-        className="w-full rounded-sm border border-line bg-raised px-4 py-2.5 text-ink placeholder-ink-muted outline-none focus:border-mint"
+        className="w-full rounded-sm border border-line bg-raised px-4 py-2.5 text-ink placeholder-ink-muted outline-none focus:border-ink"
       />
 
       <div>
@@ -81,7 +81,7 @@ export default function AccountForm() {
           onChange={(e) => setSenha(e.target.value)}
           autoComplete={criando ? "new-password" : "current-password"}
           placeholder="Senha"
-          className="w-full rounded-sm border border-line bg-raised px-4 py-2.5 text-ink placeholder-ink-muted outline-none focus:border-mint"
+          className="w-full rounded-sm border border-line bg-raised px-4 py-2.5 text-ink placeholder-ink-muted outline-none focus:border-ink"
         />
         {criando && (
           <p className="mt-1.5 text-label text-ink-muted">
@@ -96,7 +96,7 @@ export default function AccountForm() {
       <button
         type="submit"
         disabled={enviando || !email || !senha}
-        className="w-full rounded-sm bg-mint-strong px-4 py-2.5 font-medium text-white transition hover:bg-mint disabled:cursor-not-allowed disabled:opacity-50"
+        className="w-full rounded-sm bg-mint-strong px-4 py-2.5 font-medium text-ink transition hover:bg-mint disabled:cursor-not-allowed disabled:opacity-50"
       >
         {enviando
           ? criando

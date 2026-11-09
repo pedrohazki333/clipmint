@@ -43,7 +43,7 @@ export default function EsqueciSenhaPage() {
         <p className="text-body text-ink-dim">
           Não chegou? Confira o spam e o endereço digitado.
         </p>
-        <Link href="/login" className="inline-block text-body text-mint hover:underline">
+        <Link href="/login" className="inline-block text-body text-mint-ink hover:underline">
           ← Voltar para entrar
         </Link>
       </div>
@@ -66,7 +66,7 @@ export default function EsqueciSenhaPage() {
         autoFocus
         required
         placeholder="seu@email.com"
-        className="w-full rounded-sm border border-line bg-raised px-4 py-2.5 text-ink placeholder-ink-muted outline-none focus:border-mint"
+        className="w-full rounded-sm border border-line bg-raised px-4 py-2.5 text-ink placeholder-ink-muted outline-none focus:border-ink"
       />
 
       {erro && <p className="text-body text-danger">{erro}</p>}
@@ -74,7 +74,7 @@ export default function EsqueciSenhaPage() {
       <button
         type="submit"
         disabled={enviando || !email.trim()}
-        className="w-full rounded-sm bg-mint-strong px-4 py-2.5 text-body font-medium text-base transition-colors hover:bg-mint disabled:opacity-50"
+        className="w-full rounded-sm bg-mint-strong px-4 py-2.5 text-body font-medium text-ink transition-colors hover:bg-mint disabled:opacity-50"
       >
         {enviando ? "Enviando..." : "Enviar link"}
       </button>

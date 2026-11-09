@@ -40,7 +40,7 @@ function Formulario() {
           Este endereço não traz o código de redefinição. Abra o link direto do
           e-mail, sem copiar pela metade.
         </p>
-        <Link href="/esqueci-senha" className="inline-block text-body text-mint hover:underline">
+        <Link href="/esqueci-senha" className="inline-block text-body text-mint-ink hover:underline">
           Pedir outro link
         </Link>
       </div>
@@ -63,7 +63,7 @@ function Formulario() {
         autoFocus
         required
         placeholder="Nova senha"
-        className="w-full rounded-sm border border-line bg-raised px-4 py-2.5 text-ink placeholder-ink-muted outline-none focus:border-mint"
+        className="w-full rounded-sm border border-line bg-raised px-4 py-2.5 text-ink placeholder-ink-muted outline-none focus:border-ink"
       />
 
       {erro && <p className="text-body text-danger">{erro}</p>}
@@ -75,7 +75,7 @@ function Formulario() {
       <button
         type="submit"
         disabled={salvando || !senha}
-        className="w-full rounded-sm bg-mint-strong px-4 py-2.5 text-body font-medium text-base transition-colors hover:bg-mint disabled:opacity-50"
+        className="w-full rounded-sm bg-mint-strong px-4 py-2.5 text-body font-medium text-ink transition-colors hover:bg-mint disabled:opacity-50"
       >
         {salvando ? "Trocando..." : "Trocar senha e entrar"}
       </button>

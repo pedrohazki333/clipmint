@@ -221,7 +221,7 @@ export default function ProfileForm({ profile }: Props) {
             maxLength={60}
             autoFocus
             placeholder="Ex.: Meus cortes"
-            className="w-full rounded-sm border border-line bg-inset px-4 py-2.5 text-body text-ink placeholder-ink-muted outline-none focus:border-mint"
+            className="w-full rounded-sm border border-line bg-inset px-4 py-2.5 text-body text-ink placeholder-ink-muted outline-none focus:border-ink"
           />
         </div>
 
@@ -233,7 +233,7 @@ export default function ProfileForm({ profile }: Props) {
             id="nicho"
             value={sourceType}
             onChange={(e) => handleNiche(e.target.value)}
-            className="w-full rounded-sm border border-line bg-inset px-4 py-2.5 text-body text-ink outline-none focus:border-mint"
+            className="w-full rounded-sm border border-line bg-inset px-4 py-2.5 text-body text-ink outline-none focus:border-ink"
           >
             {NICHES.map((n) => (
               <option key={n.source} value={n.source}>
@@ -258,7 +258,7 @@ export default function ProfileForm({ profile }: Props) {
                 aria-pressed={avatar === chave}
                 className={`flex h-12 w-12 items-center justify-center rounded-sm border transition-colors ${
                   avatar === chave
-                    ? "border-mint bg-mint-soft text-mint"
+                    ? "border-mint bg-mint-soft text-mint-ink"
                     : "border-line bg-inset text-ink-dim hover:border-line-strong hover:text-ink"
                 }`}
               >
@@ -342,7 +342,7 @@ export default function ProfileForm({ profile }: Props) {
           <button
             type="submit"
             disabled={salvando || !name.trim() || !marcaValida}
-            className="rounded-sm bg-mint-strong px-5 py-2.5 text-body font-medium text-base transition-colors hover:bg-mint disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-sm bg-mint-strong px-5 py-2.5 text-body font-medium text-ink transition-colors hover:bg-mint disabled:cursor-not-allowed disabled:opacity-50"
           >
             {salvando
               ? "Salvando..."

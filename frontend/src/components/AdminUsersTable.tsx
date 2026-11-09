@@ -84,7 +84,7 @@ export default function AdminUsersTable({
                   </td>
                   <td
                     className={`tabular px-4 py-2 text-right font-medium ${
-                      l.deficitario ? "text-danger" : "text-mint"
+                      l.deficitario ? "text-danger" : "text-mint-ink"
                     }`}
                   >
                     {Number(l.resultado_brl) >= 0 ? "+" : "−"}

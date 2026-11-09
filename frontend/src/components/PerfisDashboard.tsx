@@ -105,7 +105,7 @@ export default function PerfisDashboard() {
           </p>
           <Link
             href="/perfis/novo"
-            className="mt-5 inline-block rounded-sm bg-mint-strong px-5 py-2.5 text-body font-medium text-base transition-colors hover:bg-mint"
+            className="mt-5 inline-block rounded-sm bg-mint-strong px-5 py-2.5 text-body font-medium text-ink transition-colors hover:bg-mint"
           >
             Criar primeiro perfil
           </Link>
@@ -122,7 +122,7 @@ export default function PerfisDashboard() {
                   nicho?.accent ?? "hover:border-line-strong"
                 }`}
               >
-                <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-sm border border-line bg-inset text-mint">
+                <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-sm border border-line bg-inset text-mint-ink">
                   <AvatarIcon name={p.avatar} className="h-5 w-5" />
                 </div>
                 <h2 className="truncate text-title font-semibold text-ink">
@@ -148,7 +148,7 @@ export default function PerfisDashboard() {
             href="/perfis/novo"
             className="flex flex-col items-center justify-center gap-2 rounded-md border border-dashed border-line bg-raised p-5 text-center transition-colors hover:border-mint"
           >
-            <span className="flex h-11 w-11 items-center justify-center rounded-sm border border-line bg-inset text-mint">
+            <span className="flex h-11 w-11 items-center justify-center rounded-sm border border-line bg-inset text-mint-ink">
               <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" aria-hidden="true">
                 <path d="M12 5v14M5 12h14" />
               </svg>

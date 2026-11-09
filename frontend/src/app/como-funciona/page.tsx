@@ -50,7 +50,7 @@ export default async function ComoFuncionaPage() {
       <section className="flex flex-col gap-6">
         {HOW_IT_WORKS_STEPS.map((step, i) => (
           <div key={step.title} className="flex gap-4">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-sm border border-line bg-inset text-mint">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-sm border border-line bg-inset text-mint-ink">
               <AvatarIcon name={step.icon} className="h-5 w-5" />
             </div>
             <div>
@@ -106,7 +106,7 @@ export default async function ComoFuncionaPage() {
       <section className="flex flex-col items-start gap-3">
         <Link
           href={loggedIn ? "/" : "/login"}
-          className="rounded-sm bg-mint-strong px-5 py-2.5 text-body font-medium text-base transition-colors hover:bg-mint"
+          className="rounded-sm bg-mint-strong px-5 py-2.5 text-body font-medium text-ink transition-colors hover:bg-mint"
         >
           {loggedIn ? "Ir para meus perfis" : "Criar conta grátis"}
         </Link>

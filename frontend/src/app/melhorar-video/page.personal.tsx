@@ -26,9 +26,9 @@ const STATUS_LABEL: Record<VideoEnhanceStatus, string> = {
 
 const STATUS_STYLE: Record<VideoEnhanceStatus, string> = {
   pending: "bg-inset border-line text-ink-dim",
-  processing: "bg-sky-500/10 border-sky-500/30 text-sky-400",
-  done: "bg-mint-soft border-mint/30 text-mint",
-  failed: "bg-red-500/10 border-red-500/30 text-danger",
+  processing: "bg-sky-50 border-sky-200 text-sky-800",
+  done: "bg-mint-soft border-mint/30 text-mint-ink",
+  failed: "bg-danger-soft border-danger/30 text-danger",
 };
 
 function isRunning(job: VideoEnhanceJob): boolean {
@@ -92,8 +92,8 @@ export default function MelhorarVideoPage() {
   return (
     <div className="flex flex-col gap-8">
       <div>
-        <Link href="/" className="text-body text-ink-dim hover:text-ink">
-          ← Suas contas
+        <Link href="/perfis" className="text-body text-ink-dim hover:text-ink">
+          ← Meus perfis
         </Link>
         <h1 className="mt-2 text-title font-bold text-ink">Melhorar vídeo</h1>
         <p className="text-body text-ink-dim">
@@ -168,7 +168,7 @@ export default function MelhorarVideoPage() {
                     {job.final_summary && (
                       <>
                         {" → "}
-                        <span className="text-mint">{job.final_summary}</span>
+                        <span className="text-mint-ink">{job.final_summary}</span>
                       </>
                     )}
                   </p>
@@ -187,7 +187,7 @@ export default function MelhorarVideoPage() {
               </div>
               <button
                 onClick={() => handleDelete(job.id)}
-                className="flex-shrink-0 text-label text-ink-muted transition-colors hover:text-red-400"
+                className="flex-shrink-0 text-label text-ink-muted transition-colors hover:text-danger"
                 title="Excluir vídeo e arquivos"
               >
                 Excluir
@@ -203,7 +203,7 @@ export default function MelhorarVideoPage() {
             {/* Em 'done' a mensagem não é erro: é aviso de etapa que falhou, e o
                 vídeo continua disponível logo abaixo. */}
             {job.status === "done" && job.error_message && (
-              <p className="rounded bg-amber-900/20 px-3 py-2 text-label text-running">
+              <p className="rounded bg-running-soft px-3 py-2 text-label text-running">
                 Vídeo entregue, mas parte do tratamento não rodou: {job.error_message}
               </p>
             )}

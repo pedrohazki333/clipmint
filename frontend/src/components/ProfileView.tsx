@@ -75,7 +75,7 @@ export default function ProfileView({ profileId }: { profileId: string }) {
     setExcluindo(true);
     try {
       await deleteProfile(profileId);
-      router.replace("/");
+      router.replace("/perfis");
       router.refresh();
     } catch (err) {
       setErro(getApiErrorMessage(err, "Não foi possível excluir o perfil."));
@@ -93,7 +93,7 @@ export default function ProfileView({ profileId }: { profileId: string }) {
             Os vídeos que saíram dele continuam na sua conta.
           </p>
         </div>
-        <Link href="/" className="text-body text-mint hover:text-mint-strong">
+        <Link href="/perfis" className="text-body text-mint-ink hover:text-ink">
           ← Meus perfis
         </Link>
       </div>
@@ -110,7 +110,7 @@ export default function ProfileView({ profileId }: { profileId: string }) {
   return (
     <div className="flex flex-col gap-6">
       <Link
-        href="/"
+        href="/perfis"
         className="text-label text-ink-dim transition-colors hover:text-ink"
       >
         ← Meus perfis
@@ -118,7 +118,7 @@ export default function ProfileView({ profileId }: { profileId: string }) {
 
       {/* Identidade e a ação principal */}
       <div className="flex flex-col gap-4 rounded-md border border-line bg-raised p-4 sm:flex-row sm:items-center sm:p-6">
-        <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-md border border-line bg-inset text-mint">
+        <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-md border border-line bg-inset text-mint-ink">
           <AvatarIcon name={profile.avatar} className="h-6 w-6" />
         </div>
         <div className="min-w-0 flex-1">
@@ -136,7 +136,7 @@ export default function ProfileView({ profileId }: { profileId: string }) {
           </Link>
           <Link
             href={`/perfis/${profile.id}/gerar`}
-            className="rounded-sm bg-mint-strong px-5 py-2.5 text-center text-body font-medium text-base transition-colors hover:bg-mint"
+            className="rounded-sm bg-mint-strong px-5 py-2.5 text-center text-body font-medium text-ink transition-colors hover:bg-mint"
           >
             Gerar clipes
           </Link>
@@ -203,7 +203,7 @@ export default function ProfileView({ profileId }: { profileId: string }) {
             </p>
             <Link
               href={`/perfis/${profile.id}/gerar`}
-              className="mt-4 inline-block rounded-sm bg-mint-strong px-5 py-2.5 text-body font-medium text-base transition-colors hover:bg-mint"
+              className="mt-4 inline-block rounded-sm bg-mint-strong px-5 py-2.5 text-body font-medium text-ink transition-colors hover:bg-mint"
             >
               Gerar os primeiros clipes
             </Link>

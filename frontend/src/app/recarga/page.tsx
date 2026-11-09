@@ -195,7 +195,7 @@ export default function RecargaPage() {
         <div className="rounded-md border border-line bg-raised p-4 sm:p-6">
           {pago ? (
             <div className="flex flex-col items-start gap-3">
-              <p className="text-title font-semibold text-mint">
+              <p className="text-title font-semibold text-mint-ink">
                 Pagamento confirmado
               </p>
               <p className="text-body text-ink">
@@ -204,8 +204,8 @@ export default function RecargaPage() {
               </p>
               <div className="flex gap-2">
                 <Link
-                  href="/"
-                  className="rounded-sm bg-mint px-3 py-1.5 text-body font-semibold text-base transition-opacity hover:opacity-90"
+                  href="/gerar"
+                  className="rounded-sm bg-mint px-3 py-1.5 text-body font-semibold text-ink transition-opacity hover:opacity-90"
                 >
                   Gerar clips
                 </Link>
@@ -268,7 +268,7 @@ export default function RecargaPage() {
                         setCobranca(null);
                         setMorreu(null);
                       }}
-                      className="rounded-sm bg-mint px-3 py-1.5 text-label font-semibold text-base transition-opacity hover:opacity-90"
+                      className="rounded-sm bg-mint px-3 py-1.5 text-label font-semibold text-ink transition-opacity hover:opacity-90"
                     >
                       Gerar outro Pix
                     </button>
@@ -307,7 +307,7 @@ export default function RecargaPage() {
                   {formatarCreditos(p.creditos)}
                 </span>
                 <span className="text-label text-ink-muted">créditos</span>
-                <span className="tabular mt-2 text-body font-medium text-mint">
+                <span className="tabular mt-2 text-body font-medium text-mint-ink">
                   {gerando === p.creditos
                     ? "Gerando Pix…"
                     : formatarBRL(p.preco_brl)}
@@ -337,7 +337,7 @@ export default function RecargaPage() {
                 {assinatura.init_point && (
                   <a
                     href={assinatura.init_point}
-                    className="rounded-sm bg-mint px-3 py-1.5 text-label font-semibold text-base transition-opacity hover:opacity-90"
+                    className="rounded-sm bg-mint px-3 py-1.5 text-label font-semibold text-ink transition-opacity hover:opacity-90"
                   >
                     Continuar autorização
                   </a>
@@ -411,7 +411,7 @@ export default function RecargaPage() {
                     type="button"
                     onClick={() => assinar(pl.code)}
                     disabled={assinando !== null}
-                    className="mt-3 rounded-sm bg-mint px-3 py-1.5 text-label font-semibold text-base transition-opacity hover:opacity-90 disabled:opacity-50"
+                    className="mt-3 rounded-sm bg-mint px-3 py-1.5 text-label font-semibold text-ink transition-opacity hover:opacity-90 disabled:opacity-50"
                   >
                     {assinando === pl.code ? "Abrindo…" : "Assinar"}
                   </button>

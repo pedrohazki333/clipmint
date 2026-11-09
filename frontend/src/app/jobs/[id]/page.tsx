@@ -101,8 +101,8 @@ export default function JobPage() {
             Ele pode ter sido excluído por aqui ou em outra aba.
           </p>
         </div>
-        <Link href="/" className="text-body text-mint hover:text-mint">
-          ← Voltar para as contas
+        <Link href="/projetos" className="text-body text-mint-ink hover:text-ink">
+          ← Projetos
         </Link>
       </div>
     );
@@ -184,7 +184,7 @@ export default function JobPage() {
         </div>
 
         {job.status === "done" && (
-          <p className="text-body text-mint">
+          <p className="text-body text-mint-ink">
             {readyClips.length} clip{readyClips.length !== 1 ? "s" : ""} pronto{readyClips.length !== 1 ? "s" : ""}
             {allClips.length > readyClips.length && ` (${allClips.length - readyClips.length} com falha)`}
           </p>
@@ -196,7 +196,7 @@ export default function JobPage() {
               <button
                 onClick={handleRetry}
                 disabled={retrying}
-                className="rounded-sm bg-mint-strong hover:bg-mint disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-body font-semibold text-white transition-colors"
+                className="rounded-sm bg-mint-strong hover:bg-mint disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-body font-semibold text-ink transition-colors"
               >
                 {retrying ? "Retomando..." : "Retomar de onde parou"}
               </button>

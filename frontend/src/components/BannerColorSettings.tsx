@@ -101,7 +101,7 @@ export default function BannerColorSettings({
       </div>
 
       {!bannerValido(value) && (
-        <p className="rounded-sm bg-amber-900/15 px-3 py-2 text-label text-amber-500/80">
+        <p className="rounded-sm bg-running-soft px-3 py-2 text-label text-running">
           Use hexadecimal no formato #RRGGBB (ex: {DEFAULT_BG}).
         </p>
       )}

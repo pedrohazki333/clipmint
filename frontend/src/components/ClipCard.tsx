@@ -31,7 +31,7 @@ function parseTags(tagsJson: string | null): string[] {
 
 /** Faixas da nota. O verde é o acento do produto; o resto sinaliza atenção. */
 const SCORE_COLOR = (score: number) => {
-  if (score >= 9) return "text-mint";
+  if (score >= 9) return "text-mint-ink";
   if (score >= 7.5) return "text-running";
   return "text-ink-dim";
 };
@@ -98,7 +98,7 @@ export default function ClipCard({ clip }: Props) {
       )}
 
       {segmentCount > 1 && (
-        <p className="text-label text-sky-400">
+        <p className="text-label text-sky-800">
           Costurado de {segmentCount} trechos — o tempo morto entre os momentos foi removido.
         </p>
       )}
@@ -179,7 +179,7 @@ export default function ClipCard({ clip }: Props) {
           <a
             href={getDownloadUrl(clip.id)}
             download
-            className="flex-1 rounded-sm bg-mint-strong px-4 py-2 text-center text-body font-medium text-base transition-colors hover:bg-mint"
+            className="flex-1 rounded-sm bg-mint-strong px-4 py-2 text-center text-body font-medium text-ink transition-colors hover:bg-mint"
           >
             Download MP4
           </a>

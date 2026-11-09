@@ -46,12 +46,12 @@ export default function NicheRedirect({ source }: { source: SourceType }) {
       <div className="mt-5 flex flex-col justify-center gap-2 sm:flex-row">
         <Link
           href="/perfis/novo"
-          className="rounded-sm bg-mint-strong px-5 py-2.5 text-body font-medium text-base transition-colors hover:bg-mint"
+          className="rounded-sm bg-mint-strong px-5 py-2.5 text-body font-medium text-ink transition-colors hover:bg-mint"
         >
           Criar perfil
         </Link>
         <Link
-          href="/"
+          href="/perfis"
           className="rounded-sm border border-line px-5 py-2.5 text-body text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
         >
           Meus perfis

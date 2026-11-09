@@ -28,7 +28,7 @@ export default function SourceTypeSelector({ value, onChange, isInferred }: Prop
             title={type.description}
             className={`px-4 py-2 rounded-sm text-body font-medium transition-colors border ${
               value === type.source
-                ? "bg-mint-strong border-mint text-white"
+                ? "bg-mint-strong border-mint text-ink"
                 : "bg-inset border-line text-ink hover:border-mint"
             }`}
           >

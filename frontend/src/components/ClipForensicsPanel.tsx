@@ -37,7 +37,7 @@ function Bullets({ items, tone = "gray" }: { items: string[]; tone?: "gray" | "e
     <ul className="flex flex-col gap-1.5">
       {items.map((item, i) => (
         <li key={i} className="text-body text-ink leading-relaxed flex gap-2">
-          <span className={tone === "emerald" ? "text-mint" : "text-ink-muted"}>—</span>
+          <span className={tone === "emerald" ? "text-mint-ink" : "text-ink-muted"}>—</span>
           <span>{item}</span>
         </li>
       ))}
@@ -47,10 +47,10 @@ function Bullets({ items, tone = "gray" }: { items: string[]; tone?: "gray" | "e
 
 const ROLE_COLOR: Record<string, string> = {
   setup: "bg-inset border-line text-ink-dim",
-  escalada: "bg-amber-900/30 border-amber-800/60 text-running",
-  virada: "bg-fuchsia-900/30 border-fuchsia-800/60 text-fuchsia-400",
-  payoff: "bg-mint-soft border-mint/30 text-mint",
-  arremate: "bg-sky-900/30 border-sky-800/60 text-sky-400",
+  escalada: "bg-running-soft border-running/30 text-running",
+  virada: "bg-fuchsia-50 border-fuchsia-200 text-fuchsia-800",
+  payoff: "bg-mint-soft border-mint/30 text-mint-ink",
+  arremate: "bg-sky-50 border-sky-200 text-sky-800",
 };
 
 function list(value: string[] | null | undefined): string[] {
@@ -82,7 +82,7 @@ export default function ClipForensicsPanel({ forensics }: { forensics: ClipForen
           </h2>
 
           {hook.on_screen_text && (
-            <div className="rounded-sm bg-black/40 border border-line px-4 py-3">
+            <div className="rounded-sm bg-inset border border-line px-4 py-3">
               <p className="text-label text-ink-dim mb-1">Texto queimado na tela</p>
               <p className="text-body font-bold text-ink leading-snug">
                 {hook.on_screen_text}
@@ -205,13 +205,13 @@ export default function ClipForensicsPanel({ forensics }: { forensics: ClipForen
       )}
 
       {gaps.length > 0 && (
-        <div className="rounded-md bg-amber-900/15 border border-amber-900/40 px-4 py-3">
-          <p className="text-label text-amber-500/90 mb-1.5">
+        <div className="rounded-md bg-running-soft border border-running/30 px-4 py-3">
+          <p className="text-label text-running mb-1.5">
             O que as evidências não permitiram concluir
           </p>
           <ul className="flex flex-col gap-1">
             {gaps.map((gap, i) => (
-              <li key={i} className="text-label text-amber-200/70 leading-relaxed">
+              <li key={i} className="text-label text-ink-dim leading-relaxed">
                 {gap}
               </li>
             ))}

@@ -158,7 +158,7 @@ export default function ProfileGenerate({ profileId }: { profileId: string }) {
         <p className="rounded-md border border-line bg-raised p-6 text-body text-ink">
           Este perfil não existe mais.
         </p>
-        <Link href="/" className="text-body text-mint hover:text-mint-strong">
+        <Link href="/perfis" className="text-body text-mint-ink hover:text-ink">
           ← Meus perfis
         </Link>
       </div>
@@ -188,7 +188,7 @@ export default function ProfileGenerate({ profileId }: { profileId: string }) {
 
       {/* Com qual identidade — some a dúvida de "para qual conta isso vai" */}
       <div className="flex items-center gap-3 rounded-md border border-line bg-raised px-4 py-3">
-        <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-sm border border-line bg-inset text-mint">
+        <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-sm border border-line bg-inset text-mint-ink">
           <AvatarIcon name={profile.avatar} className="h-5 w-5" />
         </div>
         <div className="min-w-0">

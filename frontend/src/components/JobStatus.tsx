@@ -120,7 +120,7 @@ export default function JobStatus({
               >
                 <svg
                   viewBox="0 0 12 12"
-                  className="h-3 w-3 flex-shrink-0 text-mint"
+                  className="h-3 w-3 flex-shrink-0 text-mint-ink"
                   aria-hidden="true"
                 >
                   <path
@@ -182,7 +182,7 @@ export default function JobStatus({
       )}
 
       {status === "done" && (
-        <p className="flex items-center gap-2 text-body text-mint">
+        <p className="flex items-center gap-2 text-body text-mint-ink">
           <svg viewBox="0 0 12 12" className="h-3.5 w-3.5" aria-hidden="true">
             <path
               d="M2.5 6.5l2.5 2.5 4.5-5"

@@ -24,7 +24,7 @@ type Mode = "standalone" | "aligned";
 const NICHES = [...PUBLIC_NICHES, ...PERSONAL_NICHES];
 
 const FIELD =
-  "w-full rounded-sm bg-inset border border-line px-4 py-3 text-ink placeholder-ink-muted focus:outline-none focus:border-mint disabled:opacity-50";
+  "w-full rounded-sm bg-inset border border-line px-4 py-3 text-ink placeholder-ink-muted focus:outline-none focus:border-ink disabled:opacity-50";
 
 export default function ReferenceForm() {
   const router = useRouter();
@@ -96,7 +96,7 @@ export default function ReferenceForm() {
           disabled={busy}
           className={`flex-1 rounded-sm px-4 py-3 text-left border transition-colors ${
             mode === "standalone"
-              ? "bg-mint-soft border-mint text-mint"
+              ? "bg-mint-soft border-mint text-mint-ink"
               : "bg-inset border-line text-ink-dim hover:bg-hover"
           }`}
         >
@@ -111,7 +111,7 @@ export default function ReferenceForm() {
           disabled={busy}
           className={`flex-1 rounded-sm px-4 py-3 text-left border transition-colors ${
             mode === "aligned"
-              ? "bg-mint-soft border-mint text-mint"
+              ? "bg-mint-soft border-mint text-mint-ink"
               : "bg-inset border-line text-ink-dim hover:bg-hover"
           }`}
         >
@@ -176,7 +176,7 @@ export default function ReferenceForm() {
                 disabled={busy}
                 className={`rounded-sm px-4 py-2 text-body font-medium border transition-colors ${
                   sourceType === niche.source
-                    ? "bg-mint-strong border-mint text-white"
+                    ? "bg-mint-strong border-mint text-ink"
                     : "bg-inset border-line text-ink hover:bg-hover"
                 }`}
               >
@@ -247,7 +247,7 @@ export default function ReferenceForm() {
         <button
           type="submit"
           disabled={busy}
-          className="w-full rounded-sm bg-mint-strong hover:bg-mint disabled:bg-inset disabled:cursor-not-allowed px-6 py-3 font-semibold text-white transition-colors"
+          className="w-full rounded-sm bg-mint-strong hover:bg-mint disabled:bg-inset disabled:cursor-not-allowed px-6 py-3 font-semibold text-ink transition-colors"
         >
           {busy ? "Enviando..." : "Analisar e aprender"}
         </button>

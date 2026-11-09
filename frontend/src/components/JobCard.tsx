@@ -17,11 +17,11 @@ const STATUS_LABELS: Record<string, string> = {
 
 const STATUS_COLORS: Record<string, string> = {
   queued: "text-ink-dim",
-  downloading: "text-blue-400",
-  transcribing: "text-yellow-400",
-  analyzing: "text-purple-400",
-  clipping: "text-orange-400",
-  done: "text-mint",
+  downloading: "text-sky-800",
+  transcribing: "text-running",
+  analyzing: "text-violet-800",
+  clipping: "text-orange-800",
+  done: "text-mint-ink",
   error: "text-danger",
 };
 
@@ -104,8 +104,8 @@ export default function JobCard({ job, onDeleted }: Props) {
             title="Excluir job e todos os arquivos"
             className={`flex-shrink-0 rounded-sm px-3 py-1.5 text-label font-medium border transition-colors ${
               confirming
-                ? "bg-red-600 border-red-500 text-white hover:bg-red-500"
-                : "bg-inset border-line text-ink-dim hover:text-red-400 hover:border-red-900 opacity-0 group-hover:opacity-100"
+                ? "bg-danger border-danger text-white hover:opacity-90"
+                : "bg-inset border-line text-ink-dim hover:text-danger hover:border-danger opacity-0 group-hover:opacity-100"
             } ${deleting ? "opacity-50 cursor-wait" : ""}`}
           >
             {deleting ? "Excluindo..." : confirming ? "Confirmar?" : "Excluir"}

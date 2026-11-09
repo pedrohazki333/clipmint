@@ -109,7 +109,7 @@ export default function ClipWatermarkSettings({
           <button
             type="button"
             onClick={() => onChange({ ...value, remove: false })}
-            className="text-mint transition-colors hover:text-mint-strong"
+            className="text-mint-ink transition-colors hover:text-ink"
           >
             Desfazer
           </button>

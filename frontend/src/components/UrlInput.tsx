@@ -116,7 +116,7 @@ export default function UrlInput({
           onChange={(e) => setUrl(e.target.value)}
           placeholder="https://www.youtube.com/watch?v=..."
           disabled={isLoading}
-          className="w-full rounded-sm bg-inset border border-line px-4 py-3 text-ink placeholder-ink-muted focus:outline-none focus:border-mint disabled:opacity-50"
+          className="w-full rounded-sm bg-inset border border-line px-4 py-3 text-ink placeholder-ink-muted focus:outline-none focus:border-ink disabled:opacity-50"
         />
         {error && <p className="text-body text-danger">{error}</p>}
       </div>
@@ -150,7 +150,7 @@ export default function UrlInput({
       <button
         type="submit"
         disabled={isLoading}
-        className="w-full rounded-sm bg-mint-strong hover:bg-mint disabled:bg-inset disabled:cursor-not-allowed px-6 py-3 font-semibold text-white transition-colors"
+        className="w-full rounded-sm bg-mint-strong hover:bg-mint disabled:bg-inset disabled:cursor-not-allowed px-6 py-3 font-semibold text-ink transition-colors"
       >
         {isLoading
           ? "Processando..."

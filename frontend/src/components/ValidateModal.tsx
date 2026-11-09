@@ -80,7 +80,7 @@ export default function ValidateModal({ clipId, onClose }: Props) {
           /* Estado de sucesso */
           <div className="flex flex-col items-center gap-3 py-4 text-center">
             <div className="text-display">✓</div>
-            <p className="text-mint font-medium">Exemplo salvo com sucesso!</p>
+            <p className="text-mint-ink font-medium">Exemplo salvo com sucesso!</p>
             <p className="text-label text-ink-dim">
               Este clip será usado como referência nas próximas análises.
             </p>
@@ -105,7 +105,7 @@ export default function ValidateModal({ clipId, onClose }: Props) {
                     onClick={() => setPerformance(opt.value)}
                     className={`flex-1 rounded-sm py-2 text-body font-medium border transition-colors ${
                       performance === opt.value
-                        ? "bg-mint-strong border-mint text-white"
+                        ? "bg-mint-strong border-mint text-ink"
                         : "bg-inset border-line text-ink-dim hover:border-line-strong"
                     }`}
                   >
@@ -125,7 +125,7 @@ export default function ValidateModal({ clipId, onClose }: Props) {
                 onChange={(e) => setAprendizado(e.target.value)}
                 placeholder="Ex: Hook de revelação no início + tensão crescente. Público sentiu que estava aprendendo um segredo."
                 rows={3}
-                className="rounded-sm bg-inset border border-line text-body text-ink placeholder-ink-muted px-3 py-2 resize-none focus:outline-none focus:border-mint transition-colors"
+                className="rounded-sm bg-inset border border-line text-body text-ink placeholder-ink-muted px-3 py-2 resize-none focus:outline-none focus:border-ink transition-colors"
               />
             </div>
 
@@ -141,7 +141,7 @@ export default function ValidateModal({ clipId, onClose }: Props) {
                 value={views}
                 onChange={(e) => setViews(e.target.value)}
                 placeholder="Ex: 50000"
-                className="rounded-sm bg-inset border border-line text-body text-ink placeholder-ink-muted px-3 py-2 focus:outline-none focus:border-mint transition-colors"
+                className="rounded-sm bg-inset border border-line text-body text-ink placeholder-ink-muted px-3 py-2 focus:outline-none focus:border-ink transition-colors"
               />
             </div>
 
@@ -163,7 +163,7 @@ export default function ValidateModal({ clipId, onClose }: Props) {
               <button
                 onClick={handleConfirm}
                 disabled={saving}
-                className="flex-1 rounded-sm py-2 text-body font-semibold text-white bg-mint-strong hover:bg-mint disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="flex-1 rounded-sm py-2 text-body font-semibold text-ink bg-mint-strong hover:bg-mint disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {saving ? "Salvando..." : "Confirmar"}
               </button>
