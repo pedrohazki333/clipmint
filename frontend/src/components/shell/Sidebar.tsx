@@ -154,12 +154,12 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       className="cm-on-dark flex h-full flex-col bg-sidebar px-4 pb-5 pt-7 text-sidebar-text"
     >
       <Link href="/gerar" onClick={onNavigate} className="px-3" aria-label="ClipMint — gerar clipes">
-        <Logo tone="dark" />
+        <Logo tone="dark" size="lg" />
       </Link>
 
       <div className="mx-3 mt-7 border-t border-sidebar-line" />
 
-      <ul className="mt-5 flex flex-col gap-1.5">
+      <ul className="mt-6 flex flex-col gap-2">
         {itens(!!user?.is_owner).map((item) => {
           const ativo = item.ativoEm(pathname);
           const Icone = item.icon;
@@ -169,7 +169,7 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                 href={item.href}
                 onClick={onNavigate}
                 aria-current={ativo ? "page" : undefined}
-                className={`flex items-center gap-3.5 rounded-md px-3.5 py-3 text-[0.9375rem] transition-colors duration-150 ${
+                className={`flex items-center gap-4 rounded-[10px] px-4 py-3.5 text-[1rem] transition-colors duration-150 ${
                   ativo
                     ? "bg-mint-strong font-semibold text-ink"
                     : "text-sidebar-text/90 hover:bg-sidebar-raised hover:text-sidebar-text"

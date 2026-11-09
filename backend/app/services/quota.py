@@ -118,6 +118,11 @@ class Metadados:
     #: A consulta respondeu? False = não sabemos NADA sobre este vídeo, o que é
     #: diferente de "sabemos que não tem duração".
     ok: bool = False
+    #: O que a tela de gerar mostra para a pessoa confirmar que é o vídeo certo.
+    #: Vem na mesma consulta, sem custo a mais.
+    title: str | None = None
+    channel: str | None = None
+    thumbnail_url: str | None = None
 
 
 async def probe(url: str) -> Metadados:
@@ -161,6 +166,9 @@ async def probe(url: str) -> Metadados:
         is_live=bool(info.get("is_live"))
         or info.get("live_status") in ("is_live", "is_upcoming"),
         ok=True,
+        title=info.get("title") or None,
+        channel=info.get("channel") or info.get("uploader") or None,
+        thumbnail_url=info.get("thumbnail") or None,
     )
 
 

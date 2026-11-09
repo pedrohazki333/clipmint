@@ -50,6 +50,11 @@ class JobCreate(BaseModel):
     profile_id: Optional[str] = None
     youtube_url: str
     subtitle_mode: Literal["word_highlight", "traditional", "none"] = "word_highlight"
+    # Como a palavra falada se destaca: "caixa" (a palavra ganha uma caixa na cor da
+    # legenda) ou "cor" (a palavra muda de cor). Omitido = o que o estilo do perfil
+    # diz, ou o padrão sem perfil. Vale só para ESTE job: troca o campo na cópia do
+    # estilo que o job guarda, e o perfil continua como estava.
+    caption_style: Optional[Literal["caixa", "cor"]] = None
     # Sem default fixo: "cover" só serve a podcast, e cravá-lo aqui fazia um
     # pedido de gameplay sem layout ser recusado. Omitido, o layout é derivado
     # do perfil ou da rubrica (ver routers/jobs.py).
@@ -94,6 +99,23 @@ class JobCreate(BaseModel):
         if not _YOUTUBE_URL_RE.match(v):
             raise ValueError("URL inválida: forneça um link do YouTube (youtube.com ou youtu.be)")
         return v
+
+
+def is_youtube_url(value: str) -> bool:
+    """O mesmo critério do `JobCreate`, para quem recebe a URL fora dele."""
+    return bool(_YOUTUBE_URL_RE.match((value or "").strip()))
+
+
+class VideoMetadataResponse(BaseModel):
+    """O vídeo, antes de virar job: o bastante para a pessoa conferir que é ele."""
+
+    #: False = a consulta não respondeu agora. Não impede gerar: o job tenta de novo.
+    ok: bool
+    title: Optional[str] = None
+    channel: Optional[str] = None
+    duration_seconds: Optional[float] = None
+    thumbnail_url: Optional[str] = None
+    is_live: bool = False
 
 
 class JobResponse(BaseModel):

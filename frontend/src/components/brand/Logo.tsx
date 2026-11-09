@@ -28,18 +28,25 @@ export function LogoMark({ className = "h-8 w-8" }: { className?: string }) {
 
 export default function Logo({
   tone = "dark",
+  size = "md",
   className = "",
 }: {
   /** "dark" = sobre a navegação escura; "light" = sobre o papel claro. */
   tone?: "dark" | "light";
+  /** "lg" é o da navegação fixa; "md", o das barras compactas. */
+  size?: "md" | "lg";
   className?: string;
 }) {
   const clip = tone === "dark" ? "text-sidebar-text" : "text-ink";
   const mint = tone === "dark" ? "text-mint-strong" : "text-ink";
   return (
-    <span className={`inline-flex items-center gap-2.5 ${className}`}>
-      <LogoMark />
-      <span className="font-display text-[1.375rem] font-bold leading-none tracking-[-0.03em]">
+    <span className={`inline-flex items-center ${size === "lg" ? "gap-3" : "gap-2.5"} ${className}`}>
+      <LogoMark className={size === "lg" ? "h-10 w-10" : "h-8 w-8"} />
+      <span
+        className={`font-display font-bold leading-none tracking-[-0.03em] ${
+          size === "lg" ? "text-[1.75rem]" : "text-[1.375rem]"
+        }`}
+      >
         <span className={clip}>Clip</span>
         <span className={mint}>Mint</span>
       </span>

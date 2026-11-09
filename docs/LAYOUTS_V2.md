@@ -50,7 +50,7 @@ Regra de escolha da capa:
 - Estilo "cor": a palavra falada muda de cor.
 - Estilo "caixa": a palavra falada ganha uma caixa na cor escolhida, texto #0B0B0C,
   padding 0 19px, raio 19px.
-- Paleta: rosa #FD375C, amarelo #FFD23F, ciano #3EC8FF, verde #9DFF4F, mais cor livre.
+- Paleta: rosa #FF395E (o coral da marca; era #FD375C até a migração 0017), amarelo #FFD23F, ciano #3EC8FF, verde #9DFF4F, mais cor livre.
 - "Caixa" é mais uma opção e não elimina nada que já existe: os modos
   `word_highlight`, `traditional` e `none` continuam.
 
@@ -59,8 +59,8 @@ Regra de escolha da capa:
 Um esquema só, validado no backend:
 
 - layout: `fullscreen` (padrão do podcast) | `cover` | `streamer` | `crop` | `original`.
-- marca (cor): padrão #FD375C.
-- legenda: cor (padrão #FD375C), estilo `caixa` | `cor` (padrão `caixa`), tamanho
+- marca (cor): padrão #FF395E.
+- legenda: cor (padrão #FF395E), estilo `caixa` | `cor` (padrão `caixa`), tamanho
   P/M/G (M = medidas acima).
 - título: ligado/desligado, com fundo (padrão #0B0B0C) e texto (padrão #FFFFFF). A
   palavra-chave em destaque vem da análise.

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 
 import { FONT_STACKS, fontStack } from "@/components/FontField";
 import {
+  DEFAULT_BRAND,
   MEASURES as M,
   SIZE_FACTORS,
   WHITE,
@@ -99,7 +100,7 @@ function Titulo({
 }) {
   const fundo = cor(style.titulo.fundo, "#0B0B0C");
   const texto = cor(style.titulo.texto, WHITE);
-  const marca = cor(style.marca, "#FD375C");
+  const marca = cor(style.marca, DEFAULT_BRAND);
   const linhas = bloco ? EXEMPLO_LINHAS_B : EXEMPLO_LINHAS_A;
   return (
     <>
@@ -151,7 +152,7 @@ function Legenda({
   const contorno = capa ? M.captionOutlineCover : M.captionOutlineFullscreen;
   const destaque = mode === "word_highlight";
   const caixa = destaque && style.legenda.estilo === "caixa";
-  const corLegenda = cor(style.legenda.cor, "#FD375C");
+  const corLegenda = cor(style.legenda.cor, DEFAULT_BRAND);
 
   const comContorno: CSSProperties = {
     color: WHITE,
@@ -255,7 +256,7 @@ function LayoutA({ style, mode }: { style: ClipStyle; mode: SubtitleMode }) {
 }
 
 function LayoutB({ style, mode }: { style: ClipStyle; mode: SubtitleMode }) {
-  const marca = cor(style.marca, "#FD375C");
+  const marca = cor(style.marca, DEFAULT_BRAND);
   const painel = M.bandY + M.bandH;
   return (
     <>

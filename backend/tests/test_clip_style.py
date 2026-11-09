@@ -60,8 +60,8 @@ def _marca_antiga(banner=None, bar=None, perfil=PERFIL):
 
 def test_padroes_da_especificacao():
     style = ClipStyle()
-    assert style.marca == "#FD375C"
-    assert style.legenda.cor == "#FD375C"
+    assert style.marca == "#FF395E"
+    assert style.legenda.cor == "#FF395E"
     assert style.legenda.estilo == "caixa"
     assert style.legenda.tamanho == "M"
     assert style.titulo.ligado is True
@@ -251,7 +251,7 @@ BASE = {"name": "P", "source_type": "podcast"}
 
 def test_perfil_novo_nasce_com_o_padrao(api):
     style = api.post("/api/profiles", json=BASE).json()["style"]
-    assert style["marca"] == "#FD375C"
+    assert style["marca"] == "#FF395E"
     assert style["legenda"]["estilo"] == "caixa"
 
 
@@ -317,7 +317,7 @@ def test_mudar_o_perfil_nao_muda_o_job_ja_criado(api):
 
 def test_job_sem_perfil_nasce_com_o_padrao(api):
     job = api.post("/api/jobs", json={"youtube_url": URL, "source_type": "podcast"}).json()
-    assert parse_style(_estilo_do_job(api, job["id"])).marca == "#FD375C"
+    assert parse_style(_estilo_do_job(api, job["id"])).marca == "#FF395E"
 
 
 # ─── A palavra-chave ───────────────────────────────────────────────────────────

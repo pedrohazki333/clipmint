@@ -1,0 +1,585 @@
+"use client";
+
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Check, ChevronDown, Clock3, Loader2, Play, SlidersHorizontal } from "lucide-react";
+
+import ClipModeSelector from "@/components/ClipModeSelector";
+import CreditConfirm from "@/components/CreditConfirm";
+import LowBalanceBanner from "@/components/LowBalanceBanner";
+import ManualClipsField from "@/components/ManualClipsField";
+import SourceTypeSelector from "@/components/SourceTypeSelector";
+import { duracao } from "@/components/ProjectRow";
+import { buttonClass, PageHeader, StepHeader } from "@/components/ui/editorial";
+import {
+  createJob,
+  createProfile,
+  estimateJob,
+  getApiErrorMessage,
+  getVideoMetadata,
+  listProfiles,
+} from "@/lib/api";
+import { IS_PUBLIC_BUILD } from "@/lib/build";
+import { defaultStyle, type ClipStyle } from "@/lib/clipStyle";
+import { avisarSaldoMudou } from "@/lib/creditos";
+import { PUBLIC_NICHES } from "@/lib/features";
+import { LAYOUT_LABELS, LAYOUT_RUBRICS, layoutAllowed, layoutsFor } from "@/lib/layouts";
+import type { ClipMode, CreateJobPayload, Estimate, LayoutMode, ManualMode, Profile, SourceType } from "@/lib/types";
+import { INVALID_YOUTUBE_URL_MESSAGE, isValidYouTubeUrl } from "@/lib/youtube";
+import { PERSONAL_NICHES } from "@/personal";
+
+import CaptionPicker from "./CaptionPicker";
+import ContextPanel, { type MetaState, type ResumoLinha } from "./ContextPanel";
+import LayoutPicker from "./LayoutPicker";
+import VideoLinkField from "./VideoLinkField";
+import { captionChoice, captionChoiceFor, styleWithChoice, type CaptionChoice } from "./choices";
+
+const NICHES = [...PUBLIC_NICHES, ...PERSONAL_NICHES];
+const TODOS_OS_LAYOUTS = Object.keys(LAYOUT_RUBRICS) as LayoutMode[];
+
+/**
+ * O palpite de rubrica a partir do layout, para quem gera sem perfil.
+ *
+ * Tela cheia e capa seguem um rosto falando (podcast); a facecam empilhada pede
+ * uma câmera separada do jogo (gameplay). Crop e original não presumem nada, e
+ * por isso não mexem na rubrica.
+ */
+function rubricaDoLayout(layout: LayoutMode): SourceType | null {
+  if (layout === "streamer") return "gameplay";
+  if (layout === "fullscreen" || layout === "cover") return "podcast";
+  return null;
+}
+
+/**
+ * Gerar clipes: colar, escolher o visual, gerar.
+ *
+ * Funciona SEM perfil — a API sempre aceitou `profile_id` opcional. Escolher um
+ * perfil (ou salvar estas escolhas como um) fica em "Configurações extras": ele
+ * preenche rubrica, layout e legenda, e manda o estilo da marca junto.
+ *
+ * O pedido é o `POST /api/jobs` de sempre. O que esta tela acrescenta é conferir
+ * o vídeo antes (`GET /api/videos/metadata`) e escolher o destaque da legenda por
+ * job (`caption_style`), que muda só a cópia do estilo que o job guarda.
+ */
+export default function GerarWorkspace({ perfilInicial }: { perfilInicial?: string }) {
+  const router = useRouter();
+
+  // ── O vídeo ────────────────────────────────────────────────────────────────
+  const [url, setUrl] = useState("");
+  const [urlErro, setUrlErro] = useState("");
+  const [meta, setMeta] = useState<MetaState>({ status: "idle" });
+  const urlLimpa = url.trim();
+  const urlValida = isValidYouTubeUrl(urlLimpa);
+
+  useEffect(() => {
+    setUrlErro("");
+    if (!urlValida) {
+      setMeta({ status: "idle" });
+      return;
+    }
+    setMeta({ status: "loading" });
+    const controle = new AbortController();
+    // Espera a pessoa parar de digitar: cada consulta sai do servidor para o YouTube.
+    const t = setTimeout(async () => {
+      try {
+        const dados = await getVideoMetadata(urlLimpa, controle.signal);
+        setMeta(dados.ok ? { status: "ok", data: dados } : { status: "unavailable" });
+      } catch (err) {
+        if (controle.signal.aborted) return;
+        const status = (err as { response?: { status?: number } })?.response?.status;
+        setMeta(
+          status === 422
+            ? { status: "error", message: getApiErrorMessage(err, "Este vídeo não pode ser usado.") }
+            : { status: "unavailable" },
+        );
+      }
+    }, 450);
+    return () => {
+      clearTimeout(t);
+      controle.abort();
+    };
+  }, [urlLimpa, urlValida]);
+
+  // ── Perfil (opcional) ──────────────────────────────────────────────────────
+  const [perfis, setPerfis] = useState<Profile[] | null>(null);
+  const [perfilId, setPerfilId] = useState<string>("");
+  const [perfilAusente, setPerfilAusente] = useState(false);
+  const perfil = useMemo(() => perfis?.find((p) => p.id === perfilId) ?? null, [perfis, perfilId]);
+
+  // ── Escolhas ───────────────────────────────────────────────────────────────
+  const [legenda, setLegenda] = useState<CaptionChoice>("caixa");
+  const [layout, setLayout] = useState<LayoutMode>("fullscreen");
+  const [rubrica, setRubrica] = useState<SourceType>("podcast");
+  const [rubricaEscolhida, setRubricaEscolhida] = useState(false);
+  const [clipMode, setClipMode] = useState<ClipMode>("individual");
+  const [trechos, setTrechos] = useState("");
+  const [trechosModo, setTrechosModo] = useState<ManualMode>("only");
+  const [extrasAbertos, setExtrasAbertos] = useState(false);
+
+  /** Aplica o que o perfil diz: rubrica, layout e legenda. */
+  const aplicarPerfil = useCallback((p: Profile | null) => {
+    if (!p) return;
+    setRubrica(p.source_type);
+    setRubricaEscolhida(true);
+    setLayout(
+      layoutAllowed(p.default_layout_mode, p.source_type)
+        ? p.default_layout_mode
+        : layoutsFor(p.source_type)[0],
+    );
+    setLegenda(captionChoiceFor(p.default_subtitle_mode, p.style));
+  }, []);
+
+  useEffect(() => {
+    listProfiles()
+      .then((lista) => {
+        setPerfis(lista);
+        if (perfilInicial) {
+          const achado = lista.find((p) => p.id === perfilInicial);
+          if (achado) {
+            setPerfilId(achado.id);
+            aplicarPerfil(achado);
+          } else {
+            setPerfilAusente(true);
+          }
+        }
+      })
+      .catch(() => setPerfis([]));
+  }, [perfilInicial, aplicarPerfil]);
+
+  function escolherPerfil(id: string) {
+    setPerfilId(id);
+    const p = perfis?.find((x) => x.id === id) ?? null;
+    if (p) aplicarPerfil(p);
+    else setRubricaEscolhida(false);
+  }
+
+  // Sem perfil e sem rubrica escolhida à mão, todos os layouts aparecem e o
+  // layout escolhido sugere a rubrica. Com perfil ou rubrica escolhida, só os que
+  // ela aceita — o servidor recusaria os outros.
+  const layoutsDisponiveis = useMemo(
+    () => (perfil || rubricaEscolhida ? layoutsFor(perfil?.source_type ?? rubrica) : TODOS_OS_LAYOUTS),
+    [perfil, rubricaEscolhida, rubrica],
+  );
+
+  useEffect(() => {
+    if (!layoutsDisponiveis.includes(layout)) setLayout(layoutsDisponiveis[0]);
+  }, [layoutsDisponiveis, layout]);
+
+  function escolherLayout(novo: LayoutMode) {
+    setLayout(novo);
+    if (!perfil && !rubricaEscolhida) {
+      const palpite = rubricaDoLayout(novo);
+      if (palpite) setRubrica(palpite);
+    }
+  }
+
+  function escolherRubrica(nova: SourceType) {
+    setRubrica(nova);
+    setRubricaEscolhida(true);
+  }
+
+  // O estilo que a prévia mostra: o do perfil (ou o padrão) com o destaque escolhido.
+  const estiloBase: ClipStyle = useMemo(() => perfil?.style ?? defaultStyle(), [perfil]);
+  const estilo = useMemo(() => styleWithChoice(estiloBase, legenda), [estiloBase, legenda]);
+  const escolhaLegenda = captionChoice(legenda);
+  const rubricaEfetiva = perfil?.source_type ?? rubrica;
+
+  // ── Salvar como perfil ─────────────────────────────────────────────────────
+  const [nomeNovoPerfil, setNomeNovoPerfil] = useState("");
+  const [salvandoPerfil, setSalvandoPerfil] = useState(false);
+  const [erroPerfil, setErroPerfil] = useState("");
+
+  async function salvarComoPerfil() {
+    const nome = nomeNovoPerfil.trim();
+    if (!nome) return;
+    setSalvandoPerfil(true);
+    setErroPerfil("");
+    try {
+      const novo = await createProfile({
+        name: nome,
+        source_type: rubricaEfetiva,
+        avatar: null,
+        default_layout_mode: layout,
+        default_subtitle_mode: escolhaLegenda.mode,
+        style: estilo,
+      });
+      setPerfis((atual) => [...(atual ?? []), novo]);
+      setPerfilId(novo.id);
+      setNomeNovoPerfil("");
+    } catch (err) {
+      setErroPerfil(getApiErrorMessage(err, "Não foi possível salvar o perfil."));
+    } finally {
+      setSalvandoPerfil(false);
+    }
+  }
+
+  // ── Envio ──────────────────────────────────────────────────────────────────
+  const [enviando, setEnviando] = useState(false);
+  const [enviado, setEnviado] = useState(false);
+  const [erro, setErro] = useState("");
+  const [pendente, setPendente] = useState<CreateJobPayload | null>(null);
+  const [estimativa, setEstimativa] = useState<Estimate | null>(null);
+  const [medindo, setMedindo] = useState(false);
+  const [erroEstimativa, setErroEstimativa] = useState("");
+
+  function montarPedido(): CreateJobPayload {
+    return {
+      profile_id: perfil?.id,
+      youtube_url: urlLimpa,
+      subtitle_mode: escolhaLegenda.mode,
+      caption_style: escolhaLegenda.estilo,
+      layout_mode: layout,
+      // O nicho do perfil vence: é o que impede gerar com a identidade de outro.
+      source_type: rubricaEfetiva,
+      clip_mode: clipMode,
+      manual_clips: trechos.trim() || undefined,
+      manual_mode: trechosModo,
+    };
+  }
+
+  async function enviar(pedido: CreateJobPayload) {
+    setEnviando(true);
+    setErro("");
+    try {
+      const job = await createJob(pedido);
+      // A reserva já saiu do saldo: o número na navegação precisa acompanhar.
+      avisarSaldoMudou();
+      setEnviado(true);
+      router.push(`/jobs/${job.id}`);
+    } catch (err) {
+      setPendente(null);
+      setErro(getApiErrorMessage(err, "Não foi possível iniciar a geração."));
+      setEnviando(false);
+    }
+  }
+
+  async function gerar(e: React.FormEvent) {
+    e.preventDefault();
+    if (enviando || enviado) return;
+    setErro("");
+    if (!urlLimpa) {
+      setUrlErro("Cole o link de um vídeo do YouTube.");
+      document.getElementById("cm-url")?.focus();
+      return;
+    }
+    if (!urlValida) {
+      setUrlErro(INVALID_YOUTUBE_URL_MESSAGE);
+      document.getElementById("cm-url")?.focus();
+      return;
+    }
+
+    const pedido = montarPedido();
+
+    // Versão pessoal: não há crédito, não há o que confirmar.
+    if (!IS_PUBLIC_BUILD) {
+      await enviar(pedido);
+      return;
+    }
+
+    setPendente(pedido);
+    setEstimativa(null);
+    setErroEstimativa("");
+    setMedindo(true);
+    try {
+      setEstimativa(await estimateJob(pedido.youtube_url));
+    } catch (err) {
+      // O 422 daqui é o mesmo que a criação daria (live, vídeo acima do teto).
+      setErroEstimativa(getApiErrorMessage(err, "Não foi possível medir este vídeo."));
+    } finally {
+      setMedindo(false);
+    }
+  }
+
+  // ── Resumo do painel ───────────────────────────────────────────────────────
+  const nichoAtual = NICHES.find((n) => n.source === rubricaEfetiva);
+  const resumo: ResumoLinha[] = [
+    { rotulo: "Legenda", valor: escolhaLegenda.nome },
+    { rotulo: "Layout", valor: LAYOUT_LABELS[layout].nome },
+    perfil
+      ? { rotulo: "Perfil", valor: perfil.name }
+      : { rotulo: "Rubrica", valor: nichoAtual?.title ?? rubricaEfetiva },
+    {
+      rotulo: "Formato",
+      valor: trechos.trim()
+        ? trechosModo === "only"
+          ? "Só os trechos indicados"
+          : "Trechos indicados + IA"
+        : clipMode === "compilation"
+          ? "Compilado"
+          : "Clipes individuais",
+    },
+  ];
+
+  const extrasAtivos = [
+    perfil ? `Perfil: ${perfil.name}` : null,
+    !perfil && rubricaEscolhida ? nichoAtual?.title : null,
+    clipMode === "compilation" ? "Compilado" : null,
+    trechos.trim() ? "Trechos manuais" : null,
+  ].filter(Boolean) as string[];
+
+  const metaDuracao = meta.status === "ok" ? duracao(meta.data.duration_seconds) : null;
+  const bloqueado = meta.status === "error" || (meta.status === "ok" && meta.data.is_live);
+
+  return (
+    <div className="grid min-h-screen grid-cols-[minmax(0,1fr)] xl:grid-cols-[minmax(0,1.08fr)_minmax(0,1fr)]">
+      {/* ── Coluna de geração ─────────────────────────────────────────────── */}
+      <form
+        onSubmit={gerar}
+        noValidate
+        className="flex min-w-0 flex-col gap-3.5 px-4 pb-10 pt-7 sm:px-8 lg:px-12 lg:pt-8 xl:pr-8"
+      >
+        <PageHeader
+          variant="display"
+          eyebrow="Novo projeto"
+          title="Gerar clipes"
+          description="Cole o link, configure o estilo e receba clipes prontos para postar."
+        />
+
+        {perfilAusente && (
+          <p className="rounded-md border border-line bg-raised px-4 py-3 text-body text-ink-dim">
+            O perfil pedido não existe mais. Você pode gerar sem perfil ou escolher outro em
+            Configurações extras.
+          </p>
+        )}
+
+        <div className="mt-2 flex flex-col gap-3">
+          {/* 01 — link */}
+          <section className="rounded-lg bg-inset px-4 pb-4 pt-4 sm:px-6">
+            <StepHeader number="01" title="Link do vídeo" id="cm-passo-1" />
+            <div className="mt-3">
+              <VideoLinkField
+                value={url}
+                onChange={setUrl}
+                error={urlErro}
+                disabled={enviando}
+                labelledBy="cm-passo-1"
+              />
+            </div>
+          </section>
+
+          {/* 02 — legenda */}
+          <section className="rounded-lg bg-inset px-4 pb-4 pt-4 sm:px-6">
+            <StepHeader
+              number="02"
+              title="Tipo de legenda"
+              id="cm-passo-2"
+              aside={<span className="hidden text-label text-ink-muted sm:inline">{escolhaLegenda.descricao}</span>}
+            />
+            <div className="mt-2.5">
+              <CaptionPicker value={legenda} onChange={setLegenda} style={estiloBase} labelledBy="cm-passo-2" />
+            </div>
+          </section>
+
+          {/* 03 — layout */}
+          <section className="rounded-lg bg-inset px-4 pb-4 pt-4 sm:px-6">
+            <StepHeader
+              number="03"
+              title="Layout do clipe"
+              id="cm-passo-3"
+              aside={
+                <span className="hidden max-w-[16rem] truncate text-label text-ink-muted sm:inline">
+                  {LAYOUT_LABELS[layout].descricao}
+                </span>
+              }
+            />
+            <div className="mt-2.5">
+              <LayoutPicker
+                value={layout}
+                onChange={escolherLayout}
+                available={layoutsDisponiveis}
+                labelledBy="cm-passo-3"
+              />
+            </div>
+          </section>
+
+          {/* Configurações extras */}
+          <section className="rounded-lg border border-line bg-raised">
+            <button
+              type="button"
+              onClick={() => setExtrasAbertos((v) => !v)}
+              aria-expanded={extrasAbertos}
+              aria-controls="cm-extras"
+              className="flex w-full items-center gap-3.5 rounded-lg px-4 py-3.5 text-left sm:px-6"
+            >
+              <SlidersHorizontal className="h-5 w-5 flex-shrink-0 text-ink" aria-hidden />
+              <span className="flex min-w-0 flex-1 flex-col sm:flex-row sm:items-center sm:gap-3">
+                <span className="text-[0.9375rem] font-medium text-ink">Configurações extras</span>
+                {extrasAtivos.length > 0 && (
+                  <span className="truncate text-label text-ink-muted">{extrasAtivos.join(" · ")}</span>
+                )}
+              </span>
+              <ChevronDown
+                className={`h-5 w-5 flex-shrink-0 text-ink-dim transition-transform duration-200 ${
+                  extrasAbertos ? "rotate-180" : ""
+                }`}
+                aria-hidden
+              />
+            </button>
+
+            <div
+              id="cm-extras"
+              hidden={!extrasAbertos}
+              className="flex flex-col gap-6 border-t border-line px-4 pb-6 pt-5 sm:px-6"
+            >
+              {/* Perfil */}
+              <div className="flex flex-col gap-2">
+                <label htmlFor="cm-perfil" className="text-body font-medium text-ink-dim">
+                  Perfil
+                </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    id="cm-perfil"
+                    value={perfilId}
+                    onChange={(e) => escolherPerfil(e.target.value)}
+                    disabled={perfis === null}
+                    className="min-h-10 min-w-[14rem] rounded-md border border-line bg-raised px-3 text-body text-ink focus:border-ink"
+                  >
+                    <option value="">Sem perfil</option>
+                    {(perfis ?? []).map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                  {perfil && (
+                    <Link
+                      href={`/perfis/${perfil.id}/editar`}
+                      className="text-body font-medium text-ink underline decoration-line-strong underline-offset-4 hover:decoration-ink"
+                    >
+                      Editar estilo do perfil
+                    </Link>
+                  )}
+                </div>
+                <p className="text-label text-ink-dim">
+                  {perfil
+                    ? "O perfil define a rubrica e a marca (cores, fonte, @) dos clipes."
+                    : "Sem perfil, os clipes saem no estilo padrão do ClipMint."}
+                </p>
+
+                {!perfil && (
+                  <div className="mt-2 flex flex-col gap-2 rounded-md border border-dashed border-line-strong p-3.5">
+                    <label htmlFor="cm-novo-perfil" className="text-label font-semibold text-ink">
+                      Salvar estas escolhas como perfil
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      <input
+                        id="cm-novo-perfil"
+                        value={nomeNovoPerfil}
+                        onChange={(e) => setNomeNovoPerfil(e.target.value)}
+                        placeholder="Nome do perfil (ex.: o nome do canal)"
+                        maxLength={60}
+                        className="min-h-10 min-w-0 flex-1 rounded-md border border-line bg-raised px-3 text-body text-ink placeholder:text-ink-muted focus:border-ink"
+                      />
+                      <button
+                        type="button"
+                        onClick={salvarComoPerfil}
+                        disabled={!nomeNovoPerfil.trim() || salvandoPerfil}
+                        className={buttonClass("secondary")}
+                      >
+                        {salvandoPerfil ? "Salvando..." : "Salvar perfil"}
+                      </button>
+                    </div>
+                    {erroPerfil && <p className="text-label text-danger">{erroPerfil}</p>}
+                  </div>
+                )}
+              </div>
+
+              {!perfil && (
+                <SourceTypeSelector
+                  value={rubrica}
+                  onChange={escolherRubrica}
+                  isInferred={!rubricaEscolhida}
+                />
+              )}
+
+              <ClipModeSelector value={clipMode} onChange={setClipMode} />
+
+              <ManualClipsField
+                value={trechos}
+                onChange={setTrechos}
+                mode={trechosModo}
+                onModeChange={setTrechosModo}
+                isCompilation={clipMode === "compilation"}
+              />
+            </div>
+          </section>
+        </div>
+
+        {IS_PUBLIC_BUILD && <LowBalanceBanner />}
+
+        {/* O botão de gerar */}
+        <div className="mt-1.5">
+          <button
+            type="submit"
+            disabled={enviando || enviado || bloqueado}
+            aria-describedby={erro ? "cm-erro-envio" : undefined}
+            className={`${buttonClass("create", "lg")} w-full gap-0 px-0 text-[1.3125rem]`}
+          >
+            <span className="flex flex-1 items-center justify-center gap-3 whitespace-nowrap px-6">
+              {enviado ? (
+                <Check className="h-6 w-6" strokeWidth={3} aria-hidden />
+              ) : enviando ? (
+                <Loader2 className="h-6 w-6 animate-spin" aria-hidden />
+              ) : (
+                <Play className="h-6 w-6 fill-current" aria-hidden />
+              )}
+              {enviado
+                ? "Enviado — abrindo o projeto"
+                : enviando
+                  ? "Enviando..."
+                  : clipMode === "compilation"
+                    ? "Gerar compilado"
+                    : "Gerar clipes"}
+            </span>
+            {metaDuracao && !enviando && !enviado && (
+              <span
+                className="hidden items-center gap-2 self-stretch border-l border-white/35 px-5 text-body font-semibold sm:flex"
+                title="Duração do vídeo de origem"
+              >
+                <Clock3 className="h-[1.125rem] w-[1.125rem]" aria-hidden />
+                <span className="tabular">{metaDuracao}</span>
+                <span className="sr-only">de vídeo</span>
+              </span>
+            )}
+          </button>
+          {erro && (
+            <p id="cm-erro-envio" role="alert" className="mt-3 rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-body text-danger">
+              {erro}
+            </p>
+          )}
+        </div>
+      </form>
+
+      {/* ── Painel contextual ─────────────────────────────────────────────── */}
+      <aside
+        aria-label="Prévia e projetos"
+        className="min-w-0 border-t border-line px-4 pb-12 pt-8 sm:px-8 lg:px-12 xl:border-t-0 xl:pl-6 xl:pr-10 xl:pt-8"
+      >
+        <div className="xl:sticky xl:top-0">
+          <ContextPanel
+            urlValida={urlValida}
+            url={urlLimpa}
+            meta={meta}
+            resumo={resumo}
+            style={estilo}
+            layout={layout}
+            mode={escolhaLegenda.mode}
+          />
+        </div>
+      </aside>
+
+      {pendente && (
+        <CreditConfirm
+          estimativa={estimativa}
+          carregando={medindo}
+          erro={erroEstimativa}
+          enviando={enviando}
+          onCancel={() => setPendente(null)}
+          onConfirm={() => enviar(pendente)}
+        />
+      )}
+    </div>
+  );
+}
+

@@ -1,12 +1,14 @@
-import ProfileGenerate from "@/components/ProfileGenerate";
+import { redirect } from "next/navigation";
 
-export const metadata = { title: "Gerar clipes — ClipMint" };
-
-export default async function GerarPage({
+/**
+ * O endereço antigo de gerar a partir de um perfil. Continua valendo (há links
+ * salvos e favoritos com ele) e leva à página de gerar com o perfil escolhido.
+ */
+export default async function GerarDoPerfil({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  return <ProfileGenerate profileId={id} />;
+  redirect(`/gerar?perfil=${encodeURIComponent(id)}`);
 }

@@ -175,7 +175,7 @@ def test_caixa_alta_mantem_acentos():
     assert clean_title("não é ação") == "NÃO É AÇÃO"
 
 
-@pytest.mark.parametrize("marca", ["#FD375C", "#FFD23F", "#3EC8FF", "#9DFF4F"])
+@pytest.mark.parametrize("marca", ["#FF395E", "#FFD23F", "#3EC8FF", "#9DFF4F"])
 def test_contraste_do_titulo_na_paleta(marca):
     assert contrast_ratio(marca, ClipStyle().titulo.fundo) >= 4.5
     assert contrast_ratio(ClipStyle().titulo.texto, ClipStyle().titulo.fundo) >= 4.5

@@ -209,7 +209,7 @@ def test_modo_tradicional_continua_sem_caixa(tmp_path):
     assert not _caixas(eventos)
 
 
-@pytest.mark.parametrize("cor", ["#FD375C", "#FFD23F", "#3EC8FF", "#9DFF4F"])
+@pytest.mark.parametrize("cor", ["#FF395E", "#FFD23F", "#3EC8FF", "#9DFF4F"])
 def test_texto_escuro_se_le_na_paleta(cor):
     assert contrast_ratio(INK, cor) >= 4.5
 

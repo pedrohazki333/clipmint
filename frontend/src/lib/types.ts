@@ -196,6 +196,22 @@ export interface CreateJobPayload {
   manual_mode?: ManualMode;
   /** Só no modo streamer; omitido = detecção automática da webcam. */
   facecam_rect?: FacecamRect;
+  /**
+   * Como a palavra falada se destaca, só neste job. Omitido = o do estilo do
+   * perfil (ou o padrão, sem perfil). O perfil não muda.
+   */
+  caption_style?: "caixa" | "cor";
+}
+
+/** O vídeo antes de virar job, para a pessoa conferir que colou o link certo. */
+export interface VideoMetadata {
+  /** false = a consulta não respondeu agora; gerar continua possível. */
+  ok: boolean;
+  title: string | null;
+  channel: string | null;
+  duration_seconds: number | null;
+  thumbnail_url: string | null;
+  is_live: boolean;
 }
 
 // ─── Referências (aprender com clipe viral de outro criador) ──────────────────

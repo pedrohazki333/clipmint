@@ -24,6 +24,7 @@ import type {
   SourceType,
   Profile,
   ProfilePayload,
+  VideoMetadata,
 } from "./types";
 
 /** Extrai uma mensagem legível de um erro de API (detail do FastAPI ou fallback). */
@@ -111,6 +112,22 @@ export async function resetPassword(
 
 export async function createJob(payload: CreateJobPayload): Promise<Job> {
   const { data } = await api.post<Job>("/jobs", payload);
+  return data;
+}
+
+/**
+ * Título, canal, duração e miniatura do vídeo, sem baixar nada. É a mesma
+ * consulta que a criação do job faz para conferir os tetos. Vídeo privado ou
+ * removido volta 422 com a mensagem pronta.
+ */
+export async function getVideoMetadata(
+  url: string,
+  signal?: AbortSignal,
+): Promise<VideoMetadata> {
+  const { data } = await api.get<VideoMetadata>("/videos/metadata", {
+    params: { url },
+    signal,
+  });
   return data;
 }
 

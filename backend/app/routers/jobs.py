@@ -26,7 +26,7 @@ from app.database import get_db
 from app.deps import current_user, owned_by
 from app.features import SourceTypeField, billing_enabled
 from app.layouts import LAYOUT_LABELS, layout_allowed, layouts_for
-from app.clip_style import ClipStyle, style_for_profile
+from app.clip_style import CaptionStyle, ClipStyle, style_for_profile
 from app.models import Clip, CreditLedger, FacecamReport, Job, Profile, Transcript, User
 from app.prompts.viral_analysis import default_source_type
 from app.schemas import (
@@ -34,8 +34,10 @@ from app.schemas import (
     JobCreate,
     JobDetailResponse,
     JobResponse,
+    VideoMetadataResponse,
+    is_youtube_url,
 )
-from app.services import credits, facecam_review, usage, usage_monitor
+from app.services import credits, facecam_review, quota, usage, usage_monitor
 from app.services.quota import guard_new_job
 from app.utils.timecodes import parse_ranges
 from app.workers import joblock
@@ -60,6 +62,37 @@ async def _job_do_usuario(job_id: str, user: User, db: AsyncSession) -> Job:
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
+
+
+@router.get("/videos/metadata", response_model=VideoMetadataResponse)
+async def video_metadata(
+    url: str,
+    user: User = Depends(current_user),
+) -> VideoMetadataResponse:
+    """Título, canal, duração e miniatura de um vídeo, antes de gerar.
+
+    É a mesma consulta que a criação do job faz para conferir os tetos (sem baixar
+    nada), exposta para a tela mostrar o vídeo e a pessoa confirmar que colou o link
+    certo. Vídeo privado ou removido volta 422 já aqui, com a mesma mensagem que o
+    job daria. Uma falha de rede volta `ok: false`, e gerar continua possível.
+
+    Exige sessão como o resto da API: sem isso, a rota viraria um proxy aberto de
+    consultas ao YouTube saindo do IP do servidor.
+    """
+    if not is_youtube_url(url):
+        raise HTTPException(
+            status_code=422,
+            detail="URL inválida: forneça um link do YouTube (youtube.com ou youtu.be)",
+        )
+    meta = await quota.probe(url.strip())
+    return VideoMetadataResponse(
+        ok=meta.ok,
+        title=meta.title,
+        channel=meta.channel,
+        duration_seconds=meta.duration or None,
+        thumbnail_url=meta.thumbnail_url,
+        is_live=meta.is_live,
+    )
 
 
 @router.post("/jobs", response_model=JobResponse, status_code=201)
@@ -121,6 +154,20 @@ async def create_job(
             else layouts_for(nicho)[0]
         )
 
+    # O estilo é copiado para o job. O destaque da legenda pode ser escolhido no
+    # pedido sem mexer no perfil: só a cópia muda. Reconstruído (e não alterado no
+    # lugar) para o contraste ser conferido de novo contra o fundo do outro estilo.
+    estilo = style_for_profile(perfil) if perfil else ClipStyle()
+    if payload.caption_style and payload.caption_style != estilo.legenda.estilo:
+        try:
+            estilo.legenda = CaptionStyle(
+                cor=estilo.legenda.cor,
+                estilo=payload.caption_style,
+                tamanho=estilo.legenda.tamanho,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     job = Job(
         user_id=user.id,
         profile_id=perfil.id if perfil else None,
@@ -139,9 +186,7 @@ async def create_job(
         clip_mode=payload.clip_mode,
         # Cópia, e não referência: mudar o perfil depois não muda um job já feito,
         # nem ao retomá-lo.
-        style_json=(
-            style_for_profile(perfil) if perfil else ClipStyle()
-        ).model_dump_json(),
+        style_json=estilo.model_dump_json(),
         # Guardado já em segundos: a anotação "3:24" é conveniência de quem
         # digita, não formato de trabalho. A ORDEM digitada é preservada.
         manual_clips=(

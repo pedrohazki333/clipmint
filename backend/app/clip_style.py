@@ -28,7 +28,7 @@ from app.services.layout import BAR_FONTS
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BRAND = "#FD375C"
+DEFAULT_BRAND = "#FF395E"
 #: Fundo do título e cor do texto dentro da caixa da legenda.
 INK = "#0B0B0C"
 #: Contorno da legenda no estilo "cor".
@@ -36,7 +36,7 @@ OUTLINE = "#000000"
 WHITE = "#FFFFFF"
 #: A paleta oferecida; qualquer outra cor continua valendo se passar no contraste.
 PALETTE = {
-    "rosa": "#FD375C",
+    "rosa": "#FF395E",
     "amarelo": "#FFD23F",
     "ciano": "#3EC8FF",
     "verde": "#9DFF4F",

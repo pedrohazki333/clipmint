@@ -7,7 +7,7 @@
  * a prévia mentiria sobre o clipe. `backend/tests/test_clip_style_parity.py` compara.
  */
 
-export const DEFAULT_BRAND = "#FD375C";
+export const DEFAULT_BRAND = "#FF395E";
 export const INK = "#0B0B0C";
 export const OUTLINE = "#000000";
 export const WHITE = "#FFFFFF";
@@ -15,7 +15,7 @@ export const MIN_CONTRAST = 4.5;
 export const BAND_HANDLE_COLOR = "#C9C9CF";
 
 export const PALETTE: Record<string, string> = {
-  rosa: "#FD375C",
+  rosa: "#FF395E",
   amarelo: "#FFD23F",
   ciano: "#3EC8FF",
   verde: "#9DFF4F",

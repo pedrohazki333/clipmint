@@ -135,7 +135,7 @@ export default function ProfileView({ profileId }: { profileId: string }) {
             Editar perfil
           </Link>
           <Link
-            href={`/perfis/${profile.id}/gerar`}
+            href={`/gerar?perfil=${profile.id}`}
             className="rounded-sm bg-mint-strong px-5 py-2.5 text-center text-body font-medium text-ink transition-colors hover:bg-mint"
           >
             Gerar clipes
@@ -202,7 +202,7 @@ export default function ProfileView({ profileId }: { profileId: string }) {
               Este perfil ainda não gerou nada.
             </p>
             <Link
-              href={`/perfis/${profile.id}/gerar`}
+              href={`/gerar?perfil=${profile.id}`}
               className="mt-4 inline-block rounded-sm bg-mint-strong px-5 py-2.5 text-body font-medium text-ink transition-colors hover:bg-mint"
             >
               Gerar os primeiros clipes

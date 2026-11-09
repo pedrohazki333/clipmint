@@ -178,18 +178,24 @@
 /**
  * Foco visível, sempre. Em tinta, e não em menta: menta sobre o fundo claro não
  * passa de 1,4:1, e um anel de foco que não se vê é o mesmo que nenhum.
+ *
+ * Dentro de `@layer base` de propósito: fora de camada, a regra venceria até as
+ * utilities, e um campo que desenha o próprio foco na moldura (o link do vídeo)
+ * ficaria com dois contornos.
  */
-:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
-  outline: 2px solid var(--color-ink);
-  outline-offset: 2px;
-  border-radius: var(--radius-sm);
-}
-/* Na navegação escura o anel é claro, pelo mesmo motivo ao contrário. */
-.cm-on-dark :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
-  outline-color: var(--color-mint-strong);
-}
-.theme-legacy :where(a, button, input, select, textarea, [tabindex]):focus-visible {
-  outline-color: var(--color-mint);
+@layer base {
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: 2px solid var(--color-ink);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+  /* Na navegação escura o anel é claro, pelo mesmo motivo ao contrário. */
+  .cm-on-dark :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline-color: var(--color-mint-strong);
+  }
+  .theme-legacy :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+    outline-color: var(--color-mint);
+  }
 }
 
 /** A gaveta de navegação do celular entra deslizando, sem quicar. */
@@ -199,6 +205,15 @@
 }
 .cm-drawer {
   animation: cm-drawer-in 220ms var(--ease-editorial);
+}
+
+/** Painel que troca de estado: entra sem pular, só aparecendo. */
+@keyframes cm-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+.cm-fade-in {
+  animation: cm-fade-in 220ms var(--ease-editorial);
 }
 
 /** Quem pediu menos movimento ao sistema não deve receber movimento. */
