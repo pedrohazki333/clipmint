@@ -226,3 +226,23 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/*
+ * Rolagem interna à vista (o painel de "Gerar clipes"): a barra fina e sempre
+ * desenhada é o que diz que há mais opções abaixo.
+ */
+.cm-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line-strong) transparent;
+  scrollbar-gutter: stable;
+}
+.cm-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.cm-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--color-line-strong);
+}
+.cm-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}

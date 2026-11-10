@@ -320,10 +320,10 @@ export default function GerarWorkspace({ perfilInicial }: { perfilInicial?: stri
 
   const metaDuracao = meta.status === "ok" ? duracao(meta.data.duration_seconds) : null;
 
-  // O botão de gerar fica preso ao pé da tela enquanto o lugar dele no fluxo
-  // ainda não apareceu: em notebook e celular os três passos não cabem acima da
-  // dobra, e quem já escolheu tudo não deveria ter que rolar para gerar. O
-  // marcador logo abaixo dele diz quando ele "descolou" — aí some a sombra.
+  // O botão de gerar nunca some. Do lg para cima, as escolhas moram num painel
+  // com rolagem própria e o botão é o rodapé fixo dele. Abaixo disso a página
+  // rola inteira e o botão fica preso ao pé da tela até o lugar dele aparecer;
+  // o marcador logo abaixo dele diz quando ele "descolou" — aí some a sombra.
   const fimDoBotao = useRef<HTMLDivElement>(null);
   const [preso, setPreso] = useState(false);
   useEffect(() => {
@@ -337,16 +337,52 @@ export default function GerarWorkspace({ perfilInicial }: { perfilInicial?: stri
     obs.observe(alvo);
     return () => obs.disconnect();
   }, []);
+
+  // O painel avisa que há mais opções abaixo: a barra de rolagem fica à vista e
+  // o pé esmaece enquanto ainda falta conteúdo para ver.
+  const rolagem = useRef<HTMLDivElement>(null);
+  const conteudo = useRef<HTMLDivElement>(null);
+  const [maisAbaixo, setMaisAbaixo] = useState(false);
+  const medirRolagem = useCallback(() => {
+    const el = rolagem.current;
+    if (!el) return;
+    setMaisAbaixo(el.scrollHeight - el.scrollTop - el.clientHeight > 4);
+  }, []);
+  useEffect(() => {
+    medirRolagem();
+    if (typeof ResizeObserver === "undefined") return;
+    const obs = new ResizeObserver(medirRolagem);
+    if (rolagem.current) obs.observe(rolagem.current);
+    if (conteudo.current) obs.observe(conteudo.current);
+    return () => obs.disconnect();
+  }, [medirRolagem]);
+
+  function alternarExtras() {
+    const abrindo = !extrasAbertos;
+    setExtrasAbertos(abrindo);
+    // Abriu: traz as opções para a vista — dentro do painel, ou na página.
+    if (!abrindo) return;
+    requestAnimationFrame(() => {
+      const secao = document.getElementById("cm-extras-secao");
+      const painel = rolagem.current;
+      if (!secao || !painel) return;
+      // Com o painel rolando por dentro, rola só ele: scrollIntoView arrastaria a
+      // página junto e tiraria a prévia do lugar.
+      if (painel.scrollHeight > painel.clientHeight) {
+        const topo =
+          secao.getBoundingClientRect().top - painel.getBoundingClientRect().top + painel.scrollTop - 12;
+        painel.scrollTo({ top: topo, behavior: "smooth" });
+      } else if (getComputedStyle(painel).overflowY === "visible") {
+        secao.scrollIntoView({ block: "start", behavior: "smooth" });
+      }
+    });
+  }
   const bloqueado = meta.status === "error" || (meta.status === "ok" && meta.data.is_live);
 
   return (
     <div className="grid min-h-screen grid-cols-[minmax(0,1fr)] xl:grid-cols-[minmax(0,1.08fr)_minmax(0,1fr)]">
       {/* ── Coluna de geração ─────────────────────────────────────────────── */}
-      <form
-        onSubmit={gerar}
-        noValidate
-        className="flex min-w-0 flex-col gap-3 px-4 pb-10 pt-6 sm:px-8 lg:px-12 lg:pt-7 xl:pr-8"
-      >
+      <div className="flex min-w-0 flex-col px-4 pb-10 pt-6 sm:px-8 lg:sticky lg:top-0 lg:h-dvh lg:px-12 lg:pb-6 lg:pt-7 xl:pr-8">
         <PageHeader
           variant="display"
           eyebrow="Novo projeto"
@@ -355,226 +391,251 @@ export default function GerarWorkspace({ perfilInicial }: { perfilInicial?: stri
         />
 
         {perfilAusente && (
-          <p className="rounded-md border border-line bg-raised px-4 py-3 text-body text-ink-dim">
+          <p className="mt-3 rounded-md border border-line bg-raised px-4 py-3 text-body text-ink-dim">
             O perfil pedido não existe mais. Você pode gerar sem perfil ou escolher outro em
             Configurações extras.
           </p>
         )}
 
-        <div className="mt-1 flex flex-col gap-2.5">
-          {/* 01 — link */}
-          <section className="rounded-lg bg-inset px-4 py-3.5 sm:px-6">
-            <StepHeader number="01" title="Link do vídeo" id="cm-passo-1" />
-            <div className="mt-3">
-              <VideoLinkField
-                value={url}
-                onChange={setUrl}
-                error={urlErro}
-                disabled={enviando}
-                labelledBy="cm-passo-1"
-              />
-            </div>
-          </section>
-
-          {/* 02 — legenda */}
-          <section className="rounded-lg bg-inset px-4 py-3.5 sm:px-6">
-            <StepHeader
-              number="02"
-              title="Tipo de legenda"
-              id="cm-passo-2"
-              aside={<span className="hidden text-label text-ink-muted sm:inline">{escolhaLegenda.descricao}</span>}
-            />
-            <div className="mt-2.5">
-              <CaptionPicker value={legenda} onChange={setLegenda} style={estiloBase} labelledBy="cm-passo-2" />
-            </div>
-          </section>
-
-          {/* 03 — layout */}
-          <section className="rounded-lg bg-inset px-4 py-3.5 sm:px-6">
-            <StepHeader
-              number="03"
-              title="Layout do clipe"
-              id="cm-passo-3"
-              aside={
-                <span className="hidden max-w-[16rem] truncate text-label text-ink-muted sm:inline">
-                  {LAYOUT_LABELS[layout].descricao}
-                </span>
-              }
-            />
-            <div className="mt-2.5">
-              <LayoutPicker
-                value={layout}
-                onChange={escolherLayout}
-                available={layoutsDisponiveis}
-                labelledBy="cm-passo-3"
-              />
-            </div>
-          </section>
-
-          {/* Configurações extras */}
-          <section className="rounded-lg border border-line bg-raised">
-            <button
-              type="button"
-              onClick={() => setExtrasAbertos((v) => !v)}
-              aria-expanded={extrasAbertos}
-              aria-controls="cm-extras"
-              className="flex w-full items-center gap-3.5 rounded-lg px-4 py-3.5 text-left sm:px-6"
-            >
-              <SlidersHorizontal className="h-5 w-5 flex-shrink-0 text-ink" aria-hidden />
-              <span className="flex min-w-0 flex-1 flex-col sm:flex-row sm:items-center sm:gap-3">
-                <span className="text-[0.9375rem] font-medium text-ink">Configurações extras</span>
-                {extrasAtivos.length > 0 && (
-                  <span className="truncate text-label text-ink-muted">{extrasAtivos.join(" · ")}</span>
-                )}
-              </span>
-              <ChevronDown
-                className={`h-5 w-5 flex-shrink-0 text-ink-dim transition-transform duration-200 ${
-                  extrasAbertos ? "rotate-180" : ""
-                }`}
-                aria-hidden
-              />
-            </button>
-
-            <div
-              id="cm-extras"
-              hidden={!extrasAbertos}
-              className="flex flex-col gap-6 border-t border-line px-4 pb-6 pt-5 sm:px-6"
-            >
-              {/* Perfil */}
-              <div className="flex flex-col gap-2">
-                <label htmlFor="cm-perfil" className="text-body font-medium text-ink-dim">
-                  Perfil
-                </label>
-                <div className="flex flex-wrap items-center gap-2">
-                  <select
-                    id="cm-perfil"
-                    value={perfilId}
-                    onChange={(e) => escolherPerfil(e.target.value)}
-                    disabled={perfis === null}
-                    className="min-h-10 min-w-[14rem] rounded-md border border-line bg-raised px-3 text-body text-ink focus:border-ink"
-                  >
-                    <option value="">Sem perfil</option>
-                    {(perfis ?? []).map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                  {perfil && (
-                    <Link
-                      href={`/perfis/${perfil.id}/editar`}
-                      className="text-body font-medium text-ink underline decoration-line-strong underline-offset-4 hover:decoration-ink"
-                    >
-                      Editar estilo do perfil
-                    </Link>
-                  )}
-                </div>
-                <p className="text-label text-ink-dim">
-                  {perfil
-                    ? "O perfil define a rubrica e a marca (cores, fonte, @) dos clipes."
-                    : "Sem perfil, os clipes saem no estilo padrão do ClipMint."}
-                </p>
-
-                {!perfil && (
-                  <div className="mt-2 flex flex-col gap-2 rounded-md border border-dashed border-line-strong p-3.5">
-                    <label htmlFor="cm-novo-perfil" className="text-label font-semibold text-ink">
-                      Salvar estas escolhas como perfil
-                    </label>
-                    <div className="flex flex-wrap gap-2">
-                      <input
-                        id="cm-novo-perfil"
-                        value={nomeNovoPerfil}
-                        onChange={(e) => setNomeNovoPerfil(e.target.value)}
-                        placeholder="Nome do perfil (ex.: o nome do canal)"
-                        maxLength={60}
-                        className="min-h-10 min-w-0 flex-1 rounded-md border border-line bg-raised px-3 text-body text-ink placeholder:text-ink-muted focus:border-ink"
-                      />
-                      <button
-                        type="button"
-                        onClick={salvarComoPerfil}
-                        disabled={!nomeNovoPerfil.trim() || salvandoPerfil}
-                        className={buttonClass("secondary")}
-                      >
-                        {salvandoPerfil ? "Salvando..." : "Salvar perfil"}
-                      </button>
-                    </div>
-                    {erroPerfil && <p className="text-label text-danger">{erroPerfil}</p>}
-                  </div>
-                )}
-              </div>
-
-              {!perfil && (
-                <SourceTypeSelector
-                  value={rubrica}
-                  onChange={escolherRubrica}
-                  isInferred={!rubricaEscolhida}
-                />
-              )}
-
-              <ClipModeSelector value={clipMode} onChange={setClipMode} />
-
-              <ManualClipsField
-                value={trechos}
-                onChange={setTrechos}
-                mode={trechosModo}
-                onModeChange={setTrechosModo}
-                isCompilation={clipMode === "compilation"}
-              />
-            </div>
-          </section>
-        </div>
-
-        {IS_PUBLIC_BUILD && <LowBalanceBanner />}
-
-        {/* O botão de gerar — preso ao pé da tela até o lugar dele aparecer */}
-        <div
-          className={`sticky bottom-0 z-20 -mx-4 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 transition-[background-color,box-shadow] duration-200 sm:-mx-8 sm:px-8 lg:-mx-12 lg:px-12 xl:-mr-8 xl:pr-8 ${
-            preso
-              ? "border-t border-line bg-base/92 shadow-[0_-10px_28px_-18px_rgba(36,36,36,0.45)] backdrop-blur-md"
-              : "border-t border-transparent"
-          }`}
+        {/* O painel: as escolhas rolam por dentro, o botão fica no pé. */}
+        <form
+          onSubmit={gerar}
+          noValidate
+          aria-label="Configurar e gerar"
+          className="mt-4 flex flex-col lg:min-h-0 lg:flex-1 lg:overflow-hidden lg:rounded-xl lg:border lg:border-line lg:bg-raised lg:shadow-[0_1px_2px_rgba(36,36,36,0.04),0_12px_32px_-18px_rgba(36,36,36,0.28)]"
         >
-          <button
-            type="submit"
-            disabled={enviando || enviado || bloqueado}
-            aria-describedby={erro ? "cm-erro-envio" : undefined}
-            className={`${buttonClass("create", "lg")} w-full gap-0 px-0 text-[1.3125rem]`}
+          <div
+            ref={rolagem}
+            onScroll={medirRolagem}
+            className="cm-scroll relative lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:p-3 lg:pr-2"
           >
-            <span className="flex flex-1 items-center justify-center gap-3 whitespace-nowrap px-6">
-              {enviado ? (
-                <Check className="h-6 w-6" strokeWidth={3} aria-hidden />
-              ) : enviando ? (
-                <Loader2 className="h-6 w-6 animate-spin" aria-hidden />
-              ) : (
-                <Play className="h-6 w-6 fill-current" aria-hidden />
-              )}
-              {enviado
-                ? "Enviado — abrindo o projeto"
-                : enviando
-                  ? "Enviando..."
-                  : clipMode === "compilation"
-                    ? "Gerar compilado"
-                    : "Gerar clipes"}
-            </span>
-            {metaDuracao && !enviando && !enviado && (
-              <span
-                className="hidden items-center gap-2 self-stretch border-l border-white/35 px-5 text-body font-semibold sm:flex"
-                title="Duração do vídeo de origem"
+            <div ref={conteudo} className="flex flex-col gap-2.5">
+              {/* 01 — link */}
+              <section className="rounded-lg bg-inset px-4 py-3.5 sm:px-6">
+                <StepHeader number="01" title="Link do vídeo" id="cm-passo-1" />
+                <div className="mt-3">
+                  <VideoLinkField
+                    value={url}
+                    onChange={setUrl}
+                    error={urlErro}
+                    disabled={enviando}
+                    labelledBy="cm-passo-1"
+                  />
+                </div>
+              </section>
+
+              {/* 02 — legenda */}
+              <section className="rounded-lg bg-inset px-4 py-3.5 sm:px-6">
+                <StepHeader
+                  number="02"
+                  title="Tipo de legenda"
+                  id="cm-passo-2"
+                  aside={<span className="hidden text-label text-ink-muted sm:inline">{escolhaLegenda.descricao}</span>}
+                />
+                <div className="mt-2.5">
+                  <CaptionPicker value={legenda} onChange={setLegenda} style={estiloBase} labelledBy="cm-passo-2" />
+                </div>
+              </section>
+
+              {/* 03 — layout */}
+              <section className="rounded-lg bg-inset px-4 py-3.5 sm:px-6">
+                <StepHeader
+                  number="03"
+                  title="Layout do clipe"
+                  id="cm-passo-3"
+                  aside={
+                    <span className="hidden max-w-[16rem] truncate text-label text-ink-muted sm:inline">
+                      {LAYOUT_LABELS[layout].descricao}
+                    </span>
+                  }
+                />
+                <div className="mt-2.5">
+                  <LayoutPicker
+                    value={layout}
+                    onChange={escolherLayout}
+                    available={layoutsDisponiveis}
+                    labelledBy="cm-passo-3"
+                  />
+                </div>
+              </section>
+
+              {/* Configurações extras */}
+              <section
+                id="cm-extras-secao"
+                className="scroll-mt-20 rounded-lg border border-line bg-raised lg:scroll-mt-3"
               >
-                <Clock3 className="h-[1.125rem] w-[1.125rem]" aria-hidden />
-                <span className="tabular">{metaDuracao}</span>
-                <span className="sr-only">de vídeo</span>
+                <button
+                  type="button"
+                  onClick={alternarExtras}
+                  aria-expanded={extrasAbertos}
+                  aria-controls="cm-extras"
+                  className="flex w-full items-center gap-3.5 rounded-lg px-4 py-3.5 text-left sm:px-6"
+                >
+                  <SlidersHorizontal className="h-5 w-5 flex-shrink-0 text-ink" aria-hidden />
+                  <span className="flex min-w-0 flex-1 flex-col sm:flex-row sm:items-center sm:gap-3">
+                    <span className="text-[0.9375rem] font-medium text-ink">Configurações extras</span>
+                    {extrasAtivos.length > 0 && (
+                      <span className="truncate text-label text-ink-muted">{extrasAtivos.join(" · ")}</span>
+                    )}
+                  </span>
+                  <ChevronDown
+                    className={`h-5 w-5 flex-shrink-0 text-ink-dim transition-transform duration-200 ${
+                      extrasAbertos ? "rotate-180" : ""
+                    }`}
+                    aria-hidden
+                  />
+                </button>
+
+                <div
+                  id="cm-extras"
+                  hidden={!extrasAbertos}
+                  className="flex flex-col gap-6 border-t border-line px-4 pb-6 pt-5 sm:px-6"
+                >
+                  {/* Perfil */}
+                  <div className="flex flex-col gap-2">
+                    <label htmlFor="cm-perfil" className="text-body font-medium text-ink-dim">
+                      Perfil
+                    </label>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <select
+                        id="cm-perfil"
+                        value={perfilId}
+                        onChange={(e) => escolherPerfil(e.target.value)}
+                        disabled={perfis === null}
+                        className="min-h-10 min-w-[14rem] rounded-md border border-line bg-raised px-3 text-body text-ink focus:border-ink"
+                      >
+                        <option value="">Sem perfil</option>
+                        {(perfis ?? []).map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                      {perfil && (
+                        <Link
+                          href={`/perfis/${perfil.id}/editar`}
+                          className="text-body font-medium text-ink underline decoration-line-strong underline-offset-4 hover:decoration-ink"
+                        >
+                          Editar estilo do perfil
+                        </Link>
+                      )}
+                    </div>
+                    <p className="text-label text-ink-dim">
+                      {perfil
+                        ? "O perfil define a rubrica e a marca (cores, fonte, @) dos clipes."
+                        : "Sem perfil, os clipes saem no estilo padrão do ClipMint."}
+                    </p>
+
+                    {!perfil && (
+                      <div className="mt-2 flex flex-col gap-2 rounded-md border border-dashed border-line-strong p-3.5">
+                        <label htmlFor="cm-novo-perfil" className="text-label font-semibold text-ink">
+                          Salvar estas escolhas como perfil
+                        </label>
+                        <div className="flex flex-wrap gap-2">
+                          <input
+                            id="cm-novo-perfil"
+                            value={nomeNovoPerfil}
+                            onChange={(e) => setNomeNovoPerfil(e.target.value)}
+                            placeholder="Nome do perfil (ex.: o nome do canal)"
+                            maxLength={60}
+                            className="min-h-10 min-w-0 flex-1 rounded-md border border-line bg-raised px-3 text-body text-ink placeholder:text-ink-muted focus:border-ink"
+                          />
+                          <button
+                            type="button"
+                            onClick={salvarComoPerfil}
+                            disabled={!nomeNovoPerfil.trim() || salvandoPerfil}
+                            className={buttonClass("secondary")}
+                          >
+                            {salvandoPerfil ? "Salvando..." : "Salvar perfil"}
+                          </button>
+                        </div>
+                        {erroPerfil && <p className="text-label text-danger">{erroPerfil}</p>}
+                      </div>
+                    )}
+                  </div>
+
+                  {!perfil && (
+                    <SourceTypeSelector
+                      value={rubrica}
+                      onChange={escolherRubrica}
+                      isInferred={!rubricaEscolhida}
+                    />
+                  )}
+
+                  <ClipModeSelector value={clipMode} onChange={setClipMode} />
+
+                  <ManualClipsField
+                    value={trechos}
+                    onChange={setTrechos}
+                    mode={trechosModo}
+                    onModeChange={setTrechosModo}
+                    isCompilation={clipMode === "compilation"}
+                  />
+                </div>
+              </section>
+
+              {IS_PUBLIC_BUILD && <LowBalanceBanner />}
+            </div>
+
+            {/* Esmaecido no pé do painel: ainda há opções abaixo. */}
+            <div
+              aria-hidden
+              className={`pointer-events-none sticky bottom-0 -mb-3 hidden h-12 bg-gradient-to-t from-raised to-transparent transition-opacity duration-200 lg:-mt-12 lg:block ${
+                maisAbaixo ? "opacity-100" : "opacity-0"
+              }`}
+            />
+          </div>
+
+          {/* O botão de gerar: rodapé fixo do painel (lg+) ou preso ao pé da tela */}
+          <div
+            className={`sticky bottom-0 z-20 -mx-4 mt-3 border-t px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 transition-[background-color,box-shadow] duration-200 sm:-mx-8 sm:px-8 lg:static lg:mx-0 lg:mt-0 lg:border-line lg:bg-raised lg:px-3 lg:pb-3 ${
+              preso
+                ? "border-line bg-base/92 shadow-[0_-10px_28px_-18px_rgba(36,36,36,0.45)] backdrop-blur-md lg:shadow-none lg:backdrop-blur-none"
+                : "border-transparent"
+            }`}
+          >
+            <button
+              type="submit"
+              disabled={enviando || enviado || bloqueado}
+              aria-describedby={erro ? "cm-erro-envio" : undefined}
+              className={`${buttonClass("create", "lg")} w-full gap-0 px-0 text-[1.3125rem]`}
+            >
+              <span className="flex flex-1 items-center justify-center gap-3 whitespace-nowrap px-6">
+                {enviado ? (
+                  <Check className="h-6 w-6" strokeWidth={3} aria-hidden />
+                ) : enviando ? (
+                  <Loader2 className="h-6 w-6 animate-spin" aria-hidden />
+                ) : (
+                  <Play className="h-6 w-6 fill-current" aria-hidden />
+                )}
+                {enviado
+                  ? "Enviado — abrindo o projeto"
+                  : enviando
+                    ? "Enviando..."
+                    : clipMode === "compilation"
+                      ? "Gerar compilado"
+                      : "Gerar clipes"}
               </span>
+              {metaDuracao && !enviando && !enviado && (
+                <span
+                  className="hidden items-center gap-2 self-stretch border-l border-white/35 px-5 text-body font-semibold sm:flex"
+                  title="Duração do vídeo de origem"
+                >
+                  <Clock3 className="h-[1.125rem] w-[1.125rem]" aria-hidden />
+                  <span className="tabular">{metaDuracao}</span>
+                  <span className="sr-only">de vídeo</span>
+                </span>
+              )}
+            </button>
+            {erro && (
+              <p id="cm-erro-envio" role="alert" className="mt-3 rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-body text-danger">
+                {erro}
+              </p>
             )}
-          </button>
-          {erro && (
-            <p id="cm-erro-envio" role="alert" className="mt-3 rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-body text-danger">
-              {erro}
-            </p>
-          )}
-        </div>
-        <div ref={fimDoBotao} aria-hidden className="-mt-3 h-px" />
-      </form>
+          </div>
+          <div ref={fimDoBotao} aria-hidden className="h-px lg:hidden" />
+        </form>
+      </div>
 
       {/* ── Painel contextual ─────────────────────────────────────────────── */}
       <aside
