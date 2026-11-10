@@ -34,8 +34,10 @@ export interface ResumoLinha {
 function Composicao({ style, layout, mode }: { style: ClipStyle; layout: LayoutMode; mode: SubtitleMode }) {
   return (
     // Sangra até a borda de cima e a da direita, como uma página de revista: as
-    // margens negativas desfazem o respiro do painel só deste lado.
-    <div className="relative -mr-4 -mt-8 h-[24rem] overflow-hidden sm:-mr-8 sm:h-[31rem] lg:-mr-12 xl:-mr-10 xl:h-[32.5rem]">
+    // margens negativas desfazem o respiro do painel só deste lado. No xl ela
+    // encolhe para o painel caber na janela sem rolar; prévia e título medem-se
+    // pela altura que sobrou (unidades cqh).
+    <div className="relative -mr-4 -mt-8 h-[24rem] overflow-hidden [container-type:size] sm:-mr-8 sm:h-[31rem] lg:-mr-12 xl:-mr-10 xl:h-[32.5rem] xl:min-h-[12rem] xl:shrink">
       {/* O bloco escuro em diagonal, onde mora a prévia */}
       <div
         className="absolute inset-y-0 right-0 w-full bg-sidebar"
@@ -56,8 +58,8 @@ function Composicao({ style, layout, mode }: { style: ClipStyle; layout: LayoutM
       />
 
       {/* A prévia real do estilo */}
-      <figure className="absolute right-[7%] top-[3%] w-[38%] max-w-[13.5rem] sm:right-[9%]">
-        <figcaption className="tabular mb-4 text-right text-[0.625rem] uppercase tracking-[0.16em] text-white/75">
+      <figure className="absolute right-[7%] top-[3%] w-[min(38%,13.5rem,40cqh)] sm:right-[9%]">
+        <figcaption className="tabular mb-3 text-right text-[0.625rem] uppercase tracking-[0.16em] text-white/75">
           Prévia do seu estilo
         </figcaption>
         <div className="relative">
@@ -75,7 +77,7 @@ function Composicao({ style, layout, mode }: { style: ClipStyle; layout: LayoutM
 
       {/* O título editorial */}
       <p
-        className="absolute bottom-[7%] left-0 font-condensed text-[2.75rem] font-extrabold uppercase italic leading-[0.9] tracking-[-0.01em] text-ink sm:text-[3.75rem]"
+        className="absolute bottom-[7%] left-0 font-condensed text-[min(3.75rem,10.5cqh,11cqw)] font-extrabold uppercase italic leading-[0.9] tracking-[-0.01em] text-ink"
       >
         <span className="inline-block bg-mint-strong px-2 pr-3">Cortes</span>
         <br />
@@ -142,67 +144,74 @@ function VideoIdentificado({
   const dur = duracao(dados?.duration_seconds ?? null);
 
   return (
-    <section aria-labelledby="cm-video" aria-busy={carregando} className="cm-fade-in flex flex-col gap-6">
+    <section
+      aria-labelledby="cm-video"
+      aria-busy={carregando}
+      className="cm-fade-in flex flex-col gap-6 xl:min-h-0 xl:shrink"
+    >
       <Eyebrow>
         <span id="cm-video">{carregando ? "Conferindo o vídeo" : "Vídeo identificado"}</span>
       </Eyebrow>
 
-      <div className="grid grid-cols-[minmax(0,1fr)_7.5rem] gap-5 sm:grid-cols-[minmax(0,1fr)_9.5rem] sm:gap-6">
-        <div className="min-w-0">
-          <div className="relative aspect-video overflow-hidden rounded-lg bg-inset">
-            {dados?.thumbnail_url ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={dados.thumbnail_url} alt="" className="h-full w-full object-cover" />
+      {/* No xl o bloco encolhe com a janela; miniatura e prévia medem-se pela altura dele. */}
+      <div className="xl:h-[18.75rem] xl:min-h-[9rem] xl:shrink xl:[container-type:size]">
+        <div className="grid grid-cols-[minmax(0,1fr)_7.5rem] gap-5 sm:grid-cols-[minmax(0,1fr)_9.5rem] sm:gap-6 xl:grid-cols-[minmax(0,1fr)_min(9.5rem,calc((100cqh-1.75rem)*0.5625))]">
+          <div className="min-w-0">
+            <div className="relative aspect-video overflow-hidden rounded-lg bg-inset xl:max-w-[calc((100cqh-6rem)*16/9)]">
+              {dados?.thumbnail_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={dados.thumbnail_url} alt="" className="h-full w-full object-cover" />
+              ) : (
+                <div className={`h-full w-full ${carregando ? "animate-pulse bg-hover" : ""}`} />
+              )}
+              {dur && (
+                <span className="tabular absolute bottom-2 right-2 rounded-sm bg-ink/85 px-1.5 py-0.5 text-label text-white">
+                  {dur}
+                </span>
+              )}
+              {dados?.is_live && (
+                <span className="absolute left-2 top-2 inline-flex items-center gap-1 rounded-sm bg-danger px-1.5 py-0.5 text-label font-semibold text-white">
+                  <Radio className="h-3 w-3" aria-hidden /> Ao vivo
+                </span>
+              )}
+            </div>
+
+            {carregando ? (
+              <div className="mt-4 flex flex-col gap-2" aria-hidden>
+                <span className="h-5 w-4/5 animate-pulse rounded-sm bg-hover" />
+                <span className="h-4 w-2/5 animate-pulse rounded-sm bg-hover" />
+              </div>
+            ) : dados?.title ? (
+              <div className="mt-4">
+                <h3 className="line-clamp-2 font-display text-[1.25rem] font-bold leading-tight text-ink">
+                  {dados.title}
+                </h3>
+                <p className="mt-1.5 flex flex-wrap items-center gap-x-2 text-body text-ink-dim">
+                  {dados.channel && <span>{dados.channel}</span>}
+                  {dados.channel && <span aria-hidden>·</span>}
+                  <span>YouTube</span>
+                  {dur && (
+                    <>
+                      <span aria-hidden>·</span>
+                      <span className="inline-flex items-center gap-1">
+                        <Clock3 className="h-3.5 w-3.5" aria-hidden />
+                        <span className="tabular">{dur}</span>
+                      </span>
+                    </>
+                  )}
+                </p>
+              </div>
             ) : (
-              <div className={`h-full w-full ${carregando ? "animate-pulse bg-hover" : ""}`} />
-            )}
-            {dur && (
-              <span className="tabular absolute bottom-2 right-2 rounded-sm bg-ink/85 px-1.5 py-0.5 text-label text-white">
-                {dur}
-              </span>
-            )}
-            {dados?.is_live && (
-              <span className="absolute left-2 top-2 inline-flex items-center gap-1 rounded-sm bg-danger px-1.5 py-0.5 text-label font-semibold text-white">
-                <Radio className="h-3 w-3" aria-hidden /> Ao vivo
-              </span>
+              <p className="mt-4 break-all text-body text-ink-dim">{url}</p>
             )}
           </div>
 
-          {carregando ? (
-            <div className="mt-4 flex flex-col gap-2" aria-hidden>
-              <span className="h-5 w-4/5 animate-pulse rounded-sm bg-hover" />
-              <span className="h-4 w-2/5 animate-pulse rounded-sm bg-hover" />
-            </div>
-          ) : dados?.title ? (
-            <div className="mt-4">
-              <h3 className="line-clamp-2 font-display text-[1.25rem] font-bold leading-tight text-ink">
-                {dados.title}
-              </h3>
-              <p className="mt-1.5 flex flex-wrap items-center gap-x-2 text-body text-ink-dim">
-                {dados.channel && <span>{dados.channel}</span>}
-                {dados.channel && <span aria-hidden>·</span>}
-                <span>YouTube</span>
-                {dur && (
-                  <>
-                    <span aria-hidden>·</span>
-                    <span className="inline-flex items-center gap-1">
-                      <Clock3 className="h-3.5 w-3.5" aria-hidden />
-                      <span className="tabular">{dur}</span>
-                    </span>
-                  </>
-                )}
-              </p>
-            </div>
-          ) : (
-            <p className="mt-4 break-all text-body text-ink-dim">{url}</p>
-          )}
-        </div>
-
-        <div>
-          <ClipPreview style={style} layout={layout} mode={mode} />
-          <p className="tabular mt-2 text-center text-[0.625rem] uppercase tracking-[0.14em] text-ink-muted">
-            Prévia
-          </p>
+          <div>
+            <ClipPreview style={style} layout={layout} mode={mode} />
+            <p className="tabular mt-2 text-center text-[0.625rem] uppercase tracking-[0.14em] text-ink-muted">
+              Prévia
+            </p>
+          </div>
         </div>
       </div>
 
@@ -256,7 +265,7 @@ function UltimosProjetos() {
   }, [carregar]);
 
   return (
-    <section aria-labelledby="cm-ultimos" className="flex flex-col gap-4">
+    <section aria-labelledby="cm-ultimos" className="flex flex-shrink-0 flex-col gap-4">
       <SectionLabel
         id="cm-ultimos"
         action={
@@ -276,7 +285,7 @@ function UltimosProjetos() {
 
       {falhou && <p className="text-body text-ink-dim">Não foi possível carregar os projetos.</p>}
       {!jobs && !falhou && (
-        <div className="flex flex-col gap-2.5" aria-hidden>
+        <div className="cm-ultimos flex flex-col gap-2.5" aria-hidden>
           {[0, 1].map((i) => (
             <span key={i} className="h-[4.75rem] animate-pulse rounded-md bg-inset" />
           ))}
@@ -291,7 +300,7 @@ function UltimosProjetos() {
         </div>
       )}
       {jobs && jobs.length > 0 && (
-        <ul className="flex flex-col gap-2.5">
+        <ul className="cm-ultimos flex flex-col gap-2.5">
           {jobs.map((job) => (
             <ProjectRow key={job.id} job={job} compact onDeleted={carregar} />
           ))}
@@ -319,11 +328,11 @@ export default function ContextPanel({
   mode: SubtitleMode;
 }) {
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-8 xl:min-h-0 xl:flex-1">
       {urlValida ? (
         <VideoIdentificado meta={meta} url={url} resumo={resumo} style={style} layout={layout} mode={mode} />
       ) : (
-        <div className="flex flex-col gap-6">
+        <div className="flex flex-col gap-6 xl:min-h-0 xl:shrink">
           <Composicao style={style} layout={layout} mode={mode} />
           <Trio />
         </div>

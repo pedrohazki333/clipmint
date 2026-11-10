@@ -246,3 +246,18 @@
 .cm-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/*
+ * O painel da direita de "Gerar clipes" não rola: em janela baixa, a lista de
+ * últimos projetos mostra menos linhas para o resto caber.
+ */
+@media (min-width: 80rem) and (max-height: 860px) {
+  .cm-ultimos > :nth-child(n + 3) {
+    display: none;
+  }
+}
+@media (min-width: 80rem) and (max-height: 620px) {
+  .cm-ultimos > :nth-child(n + 2) {
+    display: none;
+  }
+}
