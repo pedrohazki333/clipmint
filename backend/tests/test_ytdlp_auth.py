@@ -95,6 +95,9 @@ def _capturar_opts(monkeypatch, modulo):
         def extract_info(self, url, download=False):
             return {"duration": 300, "title": "t"}
 
+        def add_post_processor(self, pp, when="post_process"):
+            pass
+
     monkeypatch.setattr(modulo.yt_dlp, "YoutubeDL", FakeYDL)
     return capturado
 
@@ -122,7 +125,7 @@ def test_o_download_usa_os_mesmos_cookies(monkeypatch, cookies, tmp_path):
     monkeypatch.setattr(settings, "ytdlp_proxy", "")
     opts = _capturar_opts(monkeypatch, downloader)
 
-    downloader._download_sync("https://youtu.be/x", str(tmp_path / "v.mp4"))
+    downloader._download_sync("job", "https://youtu.be/x", str(tmp_path / "v.mp4"))
 
     assert Path(opts["cookiefile"]).read_text() == cookies.read_text()
     # E não perdeu o que já tinha.
@@ -141,7 +144,7 @@ def test_os_dois_recebem_o_mesmo_proxy(monkeypatch, tmp_path):
     quota._probe_sync("https://youtu.be/x")
 
     baixa = _capturar_opts(monkeypatch, downloader)
-    downloader._download_sync("https://youtu.be/x", str(tmp_path / "v.mp4"))
+    downloader._download_sync("job", "https://youtu.be/x", str(tmp_path / "v.mp4"))
 
     assert consulta["proxy"] == baixa["proxy"] == "socks5://10.0.0.1:1080"
 
@@ -218,7 +221,7 @@ def test_o_teto_de_resolucao_e_1440p(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "ytdlp_proxy", "")
     opts = _capturar_opts(monkeypatch, downloader)
 
-    downloader._download_sync("https://youtu.be/x", str(tmp_path / "v.mp4"))
+    downloader._download_sync("job", "https://youtu.be/x", str(tmp_path / "v.mp4"))
 
     assert "height<=1440" in opts["format"]
     assert "2160" not in opts["format"], "voltou para 4K: o disco não aguenta"
@@ -240,6 +243,6 @@ def test_o_download_nao_emite_barra_de_progresso(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "ytdlp_proxy", "")
     opts = _capturar_opts(monkeypatch, downloader)
 
-    downloader._download_sync("https://youtu.be/x", str(tmp_path / "v.mp4"))
+    downloader._download_sync("job", "https://youtu.be/x", str(tmp_path / "v.mp4"))
 
     assert opts.get("noprogress") is True

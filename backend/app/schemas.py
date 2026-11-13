@@ -261,7 +261,24 @@ class JobDetailResponse(JobResponse):
     creditos_cobrados: Optional[int] = None
     saldo: Optional[int] = None
 
+    #: Quanto a etapa atual andou (ver services/progress.py). Nulo quando o job
+    #: não está rodando, ou quando quem responde não é o processo que o roda.
+    progress: Optional["StageProgress"] = None
+
     model_config = {"from_attributes": True}
+
+
+class StageProgress(BaseModel):
+    #: Fração medida da etapa (0–1). Com `span` 0, é tudo o que se sabe.
+    base: float
+    #: Quanto a mais o trecho atual deve andar em `expected_seconds`.
+    span: float = 0.0
+    expected_seconds: Optional[float] = None
+    #: Há quanto tempo o trecho atual começou, no relógio do servidor.
+    elapsed_seconds: float = 0.0
+
+
+JobDetailResponse.model_rebuild()
 
 
 # ─── Validação de exemplo (few-shot) ──────────────────────────────────────────

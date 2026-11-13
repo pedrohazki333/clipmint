@@ -39,7 +39,7 @@ def _roda(efeitos, monkeypatch):
     """Executa o download com uma sequência de resultados/erros programada."""
     chamadas = {"n": 0}
 
-    def fake(url, path):
+    def fake(job_id, url, path):
         i = chamadas["n"]
         chamadas["n"] += 1
         efeito = efeitos[i]

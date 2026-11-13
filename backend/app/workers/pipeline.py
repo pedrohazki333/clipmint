@@ -57,6 +57,7 @@ from app.services.facecam import (
 from app.prompts.viral_analysis import default_source_type
 from app.services.layout import streamer_geometry
 from app.services import r6_hud
+from app.services import progress
 from app.services import usage as usage_service
 from app.services import usage_monitor
 from app.services import segments as segments_service
@@ -685,7 +686,10 @@ async def run_pipeline(job_id: str, resume: bool = False) -> None:
                     f"({settings.max_concurrent_jobs} job(s) em processamento)"
                 )
             async with limite:
-                await _execute_pipeline(job_id, resume)
+                try:
+                    await _execute_pipeline(job_id, resume)
+                finally:
+                    progress.clear(job_id)
     except joblock.JobAlreadyRunning as exc:
         # Quem já está trabalhando segue em frente; este processo sai sem tocar
         # em nada — nem no status do job, que pertence ao outro.
@@ -756,6 +760,10 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                 f"[{job_id}] Resume: transcrição reaproveitada ({len(words)} palavras)"
             )
         else:
+            progress.start_estimate(
+                job_id, "transcribing", 0.0, 1.0,
+                await progress.expected_stage_seconds("transcribing", metadata.duration),
+            )
             transcription = await transcribe_audio(job_id, metadata.audio_path)
 
             async with AsyncSessionLocal() as db:
@@ -798,6 +806,10 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
             )
         else:
             await _update_job_status(job_id, "analyzing")
+            progress.start_estimate(
+                job_id, "analyzing", 0.0, 1.0,
+                await progress.expected_stage_seconds("analyzing", metadata.duration),
+            )
 
             # O que a transcrição não conta: onde os buracos sem fala são a
             # gargalhada ou a jogada, e não tempo morto. Sem isto a análise lê
@@ -917,7 +929,15 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
 
         # Processa cada clip pendente
         failures: list[str] = []
+        # A barra conta clipes prontos (fração de verdade) e, dentro do clipe da
+        # vez, anda pelo tempo que um render costuma levar.
+        por_clipe = await progress.expected_clip_seconds()
+        ja_prontos = len(tasks) - len(pending)
         for index, task in enumerate(pending):
+            progress.start_estimate(
+                job_id, "clipping", (ja_prontos + index) / len(tasks),
+                1 / len(tasks), por_clipe,
+            )
             # Renderizar um clip leva minutos; entre um e outro dá tempo de o
             # job ser excluído. Sem esta checagem o laço seguia até o fim
             # recriando storage/clips/<job_id>/ depois do DELETE.

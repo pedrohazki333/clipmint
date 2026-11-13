@@ -10,6 +10,7 @@ import {
   reportFacecam,
 } from "@/lib/api";
 import type { Clip, FacecamRect, FacecamReport, JobDetail } from "@/lib/types";
+import { SectionLabel } from "@/components/ui/editorial";
 
 /**
  * Corrigir o enquadramento da facecam quando a detecção erra.
@@ -256,8 +257,8 @@ export default function FacecamCorrector({
   const clipeRelatado = clips.find((c) => c.id === relato?.clip_id) ?? clips[0];
 
   return (
-    <div className="flex flex-col gap-4 rounded-md border border-line bg-raised p-4 sm:p-6">
-      <h2 className="text-title font-semibold text-ink">Enquadramento da facecam</h2>
+    <section className="flex flex-col gap-4 rounded-lg border border-line bg-raised p-5 sm:p-6">
+      <SectionLabel>Enquadramento da facecam</SectionLabel>
 
       {/* ── Aprovado: o editor ── */}
       {relato?.status === "aprovado" ? (
@@ -377,6 +378,6 @@ export default function FacecamCorrector({
           </button>
         </>
       )}
-    </div>
+    </section>
   );
 }

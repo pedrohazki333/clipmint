@@ -1,18 +1,25 @@
-import type { JobStatus, StageMark } from "@/lib/types";
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { Check, X } from "lucide-react";
+
+import type { JobStatus, StageMark, StageProgress } from "@/lib/types";
 
 /**
- * O andamento do job, etapa por etapa.
+ * O andamento do job, etapa por etapa, cada uma com a sua barra.
  *
- * A versão anterior mostrava uma barra única com porcentagem fixa por etapa —
+ * Uma versão antiga mostrava uma barra única com porcentagem fixa por etapa —
  * 12% durante todo o download — pulsando parada por vinte minutos. Ela estimava
  * algo que ninguém sabia, e a estimativa era sempre a mesma para um vídeo de
  * três minutos e para uma live de seis horas.
  *
- * Aqui a barra só aparece onde existe uma fração de verdade: em "gerando
- * clipes" sabemos 2 de 5. Nas outras etapas mostramos o que realmente se sabe —
- * qual etapa está rodando e há quanto tempo. O tempo das etapas concluídas fica
- * à vista: depois de alguns jobs dá para saber que download leva ~4 min, e uma
- * etapa travada passa a se denunciar sozinha.
+ * Agora a largura vem do servidor (`progress`). No download ela é a fração de
+ * bytes, e na geração de clipes, a de clipes prontos. Na transcrição e na
+ * análise, que não têm contador, é o tempo que a etapa levou nos jobs
+ * anteriores, proporcional à duração do vídeo — e a barra desacelera se a etapa
+ * passar disso, sem nunca encher sozinha: quem enche é a etapa acabar.
+ *
+ * O tempo das etapas concluídas fica à vista: uma etapa travada se denuncia.
  */
 
 const STAGES: { key: JobStatus; label: string }[] = [
@@ -33,14 +40,76 @@ const ORDER: JobStatus[] = [
 
 interface Props {
   status: JobStatus;
-  errorMessage?: string | null;
   clipsReady?: number;
   clipsTotal?: number;
   stageLog?: StageMark[] | null;
+  progress?: StageProgress | null;
 }
 
-/** Segundos → "4:12" ou "1:02:30". Sempre com dois dígitos nos minutos. */
-function formatDuration(seconds: number): string {
+/**
+ * O trecho sem contador: anda reto até ~90% no tempo esperado e, se passar
+ * dele, desacelera em direção ao fim sem chegar lá.
+ */
+function curva(x: number): number {
+  if (x <= 1) return 0.9 * Math.max(0, x);
+  return 0.9 + 0.09 * (1 - Math.exp(-(x - 1) * 1.5));
+}
+
+type Amostra = { p: StageProgress; em: number };
+
+/**
+ * A fração a desenhar agora, entre uma resposta do servidor e a próxima.
+ *
+ * As respostas chegam a cada 2 s; desenhar só nelas faria a barra andar aos
+ * saltos. Entre elas: no trecho estimado, o relógio continua a curva; no
+ * medido, a barra segue na velocidade das duas últimas medidas, sem passar do
+ * que a próxima medida deve trazer.
+ */
+function useFracaoAoVivo(status: JobStatus, progress: StageProgress | null | undefined): number | null {
+  const [amostras, setAmostras] = useState<{ atual: Amostra | null; anterior: Amostra | null }>({
+    atual: null,
+    anterior: null,
+  });
+  const maior = useRef<{ status: JobStatus; valor: number }>({ status, valor: 0 });
+  const [agora, setAgora] = useState(0);
+
+  useEffect(() => {
+    if (!progress) return;
+    const em = performance.now();
+    setAmostras((s) => ({ atual: { p: progress, em }, anterior: s.atual }));
+    setAgora(em);
+  }, [progress]);
+
+  const rodando = !!progress;
+  useEffect(() => {
+    if (!rodando) return;
+    const t = setInterval(() => setAgora(performance.now()), 200);
+    return () => clearInterval(t);
+  }, [rodando]);
+
+  if (maior.current.status !== status) maior.current = { status, valor: 0 };
+  const a = amostras.atual;
+  if (!progress || !a) return null;
+
+  const dt = Math.max(0, (agora - a.em) / 1000);
+  let valor: number;
+  if (a.p.expected_seconds && a.p.span > 0) {
+    valor = a.p.base + a.p.span * curva((a.p.elapsed_seconds + dt) / a.p.expected_seconds);
+  } else {
+    const b = amostras.anterior;
+    const intervalo = b ? (a.em - b.em) / 1000 : 0;
+    const passo = b && intervalo > 0 && a.p.base > b.p.base ? a.p.base - b.p.base : 0;
+    valor = intervalo > 0 ? a.p.base + passo * Math.min(1, dt / intervalo) : a.p.base;
+  }
+  // Nunca recua na mesma etapa: uma medida nova menor que a extrapolação
+  // espera a barra em vez de puxá-la de volta.
+  valor = Math.max(maior.current.valor, Math.min(0.995, valor));
+  maior.current.valor = valor;
+  return valor;
+}
+
+/** Segundos → "4:12" ou "1:02:30". */
+export function formatDuration(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return "";
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
@@ -58,7 +127,7 @@ function formatDuration(seconds: number): string {
  * última marca não tem seguinte: se o job ainda roda, ela conta até agora; se
  * terminou, até a marca terminal.
  */
-function stageDurations(
+export function stageDurations(
   marks: StageMark[] | null | undefined,
   agora: number,
 ): Map<JobStatus, number> {
@@ -77,125 +146,108 @@ function stageDurations(
   return out;
 }
 
-export default function JobStatus({
-  status,
-  errorMessage,
-  clipsReady = 0,
-  clipsTotal = 0,
-  stageLog,
-}: Props) {
-  if (status === "error") {
-    return (
-      <div
-        role="alert"
-        className="rounded-md border border-danger/40 bg-danger-soft p-4"
-      >
-        <p className="text-body font-medium text-danger">
-          O processamento parou
-        </p>
-        {errorMessage && (
-          <p className="mt-1 text-body text-ink-dim">{errorMessage}</p>
-        )}
-      </div>
-    );
+/** Em que etapa o job estava quando parou: a última marca que não é terminal. */
+function etapaQueFalhou(marks: StageMark[] | null | undefined): JobStatus | null {
+  if (!marks) return null;
+  for (let i = marks.length - 1; i >= 0; i--) {
+    if (marks[i].s !== "error" && marks[i].s !== "done") return marks[i].s;
+  }
+  return null;
+}
+
+type Estado = "feita" | "ativa" | "falhou" | "pendente";
+
+export default function JobStatus({ status, clipsReady = 0, clipsTotal = 0, stageLog, progress }: Props) {
+  const aoVivo = useFracaoAoVivo(status, progress);
+  const duracoes = stageDurations(stageLog, Date.now());
+
+  // No erro, o lugar na sequência é o da etapa que estava rodando.
+  const falhou = status === "error" ? etapaQueFalhou(stageLog) : null;
+  const posicao = ORDER.indexOf(falhou ?? status);
+
+  function estadoDe(key: JobStatus): Estado {
+    const i = ORDER.indexOf(key);
+    if (status === "error") {
+      if (key === falhou) return "falhou";
+      return falhou && i < posicao ? "feita" : "pendente";
+    }
+    if (i < posicao) return "feita";
+    if (i === posicao) return "ativa";
+    return "pendente";
   }
 
-  const atual = ORDER.indexOf(status);
-  const duracoes = stageDurations(stageLog, Date.now());
-  const concluidas = STAGES.filter((s) => atual > ORDER.indexOf(s.key));
-  const ativa = STAGES.find((s) => s.key === status);
-  const emClipes = status === "clipping" && clipsTotal > 0;
-
   return (
-    <div className="flex flex-col gap-3">
-      {/* Etapas concluídas: colapsam num tique com o tempo que levaram. */}
-      {concluidas.length > 0 && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-          {concluidas.map((etapa) => {
-            const segundos = duracoes.get(etapa.key);
-            return (
-              <span
-                key={etapa.key}
-                className="flex items-center gap-1.5 text-label text-ink-muted"
-              >
-                <svg
-                  viewBox="0 0 12 12"
-                  className="h-3 w-3 flex-shrink-0 text-mint-ink"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="M2.5 6.5l2.5 2.5 4.5-5"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.75"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-                {etapa.label}
-                {segundos !== undefined && (
-                  <span className="tabular text-ink-muted">
-                    {formatDuration(segundos)}
-                  </span>
-                )}
-              </span>
-            );
-          })}
-        </div>
-      )}
+    <ol className="grid grid-cols-2 gap-x-4 gap-y-5 sm:grid-cols-4" aria-label="Etapas do processamento">
+      {STAGES.map((etapa, n) => {
+        const estado = estadoDe(etapa.key);
+        const segundos = duracoes.get(etapa.key);
+        const emClipes = etapa.key === "clipping" && estado === "ativa" && clipsTotal > 0;
+        // Sem resposta de progresso (o servidor reiniciou, ou é outro processo),
+        // a geração ainda tem a contagem de clipes; as demais, só o pulso.
+        const fracao =
+          estado !== "ativa" ? null : (aoVivo ?? (emClipes ? clipsReady / clipsTotal : null));
+        const largura = estado === "pendente" ? 0 : estado === "ativa" ? (fracao ?? 0) * 100 : 100;
 
-      {/* Etapa ativa: o único lugar com destaque. */}
-      {status !== "done" && (
-        <div className="rounded-md border border-line bg-inset p-3">
-          <div className="flex items-baseline justify-between gap-3">
-            <span className="flex items-center gap-2 text-body font-medium text-ink">
-              <span
-                className="h-1.5 w-1.5 flex-shrink-0 animate-pulse rounded-full bg-running"
-                aria-hidden="true"
-              />
-              {ativa?.label ?? "Na fila"}
-            </span>
-            <span className="tabular flex-shrink-0 text-label text-ink-dim">
-              {emClipes && `${clipsReady} de ${clipsTotal} · `}
-              {formatDuration(duracoes.get(status) ?? 0)}
-            </span>
-          </div>
-
-          {/* Barra só onde existe uma fração de verdade. Nas outras etapas não
-              sabemos quanto falta, e inventar um número foi o erro anterior. */}
-          {emClipes && (
+        return (
+          <li key={etapa.key} aria-current={estado === "ativa" ? "step" : undefined} className="min-w-0">
+            {/* A régua de cima. Um elemento só do começo ao fim da etapa, para
+                que ao terminar ela corra até o fim em vez de trocar de repente. */}
             <div
-              className="mt-2.5 h-1 overflow-hidden rounded-full bg-line"
-              role="progressbar"
-              aria-valuenow={clipsReady}
-              aria-valuemin={0}
-              aria-valuemax={clipsTotal}
-              aria-label="Clipes gerados"
+              className="relative h-1.5 overflow-hidden rounded-full bg-line"
+              {...(estado === "ativa" && {
+                role: "progressbar",
+                "aria-label": `Andamento: ${etapa.label}`,
+                ...(fracao !== null && {
+                  "aria-valuemin": 0,
+                  "aria-valuemax": 100,
+                  "aria-valuenow": Math.round(fracao * 100),
+                }),
+              })}
             >
-              <div
-                className="h-full rounded-full bg-mint transition-[width] duration-500 ease-out"
-                style={{ width: `${(clipsReady / clipsTotal) * 100}%` }}
-              />
+              {estado === "ativa" && fracao === null ? (
+                <div className="absolute inset-0 animate-pulse bg-coral/50" />
+              ) : (
+                <div
+                  className={`absolute inset-y-0 left-0 rounded-full transition-[width,background-color] ease-linear ${
+                    estado === "feita"
+                      ? "bg-ink duration-500"
+                      : estado === "falhou"
+                        ? "bg-danger duration-500"
+                        : "cm-progress-fill duration-200"
+                  }`}
+                  style={{ width: `${largura}%` }}
+                />
+              )}
             </div>
-          )}
-        </div>
-      )}
 
-      {status === "done" && (
-        <p className="flex items-center gap-2 text-body text-mint-ink">
-          <svg viewBox="0 0 12 12" className="h-3.5 w-3.5" aria-hidden="true">
-            <path
-              d="M2.5 6.5l2.5 2.5 4.5-5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.75"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-          Concluído
-        </p>
-      )}
-    </div>
+            <div className="mt-3 flex items-center gap-2">
+              <span className="tabular text-label text-ink-muted">{String(n + 1).padStart(2, "0")}</span>
+              {estado === "feita" && <Check className="h-3.5 w-3.5 text-mint-ink" aria-label="concluída" />}
+              {estado === "falhou" && <X className="h-3.5 w-3.5 text-danger" aria-label="parou aqui" />}
+              {estado === "ativa" && (
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-coral" aria-label="em andamento" />
+              )}
+            </div>
+            <p
+              className={`mt-1 font-display text-[0.9375rem] font-bold ${
+                estado === "pendente" ? "text-ink-muted" : estado === "falhou" ? "text-danger" : "text-ink"
+              }`}
+            >
+              {etapa.label}
+            </p>
+            <p className="tabular mt-0.5 text-label text-ink-muted">
+              {emClipes && `${clipsReady} de ${clipsTotal} · `}
+              {estado === "pendente"
+                ? "—"
+                : segundos !== undefined
+                  ? formatDuration(segundos)
+                  : estado === "ativa"
+                    ? "0:00"
+                    : "—"}
+            </p>
+          </li>
+        );
+      })}
+    </ol>
   );
 }

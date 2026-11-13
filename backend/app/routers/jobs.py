@@ -38,6 +38,7 @@ from app.schemas import (
     is_youtube_url,
 )
 from app.services import credits, facecam_review, quota, usage, usage_monitor
+from app.services import progress as progress_service
 from app.services.quota import guard_new_job
 from app.utils.timecodes import parse_ranges
 from app.workers import joblock
@@ -275,6 +276,8 @@ async def get_job(
     # ou job criado antes dela.
     if billing_enabled():
         await _anexar_creditos(job, user, db)
+
+    job.progress = progress_service.snapshot(job.id, job.status)
 
     return job
 

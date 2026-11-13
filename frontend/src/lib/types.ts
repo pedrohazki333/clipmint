@@ -178,6 +178,21 @@ export interface JobDetail extends Job {
   creditos_reservados: number | null;
   creditos_cobrados: number | null;
   saldo: number | null;
+  /** Quanto a etapa atual andou. Nulo fora de execução, ou sem o processo que roda o job. */
+  progress?: StageProgress | null;
+}
+
+/**
+ * O progresso da etapa, como o servidor sabe (ver backend services/progress.py).
+ *
+ * `base` é a fração medida. Quando `expected_seconds` vem, o trecho seguinte
+ * (`span`) não tem contador e anda pelo tempo que costuma levar.
+ */
+export interface StageProgress {
+  base: number;
+  span: number;
+  expected_seconds: number | null;
+  elapsed_seconds: number;
 }
 
 export interface CreateJobPayload {

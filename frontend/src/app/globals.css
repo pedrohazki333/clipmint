@@ -261,3 +261,30 @@
     display: none;
   }
 }
+
+/**
+ * O preenchimento da barra de progresso: coral com um brilho que corre por cima.
+ * O brilho diz "está vivo" mesmo quando a fração anda devagar; a largura é que
+ * diz quanto falta.
+ */
+.cm-progress-fill {
+  background-color: var(--color-coral);
+  background-image: linear-gradient(
+    105deg,
+    transparent 25%,
+    rgb(255 255 255 / 0.45) 50%,
+    transparent 75%
+  );
+  background-size: 220% 100%;
+  background-repeat: no-repeat;
+  animation: cm-progress-sheen 1.5s linear infinite;
+}
+
+@keyframes cm-progress-sheen {
+  from { background-position: 160% 0; }
+  to { background-position: -60% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cm-progress-fill { animation: none; background-image: none; }
+}

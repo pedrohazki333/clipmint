@@ -9,6 +9,7 @@ import yt_dlp
 from app.utils import ytdlp as ytdlp_opts
 
 from app.config import settings
+from app.services import progress
 from app.utils.ffmpeg import get_duration, run_ffmpeg
 
 logger = logging.getLogger(__name__)
@@ -71,7 +72,70 @@ def _is_permanent(message: str) -> bool:
     return any(marker in lowered for marker in _PERMANENT_ERRORS)
 
 
-def _download_sync(youtube_url: str, video_path: str) -> dict:
+#: Do download, a parte dos bytes; o resto é extrair o áudio e conferir o arquivo.
+_FRACAO_BYTES = 0.94
+
+
+class _ContadorDeBytes:
+    """
+    Quanto do download já veio, somando os arquivos que o yt-dlp baixa.
+
+    Vídeo e áudio chegam em arquivos separados, um depois do outro, e o gancho
+    de progresso só vê o arquivo da vez. Os tamanhos de todos vêm antes, de um
+    pós-processador `before_dl` — sem eles a barra encheria no fim do vídeo e
+    recomeçaria no áudio.
+    """
+
+    def __init__(self, job_id: str) -> None:
+        self.job_id = job_id
+        self.esperados: list[float] = []
+        self.prontos = 0.0  # bytes dos arquivos já terminados
+        self.indice = 0
+
+    def formatos(self, info: dict) -> None:
+        pedidos = info.get("requested_formats") or [info]
+        self.esperados = [
+            float(f.get("filesize") or f.get("filesize_approx") or 0) for f in pedidos
+        ]
+
+    def gancho(self, d: dict) -> None:
+        try:
+            atual_total = float(d.get("total_bytes") or d.get("total_bytes_estimate") or 0)
+            baixado = float(d.get("downloaded_bytes") or 0)
+            if d.get("status") == "finished":
+                self.prontos += baixado or atual_total
+                self.indice += 1
+                baixado = atual_total = 0.0
+                # O arquivo da vez acabou: o que falta são os seguintes, todos.
+                depois = sum(self.esperados[self.indice:])
+            elif d.get("status") == "downloading":
+                depois = sum(self.esperados[self.indice + 1:])
+            else:
+                return
+
+            total = self.prontos + max(atual_total, baixado) + depois
+            if total <= 0:
+                return
+            progress.set_exact(
+                self.job_id, "downloading", _FRACAO_BYTES * (self.prontos + baixado) / total
+            )
+        except Exception:  # noqa: BLE001 — a barra nunca pode derrubar o download
+            pass
+
+
+class _AntesDeBaixar(yt_dlp.postprocessor.PostProcessor):
+    """Passa ao contador os formatos escolhidos, antes do primeiro byte."""
+
+    def __init__(self, contador: _ContadorDeBytes) -> None:
+        super().__init__()
+        self.contador = contador
+
+    def run(self, info):
+        self.contador.formatos(info)
+        return [], info
+
+
+def _download_sync(job_id: str, youtube_url: str, video_path: str) -> dict:
     """Baixa o vídeo com yt-dlp (bloqueante — executar fora do event loop)."""
     # Teto em 1440p, e não em 2160p. O crop 9:16 usa só ~56% da largura, então
     # fonte 1080p vira upscale no clip final — mas 4K não se paga:
@@ -87,6 +151,7 @@ def _download_sync(youtube_url: str, video_path: str) -> dict:
     # E o ganho de qualidade não aparece onde importa. O painel da facecam sai
     # em 1080 de largura; num fonte 1440p a caixa da cam mede ~550px e amplia
     # 2x, que foi exatamente o caso do vídeo do Mount conferido quadro a quadro.
+    contador = _ContadorDeBytes(job_id)
     ydl_opts = {
         # Mesma autenticação da consulta de metadados (ver utils/ytdlp.py).
         **ytdlp_opts.base_opts(),
@@ -113,8 +178,11 @@ def _download_sync(youtube_url: str, video_path: str) -> dict:
         # e em pedaços o que falha é o pedaço, que o "retries" acima refaz.
         "http_chunk_size": 10 * 1024 * 1024,
         "continuedl": True,
+        # O progresso vai para a barra da tela, e não para o log (ver acima).
+        "progress_hooks": [contador.gancho],
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.add_post_processor(_AntesDeBaixar(contador), when="before_dl")
         return ydl.extract_info(youtube_url, download=True)
 
 
@@ -136,7 +204,7 @@ async def _download_with_retry(job_id: str, youtube_url: str, video_path: str) -
     """
     for attempt in range(1, _DOWNLOAD_ATTEMPTS + 1):
         try:
-            return await asyncio.to_thread(_download_sync, youtube_url, video_path)
+            return await asyncio.to_thread(_download_sync, job_id, youtube_url, video_path)
         except yt_dlp.utils.DownloadError as exc:
             message = str(exc)
             if _is_permanent(message):
@@ -289,7 +357,11 @@ async def download_video(job_id: str, youtube_url: str) -> VideoMetadata:
 
         logger.info(f"[{job_id}] Video downloaded: {title} ({duration:.0f}s)")
 
-        # Extrai o áudio do arquivo local — evita baixar o vídeo uma segunda vez
+        # Extrai o áudio do arquivo local — evita baixar o vídeo uma segunda vez.
+        # Leva segundos, sem contador: o fim da barra anda pelo tempo.
+        progress.start_estimate(
+            job_id, "downloading", _FRACAO_BYTES, 1 - _FRACAO_BYTES, max(3.0, duration / 90)
+        )
         await _extract_audio(job_id, video_path, audio_path)
 
         if await ensure_media(job_id, video_path, audio_path, duration):

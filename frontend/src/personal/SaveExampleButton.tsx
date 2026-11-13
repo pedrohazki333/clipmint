@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import ValidateModal from "@/components/ValidateModal";
+import { buttonClass } from "@/components/ui/editorial";
 
 /**
  * "Salvar exemplo" — só da versão pessoal.
@@ -25,7 +26,7 @@ export default function SaveExampleButton({ clipId }: { clipId: string }) {
       <button
         onClick={() => setAberto(true)}
         title="Guardar como exemplo para o aprendizado da análise"
-        className="rounded-sm border border-line bg-inset px-3 py-2 text-body text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
+        className={buttonClass("quiet")}
       >
         Salvar exemplo
       </button>
