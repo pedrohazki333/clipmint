@@ -163,7 +163,7 @@ async def extract_keyframes(
         code, _, stderr = await _run([
             "ffmpeg", "-v", "error", "-skip_frame", "nokey",
             "-ss", f"{start:.3f}", "-t", f"{end - start:.3f}", "-i", video_path,
-            "-vf", f"scale={_FRAME_WIDTH}:-1", "-vsync", "0",
+            "-vf", f"scale={_FRAME_WIDTH}:-1", "-fps_mode", "passthrough",
             "-q:v", _JPEG_QUALITY, f"{tmpdir}/f_%04d.jpg",
         ], _EXTRACT_TIMEOUT)
 

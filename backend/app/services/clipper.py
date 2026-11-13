@@ -353,6 +353,10 @@ async def cut_and_crop(
     )
 
 
+#: Maior fração do quadro que o delogo pode cobrir (ver _brand_layers).
+_MAX_DELOGO_FRAC = 0.20
+
+
 async def _brand_layers(
     video_path: str,
     start_time: float,
@@ -375,18 +379,30 @@ async def _brand_layers(
     brand = await asyncio.to_thread(
         detect_brand_regions, video_path, start_time, end_time
     )
-    qr_regions = brand["qr"]
-    all_regions = brand["qr"] + brand["static"]
-
     inputs = ["-ss", str(start_time), "-i", video_path]
     n_inputs = 1
     parts: list[str] = []
     src_label = "0:v"
 
-    if not all_regions:
+    if not (brand["qr"] or brand["static"]):
         return inputs, parts, src_label, n_inputs
 
     src_width, src_height = await get_video_dimensions(video_path)
+
+    # Última linha de defesa: delogo numa área grande não apaga uma marca, apaga
+    # o vídeo — ele reconstrói a região a partir das bordas, e o resultado são
+    # listras na tela inteira. Nenhuma marca de canal ocupa um quinto do quadro.
+    def _cabe(r) -> bool:
+        if r[2] * r[3] <= _MAX_DELOGO_FRAC * src_width * src_height:
+            return True
+        logger.warning(f"Região de marca grande demais ignorada: {r} em {src_width}x{src_height}")
+        return False
+
+    qr_regions = [r for r in brand["qr"] if _cabe(r)]
+    all_regions = qr_regions + [r for r in brand["static"] if _cabe(r)]
+    if not all_regions:
+        return inputs, parts, src_label, n_inputs
+
     delogos = ",".join(
         _delogo_filter(x, y, w, h, src_width, src_height)
         for (x, y, w, h) in all_regions

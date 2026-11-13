@@ -34,6 +34,11 @@ _EDGE_PERSISTENCE = 0.70  # fração dos frames DA CENA em que a borda persiste
 _STATIC_BAND = 0.35       # marcas de canal ficam nas faixas superior/inferior
 _STATIC_MIN_AREA = 0.0004
 _STATIC_MAX_AREA = 0.15
+# Logo de canal é compacto. Uma "marca" que atravessa metade da largura ou da
+# altura do quadro é cenário (prateleira, luminária, borda de parede) que
+# sobreviveu aos cortes — num clipe costurado, o corte entre dois trechos da
+# mesma câmera não muda o cenário, e ele passa pela validação.
+_STATIC_MAX_SIDE = 0.50
 _SCENE_CUT_DIFF = 22      # diff médio de luminância entre amostras = corte de cena
 _MIN_SCENES = 2           # a marca precisa persistir em TODAS as cenas; com uma
                           # cena só, o cenário inteiro também persistiria →
@@ -300,6 +305,10 @@ def _detect_static_overlays(
         (x + gap, y + gap, max(1, w - 2 * gap), max(1, h - 2 * gap))
         for (x, y, w, h) in boxes
     ]
+    # A fusão junta caixas que se tocam — e caixas em cantos opostos, cada uma
+    # pequena, podem virar uma do tamanho da tela. O teto de área vale de novo
+    # para o resultado.
+    boxes = [b for b in boxes if _cabe_como_marca(b, src_w, src_h)]
 
     # Só as 3 maiores por área (falsos positivos tendem a ser pequenos)
     boxes.sort(key=lambda b: b[2] * b[3], reverse=True)
@@ -316,7 +325,30 @@ def _detect_static_overlays(
             min(src_w - rx, w + 2 * pad_x),
             min(src_h - ry, h + 2 * pad_y),
         ))
-    return _merge_regions(regions)
+    # Fundir as caixas com folga pode fazer o mesmo: duas marcas em cantos
+    # opostos viravam UMA caixa da tela inteira, e o delogo nela transformou o
+    # vídeo todo em listras (clipe 9fae72ee, 12/11/2026). Fusão que passa do
+    # teto não vale: ficam as caixas separadas que cabem nele.
+    merged = _merge_regions(regions)
+    if all(_cabe_como_marca(r, src_w, src_h) for r in merged):
+        return merged
+    logger.warning(
+        f"Marcas fundidas passariam do tamanho de um logo — mantidas separadas: {regions}"
+    )
+    return [r for r in regions if _cabe_como_marca(r, src_w, src_h)]
+
+
+def _area_frac(box: tuple[int, int, int, int], src_w: int, src_h: int) -> float:
+    return (box[2] * box[3]) / max(1, src_w * src_h)
+
+
+def _cabe_como_marca(box: tuple[int, int, int, int], src_w: int, src_h: int) -> bool:
+    """Tamanho de logo: área até o teto, e nenhum lado passando da metade do quadro."""
+    return (
+        _area_frac(box, src_w, src_h) <= _STATIC_MAX_AREA
+        and box[2] <= _STATIC_MAX_SIDE * src_w
+        and box[3] <= _STATIC_MAX_SIDE * src_h
+    )
 
 
 def _survives_cuts(
