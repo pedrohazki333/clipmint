@@ -203,6 +203,23 @@ export async function reportFacecam(
   return data;
 }
 
+/**
+ * Envia a capa do layout "Capa + faixa" antes de gerar. O servidor a deixa em
+ * 1080 × 800 (recorte pelo centro) e devolve o id para o pedido de geração.
+ */
+export async function uploadCover(
+  file: File,
+): Promise<{ id: string; width: number; height: number }> {
+  const form = new FormData();
+  form.append("file", file);
+  const { data } = await api.post<{ id: string; width: number; height: number }>(
+    "/covers",
+    form,
+    { headers: { "Content-Type": "multipart/form-data" } },
+  );
+  return data;
+}
+
 /** URL de um quadro do vídeo de origem. Exige relato aprovado. */
 export function getSourceFrameUrl(jobId: string, t: number): string {
   return `/api/jobs/${jobId}/frame?t=${t.toFixed(2)}`;

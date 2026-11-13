@@ -72,6 +72,9 @@ class JobCreate(BaseModel):
     manual_mode: Literal["only", "plus"] = "only"
     # Só no modo streamer: posição da facecam. Omitido = detecção automática.
     facecam_rect: Optional[FacecamRectPayload] = None
+    # Só no layout "Capa + faixa": o id devolvido por POST /covers. Omitido = a
+    # capa é escolhida do próprio clipe.
+    cover_upload_id: Optional[str] = None
 
     @field_validator("manual_clips")
     @classmethod

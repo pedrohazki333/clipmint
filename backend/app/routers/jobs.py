@@ -27,7 +27,7 @@ from app.deps import current_user, owned_by
 from app.features import SourceTypeField, billing_enabled
 from app.layouts import LAYOUT_LABELS, layout_allowed, layouts_for
 from app.clip_style import CaptionStyle, ClipStyle, style_for_profile
-from app.models import Clip, CreditLedger, FacecamReport, Job, Profile, Transcript, User
+from app.models import Clip, CreditLedger, FacecamReport, Job, Profile, Transcript, User, uuid4_hex
 from app.prompts.viral_analysis import default_source_type
 from app.schemas import (
     FacecamRectPayload,
@@ -38,6 +38,7 @@ from app.schemas import (
     is_youtube_url,
 )
 from app.services import credits, facecam_review, quota, usage, usage_monitor
+from app.services import custom_cover
 from app.services import progress as progress_service
 from app.services.quota import guard_new_job
 from app.utils.timecodes import parse_ranges
@@ -94,6 +95,24 @@ async def video_metadata(
         thumbnail_url=meta.thumbnail_url,
         is_live=meta.is_live,
     )
+
+
+@router.post("/covers", status_code=201)
+async def upload_cover(
+    file: UploadFile = File(...),
+    user: User = Depends(current_user),
+) -> dict:
+    """
+    Recebe a capa do layout "Capa + faixa" antes de o job existir.
+
+    Devolve o id que o pedido de geração leva em `cover_upload_id`. A imagem já
+    fica em 1080 × 800 (recortada pelo centro); envio não usado some em 24 h.
+    """
+    dados = await file.read(custom_cover.MAX_BYTES + 1)
+    try:
+        return await asyncio.to_thread(custom_cover.salvar_envio, user.id, dados)
+    except custom_cover.CapaInvalida as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/jobs", response_model=JobResponse, status_code=201)
@@ -155,6 +174,14 @@ async def create_job(
             else layouts_for(nicho)[0]
         )
 
+    # Só "Capa + faixa" tem capa. Recusar em vez de ignorar: a pessoa enviou uma
+    # imagem e esperaria vê-la no clipe.
+    if payload.cover_upload_id and layout != "cover":
+        raise HTTPException(
+            status_code=422,
+            detail="A capa enviada só é usada no layout Capa + faixa.",
+        )
+
     # O estilo é copiado para o job. O destaque da legenda pode ser escolhido no
     # pedido sem mexer no perfil: só a cópia muda. Reconstruído (e não alterado no
     # lugar) para o contraste ser conferido de novo contra o fundo do outro estilo.
@@ -169,7 +196,19 @@ async def create_job(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    # O id é escolhido aqui para a capa enviada já ir para a pasta do job.
+    job_id = uuid4_hex()
+    cover_path = None
+    if payload.cover_upload_id:
+        try:
+            cover_path = custom_cover.mover_para_o_job(
+                user.id, payload.cover_upload_id, job_id
+            )
+        except custom_cover.CapaInvalida as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     job = Job(
+        id=job_id,
         user_id=user.id,
         profile_id=perfil.id if perfil else None,
         youtube_url=payload.youtube_url,
@@ -200,6 +239,7 @@ async def create_job(
         facecam_rect=(
             payload.facecam_rect.model_dump_json() if payload.facecam_rect else None
         ),
+        cover_path=cover_path,
         status="queued",
     )
     db.add(job)

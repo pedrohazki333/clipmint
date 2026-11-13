@@ -537,9 +537,14 @@ async def cut_cover(
     style: Optional[ClipStyle] = None,
     source_type: str | None = None,
     profile_id: str | None = None,
+    custom_cover_path: str | None = None,
 ) -> tuple[str, int]:
     """
     Layout B: a capa em cima, a faixa do título no meio e quem fala embaixo.
+
+    Com `custom_cover_path`, a capa é a imagem que a pessoa enviou (já em
+    1080 × 800, ver services/custom_cover.py), igual em todos os clipes do job e
+    sem marca por cima: a arte é dela. Sem ela, a capa sai do próprio clipe.
 
       ┌──────────────┐ 0
       │     CAPA     │  um quadro parado: a prévia da reação mais forte do clipe
@@ -566,16 +571,28 @@ async def cut_cover(
         job_id, clip_id, video_path, start_time, end_time, clip_dir,
         CANVAS_W / COVER_V2_SPEAKER_H,
     )
-    brand = await asyncio.to_thread(detect_brand_regions, video_path, start_time, end_time)
-    cover_path = str(clip_dir / f"{clip_id}_cover.png")
-    rule = await asyncio.to_thread(
-        generate_reaction_cover,
-        video_path, start_time, end_time, cover_path, CANVAS_W, COVER_V2_H,
-        watermark_path=user_watermark_path(source_type, profile_id),
-        qr_regions=brand["qr"],
-        static_regions=brand["static"],
-    )
-    logger.info(f"[{job_id}] Capa de {clip_id}: {rule}")
+    if custom_cover_path and Path(custom_cover_path).exists():
+        cover_path = custom_cover_path
+        logger.info(f"[{job_id}] Capa de {clip_id}: enviada pela pessoa")
+    else:
+        if custom_cover_path:
+            # A pasta do job perdeu a imagem (faxina, cópia parcial): melhor um
+            # clipe com a capa automática do que nenhum clipe.
+            logger.warning(
+                f"[{job_id}] Capa enviada sumiu ({custom_cover_path}) — escolhendo do clipe"
+            )
+        brand = await asyncio.to_thread(
+            detect_brand_regions, video_path, start_time, end_time
+        )
+        cover_path = str(clip_dir / f"{clip_id}_cover.png")
+        rule = await asyncio.to_thread(
+            generate_reaction_cover,
+            video_path, start_time, end_time, cover_path, CANVAS_W, COVER_V2_H,
+            watermark_path=user_watermark_path(source_type, profile_id),
+            qr_regions=brand["qr"],
+            static_regions=brand["static"],
+        )
+        logger.info(f"[{job_id}] Capa de {clip_id}: {rule}")
 
     band_path = str(clip_dir / f"{clip_id}_band.png")
     await asyncio.to_thread(generate_cover_band, banner_text, keyword, style, band_path)

@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models import Clip, Job, Transcript
+from app.services import custom_cover
 
 logger = logging.getLogger(__name__)
 
@@ -236,4 +237,7 @@ async def faxina(db: AsyncSession, dry_run: bool = False) -> FaxinaResultado:
     r.transcricoes_orfas, r.pastas_orfas, r.bytes_orfaos = await limpar_orfaos(
         db, dry_run
     )
+    # Capas enviadas na tela de gerar que nenhum job chegou a usar.
+    if not dry_run:
+        custom_cover.apagar_envios_vencidos()
     return r

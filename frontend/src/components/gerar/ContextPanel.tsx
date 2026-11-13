@@ -71,7 +71,9 @@ function Composicao({
   mode,
   perfil,
   onTrocarPerfil,
+  coverUrl,
 }: {
+  coverUrl: string | null;
   style: ClipStyle;
   layout: LayoutMode;
   mode: SubtitleMode;
@@ -116,7 +118,7 @@ function Composicao({
             <span className="absolute bottom-0 right-0 h-3 w-3 border-b-2 border-r-2 border-mint-strong" />
           </span>
           <div className="overflow-hidden rounded-[6px] shadow-[0_18px_40px_-18px_rgb(0_0_0/0.6)]">
-            <ClipPreview style={style} layout={layout} mode={mode} />
+            <ClipPreview style={style} layout={layout} mode={mode} coverUrl={coverUrl} />
           </div>
         </div>
         <PerfilDaPrevia nome={perfil} onTrocar={onTrocarPerfil} escuro />
@@ -180,7 +182,9 @@ function VideoIdentificado({
   mode,
   perfil,
   onTrocarPerfil,
+  coverUrl,
 }: {
+  coverUrl: string | null;
   meta: MetaState;
   url: string;
   resumo: ResumoLinha[];
@@ -258,7 +262,7 @@ function VideoIdentificado({
           </div>
 
           <div>
-            <ClipPreview style={style} layout={layout} mode={mode} />
+            <ClipPreview style={style} layout={layout} mode={mode} coverUrl={coverUrl} />
             <PerfilDaPrevia nome={perfil} onTrocar={onTrocarPerfil} />
           </div>
         </div>
@@ -369,7 +373,10 @@ export default function ContextPanel({
   mode,
   perfil,
   onTrocarPerfil,
+  coverUrl,
 }: {
+  /** A capa enviada (layout "cover"), para a prévia mostrar. */
+  coverUrl: string | null;
   urlValida: boolean;
   url: string;
   meta: MetaState;
@@ -393,10 +400,18 @@ export default function ContextPanel({
           mode={mode}
           perfil={perfil}
           onTrocarPerfil={onTrocarPerfil}
+          coverUrl={coverUrl}
         />
       ) : (
         <div className="flex flex-col gap-6 xl:min-h-0 xl:shrink">
-          <Composicao style={style} layout={layout} mode={mode} perfil={perfil} onTrocarPerfil={onTrocarPerfil} />
+          <Composicao
+            style={style}
+            layout={layout}
+            mode={mode}
+            perfil={perfil}
+            onTrocarPerfil={onTrocarPerfil}
+            coverUrl={coverUrl}
+          />
           <Trio />
         </div>
       )}

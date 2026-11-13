@@ -280,6 +280,9 @@ class Job(Base):
     # Cópia do estilo do perfil na criação: mudar o perfil não reescreve o passado.
     # Nulo em job anterior ao esquema, que usa o do perfil (ver app/clip_style.py).
     style_json = Column(Text, nullable=True)
+    # A capa que a pessoa enviou (layout "Capa + faixa"), já em 1080 × 800, na
+    # pasta do job. Nulo = a capa é escolhida do clipe (services/cover_picker.py).
+    cover_path = Column(Text, nullable=True)
     status = Column(String, default="queued")  # queued|downloading|transcribing|analyzing|clipping|done|error
     error_message = Column(String, nullable=True)
     # Por que este job terminou sem clips. Um job 'done' com zero clips tem mais

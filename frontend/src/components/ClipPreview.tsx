@@ -255,13 +255,39 @@ function LayoutA({ style, mode }: { style: ClipStyle; mode: SubtitleMode }) {
   );
 }
 
-function LayoutB({ style, mode }: { style: ClipStyle; mode: SubtitleMode }) {
+function LayoutB({
+  style,
+  mode,
+  coverUrl,
+}: {
+  style: ClipStyle;
+  mode: SubtitleMode;
+  coverUrl?: string | null;
+}) {
   const marca = cor(style.marca, DEFAULT_BRAND);
   const painel = M.bandY + M.bandH;
   return (
     <>
-      <Pessoa tom="#3a4a6b" zoom={1.1} style={{ top: 0, left: 0, right: 0, height: px(M.bandY) }} />
-      <div
+      {coverUrl ? (
+        // A capa enviada, recortada como o servidor recorta: pelo centro, cheia.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={coverUrl}
+          alt=""
+          data-preview="capa-enviada"
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: px(M.bandY),
+            objectFit: "cover",
+          }}
+        />
+      ) : (
+        <Pessoa tom="#3a4a6b" zoom={1.1} style={{ top: 0, left: 0, right: 0, height: px(M.bandY) }} />
+      )}
+      {!coverUrl && <div
         data-preview="capa-rotulo"
         style={{
           position: "absolute",
@@ -275,7 +301,7 @@ function LayoutB({ style, mode }: { style: ClipStyle; mode: SubtitleMode }) {
         }}
       >
         Capa: a reação mais forte do clipe
-      </div>
+      </div>}
       <Pessoa tom="#5b5247" style={{ top: px(painel), left: 0, right: 0, bottom: 0 }} />
       <div
         data-preview="faixa"
@@ -356,10 +382,13 @@ export default function ClipPreview({
   style,
   layout,
   mode,
+  coverUrl,
 }: {
   style: ClipStyle;
   layout: LayoutMode;
   mode: SubtitleMode;
+  /** No layout "cover", a capa enviada no lugar da figura de exemplo. */
+  coverUrl?: string | null;
 }) {
   const largura = M.canvasW * S;
   const altura = M.canvasH * S;
@@ -397,7 +426,7 @@ export default function ClipPreview({
         {layout === "fullscreen" ? (
           <LayoutA style={style} mode={mode} />
         ) : layout === "cover" ? (
-          <LayoutB style={style} mode={mode} />
+          <LayoutB style={style} mode={mode} coverUrl={coverUrl} />
         ) : (
           <LayoutSimples style={style} layout={layout} mode={mode} />
         )}

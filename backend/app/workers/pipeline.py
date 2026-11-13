@@ -718,6 +718,7 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
             manual_ranges = _parse_segments_json(job.manual_clips)
             manual_mode = job.manual_mode or "only"
             facecam_json = job.facecam_rect
+            cover_path = job.cover_path
             perfil_do_job = await db.get(Profile, job.profile_id) if job.profile_id else None
             clip_style = style_for_job(job, perfil_do_job)
             saved_media = {
@@ -1048,6 +1049,7 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                             source_type=source_type,
                             profile_id=profile_id,
                             style=clip_style,
+                            custom_cover_path=cover_path,
                         )
 
                 await _update_clip(

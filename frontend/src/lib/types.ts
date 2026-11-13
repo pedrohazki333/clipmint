@@ -216,6 +216,8 @@ export interface CreateJobPayload {
    * perfil (ou o padrão, sem perfil). O perfil não muda.
    */
   caption_style?: "caixa" | "cor";
+  /** Só no layout "cover": o id de POST /covers. Omitido = capa escolhida do clipe. */
+  cover_upload_id?: string;
 }
 
 /** O vídeo antes de virar job, para a pessoa conferir que colou o link certo. */
