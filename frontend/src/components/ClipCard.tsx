@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Clock3, Download, Film, Scissors } from "lucide-react";
+import { AlertTriangle, Clock3, Download, Film, Scissors, Zap } from "lucide-react";
 
 import type { Clip } from "@/lib/types";
 import { SCORE_AXES } from "@/lib/types";
@@ -12,6 +12,19 @@ interface Props {
   clip: Clip;
   /** Posição do clipe pela nota, entre os do job (1 = o melhor). */
   rank: number;
+  /** O job pediu o gancho de abertura: o card diz com qual fala o clipe abre. */
+  openingHook?: boolean;
+}
+
+/** O texto do gancho salvo no clipe, ou null. */
+function openingText(json: string | null): string | null {
+  if (!json) return null;
+  try {
+    const v = JSON.parse(json);
+    return Array.isArray(v) && typeof v[2] === "string" ? v[2] : null;
+  } catch {
+    return null;
+  }
 }
 
 export function formatTime(seconds: number): string {
@@ -66,7 +79,8 @@ function countSegments(segmentsJson: string | null): number {
  * `+faststart`, então `preload="metadata"` busca só o começo — a página com dez
  * clipes não baixa dez vídeos para mostrar o primeiro quadro de cada um.
  */
-export default function ClipCard({ clip, rank }: Props) {
+export default function ClipCard({ clip, rank, openingHook = false }: Props) {
+  const abertura = openingHook ? openingText(clip.opening_json) : null;
   const segmentCount = countSegments(clip.segments_json);
   const tags = parseTags(clip.tags_json);
   const isReady = clip.status === "ready";
@@ -185,8 +199,23 @@ export default function ClipCard({ clip, rank }: Props) {
 
         {clip.reason && <p className="text-body leading-relaxed text-ink-dim">{clip.reason}</p>}
 
-        {(segmentCount > 1 || clip.verdict === "revisar_corte") && (
+        {(abertura || openingHook || segmentCount > 1 || clip.verdict === "revisar_corte") && (
           <div className="flex flex-col gap-1.5">
+            {abertura ? (
+              <p className="flex items-start gap-2 text-label text-ink">
+                <Zap className="mt-px h-3.5 w-3.5 flex-shrink-0 text-coral" aria-hidden />
+                <span>
+                  Abre com <strong className="font-semibold">&ldquo;{abertura}&rdquo;</strong>
+                </span>
+              </p>
+            ) : (
+              openingHook && (
+                <p className="flex items-start gap-2 text-label text-ink-muted">
+                  <Zap className="mt-px h-3.5 w-3.5 flex-shrink-0" aria-hidden />
+                  Sem gancho: nenhuma fala curta e forte o bastante neste trecho.
+                </p>
+              )
+            )}
             {segmentCount > 1 && (
               <p className="flex items-start gap-2 text-label text-ink-dim">
                 <Scissors className="mt-px h-3.5 w-3.5 flex-shrink-0" aria-hidden />

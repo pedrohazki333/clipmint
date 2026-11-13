@@ -36,6 +36,7 @@ from app.services import vision
 from app.services.audio_events import AudioLevels, Gap, measure_levels, rescue_start
 from app.services.clip_forensics import detect_cuts
 from app.services.hook_keyword import pick_keyword
+from app.services.opening import find_opening
 from app.services.moderation_terms import find_risky_terms
 from app.services.segments import segments_without_pauses, total_duration
 from prompt_engine.prompt_builder import PromptBuilder
@@ -94,6 +95,9 @@ class ViralClip:
     # Clip dividido em partes (>MAX_CLIP_DURATION)
     part_number: Optional[int] = None
     parent_start: Optional[float] = None  # start do clip original antes do split
+    # O gancho de abertura (ver services/opening.py): (início, fim, texto) da fala
+    # mais forte do trecho, já localizada nas palavras. None = não achada.
+    opening: Optional[tuple] = None
 
 
 @dataclass
@@ -1313,6 +1317,11 @@ async def analyze_virality(
             trim_reason=c.get("trim_reason", ""),
             part_number=c.get("part_number"),
             parent_start=c.get("parent_start"),
+            # Procurada no corte FINAL: numa parte de um clipe dividido, a fala
+            # pode ter ficado na outra parte, e aí esta parte abre sem gancho.
+            opening=find_opening(
+                words, float(c["start"]), float(c["end"]), c.get("abertura")
+            ),
         ))
 
     _warn_risky_wording(job_id, viral_clips)

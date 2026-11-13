@@ -75,6 +75,8 @@ class JobCreate(BaseModel):
     # Só no layout "Capa + faixa": o id devolvido por POST /covers. Omitido = a
     # capa é escolhida do próprio clipe.
     cover_upload_id: Optional[str] = None
+    # Abre cada clipe com a fala mais forte dele, de até 4 s, antes do começo.
+    opening_hook: bool = False
 
     @field_validator("manual_clips")
     @classmethod
@@ -136,6 +138,7 @@ class JobResponse(BaseModel):
     manual_clips: Optional[list] = None
     manual_mode: str = "only"
     facecam_rect: Optional[dict] = None
+    opening_hook: bool = False
     status: str
     error_message: Optional[str]
     # Por que terminou sem clips (ver models.Job.result_note).
@@ -210,6 +213,7 @@ class ClipResponse(BaseModel):
     weak_points_json: Optional[str] = None
     trim_reason: Optional[str] = None
     segments_json: Optional[str] = None
+    opening_json: Optional[str] = None
     hook: Optional[str]
     hook_keyword: Optional[str] = None
     reason: Optional[str]

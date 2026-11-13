@@ -13,6 +13,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    false,
     text,
 )
 from sqlalchemy.dialects import postgresql
@@ -283,6 +284,9 @@ class Job(Base):
     # A capa que a pessoa enviou (layout "Capa + faixa"), já em 1080 × 800, na
     # pasta do job. Nulo = a capa é escolhida do clipe (services/cover_picker.py).
     cover_path = Column(Text, nullable=True)
+    # Abrir cada clipe com a fala mais forte dele antes do começo (ver
+    # services/opening.py). Escolha da tela de gerar, por job.
+    opening_hook = Column(Boolean, nullable=False, default=False, server_default=false())
     status = Column(String, default="queued")  # queued|downloading|transcribing|analyzing|clipping|done|error
     error_message = Column(String, nullable=True)
     # Por que este job terminou sem clips. Um job 'done' com zero clips tem mais
@@ -457,6 +461,10 @@ class Clip(Base):
     # clipes de podcast que perderam tempo morto).
     # Nulo = clipe contínuo comum entre start_time e end_time.
     segments_json = Column(Text, nullable=True)
+    # O gancho de abertura, JSON [inicio, fim, "texto"] em segundos do vídeo.
+    # Guardado sempre que a análise o achou; só toca no começo do clipe quando o
+    # job pediu (jobs.opening_hook). Nulo = não achado, ou clipe anterior a isto.
+    opening_json = Column(Text, nullable=True)
     hook = Column(String, nullable=True)
     # A palavra do título que sai na cor da marca. Guardada porque re-renderizar não
     # chama a análise de novo (ver services/hook_keyword.py).

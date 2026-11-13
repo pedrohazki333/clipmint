@@ -64,6 +64,7 @@ from app.services import segments as segments_service
 from app.clip_style import style_for_job
 from app.services.hook_keyword import pick_keyword
 from app.services.memory_guard import render_slot
+from app.services.opening import shift_words
 from app.services.segments import compact_segments, remap_words, remap_words_keeping
 from app.workers import joblock
 
@@ -132,6 +133,8 @@ class _ClipTask:
     segments: list = field(default_factory=list)
     # A palavra do título que sai na cor da marca.
     keyword: str | None = None
+    # O gancho de abertura (início, fim) no vídeo, se a análise o achou.
+    opening: tuple[float, float] | None = None
 
 
 #: Teto de marcas guardadas. Um job retomado várias vezes acumula transições, e
@@ -287,6 +290,47 @@ def _stitched_words(
     if source_type == "podcast" and clip_mode != "compilation":
         return remap_words_keeping(words, segments, stitched_duration)
     return remap_words(words, segments)
+
+
+def _parse_opening_json(raw: str | None) -> tuple[float, float] | None:
+    """O gancho salvo no clip; None = não achado ou ilegível."""
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+        return float(data[0]), float(data[1])
+    except (json.JSONDecodeError, TypeError, ValueError, IndexError):
+        return None
+
+
+def _with_opening(
+    words: list[dict],
+    opening: tuple[float, float],
+    main: list[tuple[float, float]],
+    source_type: str,
+    clip_mode: str,
+    stitched_total: float,
+) -> list[dict]:
+    """
+    As palavras de um clipe que abre com o gancho.
+
+    O gancho vem antes do resto e fora da ordem do vídeo, e a costura do podcast
+    (`remap_words_keeping`) supõe trechos em ordem. Então são duas contas: as
+    palavras do gancho no começo, e as do clipe empurradas pela duração dele.
+    """
+    dur_gancho = opening[1] - opening[0]
+    nominal = dur_gancho + segments_service.total_duration(main)
+    # O arquivo costurado arredonda cada trecho no limite do quadro: a escala
+    # distribui a diferença real entre os dois lados.
+    escala = stitched_total / nominal if nominal else 1.0
+    # remap_words já põe o gancho a partir do zero.
+    gancho = [
+        {**w, "start": w["start"] * escala, "end": w["end"] * escala}
+        for w in segments_service.remap_words(words, [opening])
+    ]
+    resto_total = stitched_total - dur_gancho * escala
+    resto = _stitched_words(words, main, source_type, clip_mode, resto_total)
+    return gancho + shift_words(resto, dur_gancho * escala)
 
 
 def _parse_segments_json(raw: str | None) -> list[tuple[float, float]]:
@@ -491,6 +535,7 @@ async def _tasks_from_db(job_id: str) -> list[_ClipTask]:
                 _banner_text(clip.hook, clip.suggested_title), clip.hook_keyword
             ),
             segments=_parse_segments_json(clip.segments_json),
+            opening=_parse_opening_json(clip.opening_json),
             rendered=(
                 clip.status == "ready"
                 and bool(clip.file_path)
@@ -506,6 +551,7 @@ async def _create_clip_records(
     viral_clips: list,
     words: list[dict],
     subtitle_mode: str,
+    opening_hook: bool = False,
 ) -> list[_ClipTask]:
     """Persiste os clips escolhidos pela análise com status 'processing'."""
     tasks: list[_ClipTask] = []
@@ -530,7 +576,9 @@ async def _create_clip_records(
                     segments_service.total_duration(vc.segments)
                     if vc.segments
                     else vc.end - vc.start
-                ),
+                )
+                # O gancho toca antes do começo: o vídeo fica mais longo.
+                + (vc.opening[1] - vc.opening[0] if opening_hook and vc.opening else 0.0),
                 virality_score=vc.score,
                 hook_score=vc.hook_score,
                 retention_score=vc.retention_score,
@@ -541,6 +589,7 @@ async def _create_clip_records(
                 weak_points_json=json.dumps(vc.weak_points),
                 trim_reason=vc.trim_reason,
                 segments_json=json.dumps(vc.segments) if vc.segments else None,
+                opening_json=json.dumps(list(vc.opening)) if vc.opening else None,
                 hook=vc.hook,
                 hook_keyword=vc.hook_keyword,
                 reason=vc.reason,
@@ -559,6 +608,7 @@ async def _create_clip_records(
                     start=vc.start,
                     end=vc.end,
                     segments=list(vc.segments),
+                    opening=(vc.opening[0], vc.opening[1]) if vc.opening else None,
                     banner_text=_banner_text(vc.hook, vc.suggested_title),
                     keyword=pick_keyword(
                         _banner_text(vc.hook, vc.suggested_title), vc.hook_keyword
@@ -719,6 +769,7 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
             manual_mode = job.manual_mode or "only"
             facecam_json = job.facecam_rect
             cover_path = job.cover_path
+            opening_hook = bool(job.opening_hook)
             perfil_do_job = await db.get(Profile, job.profile_id) if job.profile_id else None
             clip_style = style_for_job(job, perfil_do_job)
             saved_media = {
@@ -904,7 +955,7 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
             await _abort_if_deleted(job_id)
 
             tasks = await _create_clip_records(
-                job_id, analysis.clips, words, subtitle_mode
+                job_id, analysis.clips, words, subtitle_mode, opening_hook
             )
             logger.info(f"[{job_id}] Created {len(tasks)} clip records")
 
@@ -956,20 +1007,34 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                     source_path = metadata.video_path
                     clip_start, clip_end = task.start, task.end
                     clip_words = words
-                    if task.segments:
+                    # Com o gancho, o clipe vira costura mesmo que fosse contínuo:
+                    # a fala mais forte primeiro, e então o clipe do começo.
+                    gancho = task.opening if opening_hook else None
+                    principal = task.segments or [(task.start, task.end)]
+                    costura = ([gancho] + principal) if gancho else task.segments
+                    if costura:
                         compacted = str(
                             settings.clips_dir / job_id / f"{task.clip_id}_costurado.mp4"
                         )
                         Path(compacted).parent.mkdir(parents=True, exist_ok=True)
                         total = await compact_segments(
                             job_id, task.clip_id, metadata.video_path,
-                            task.segments, compacted,
+                            costura, compacted,
                         )
                         source_path = compacted
                         clip_start, clip_end = 0.0, total
-                        clip_words = _stitched_words(
-                            words, task.segments, source_type, clip_mode, total
-                        )
+                        if gancho:
+                            logger.info(
+                                f"[{job_id}] Clip {task.clip_id}: abre com o gancho "
+                                f"[{gancho[0]:.1f}-{gancho[1]:.1f}]"
+                            )
+                            clip_words = _with_opening(
+                                words, gancho, principal, source_type, clip_mode, total
+                            )
+                        else:
+                            clip_words = _stitched_words(
+                                words, task.segments, source_type, clip_mode, total
+                            )
 
                     if layout_mode == "fullscreen":
                         file_path, file_size = await cut_fullscreen(

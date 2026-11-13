@@ -348,7 +348,12 @@ export default function JobPage() {
 
           <div className="flex flex-col gap-4">
             {clipesOrdenados.map((clip) => (
-              <ClipCard key={clip.id} clip={clip} rank={ranking.get(clip.id) ?? 0} />
+              <ClipCard
+                key={clip.id}
+                clip={clip}
+                rank={ranking.get(clip.id) ?? 0}
+                openingHook={job.opening_hook}
+              />
             ))}
           </div>
         </section>

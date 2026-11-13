@@ -127,6 +127,8 @@ export interface Job {
   source_type: SourceType;
   clip_mode: ClipMode;
   facecam_rect: FacecamRect | null;
+  /** Cada clipe abre com a fala mais forte dele antes do começo. */
+  opening_hook: boolean;
   status: JobStatus;
   error_message: string | null;
   /** Por que terminou sem clips. Nulo = terminou com clips. */
@@ -155,6 +157,8 @@ export interface Clip {
   trim_reason: string | null;
   /** JSON [[ini,fim],...] quando o clipe foi costurado de vários trechos. */
   segments_json: string | null;
+  /** O gancho de abertura, JSON [início, fim, "texto"]. Nulo = não achado. */
+  opening_json: string | null;
   hook: string | null;
   reason: string | null;
   tags_json: string | null;
@@ -218,6 +222,8 @@ export interface CreateJobPayload {
   caption_style?: "caixa" | "cor";
   /** Só no layout "cover": o id de POST /covers. Omitido = capa escolhida do clipe. */
   cover_upload_id?: string;
+  /** Abre cada clipe com a fala mais forte dele (até 4 s) antes do começo. */
+  opening_hook?: boolean;
 }
 
 /** O vídeo antes de virar job, para a pessoa conferir que colou o link certo. */

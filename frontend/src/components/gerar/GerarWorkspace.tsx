@@ -114,6 +114,24 @@ export default function GerarWorkspace({ perfilInicial }: { perfilInicial?: stri
   const [rubrica, setRubrica] = useState<SourceType>("podcast");
   const [rubricaEscolhida, setRubricaEscolhida] = useState(false);
   const [clipMode, setClipMode] = useState<ClipMode>("individual");
+  // O gancho de abertura. A última escolha fica lembrada neste navegador: quem
+  // gosta de abrir com o gancho não deveria ter de marcar a cada vídeo.
+  const [gancho, setGancho] = useState(false);
+  useEffect(() => {
+    try {
+      setGancho(localStorage.getItem("cm-gancho") === "1");
+    } catch {
+      /* sem armazenamento: começa desligado */
+    }
+  }, []);
+  function escolherGancho(ligado: boolean) {
+    setGancho(ligado);
+    try {
+      localStorage.setItem("cm-gancho", ligado ? "1" : "0");
+    } catch {
+      /* só não fica lembrado */
+    }
+  }
   const [trechos, setTrechos] = useState("");
   const [trechosModo, setTrechosModo] = useState<ManualMode>("only");
   const [extrasAbertos, setExtrasAbertos] = useState(false);
@@ -255,6 +273,7 @@ export default function GerarWorkspace({ perfilInicial }: { perfilInicial?: stri
       // O nicho do perfil vence: é o que impede gerar com a identidade de outro.
       source_type: rubricaEfetiva,
       clip_mode: clipMode,
+      opening_hook: gancho,
       manual_clips: trechos.trim() || undefined,
       manual_mode: trechosModo,
       cover_upload_id: capaValendo?.id,
@@ -332,9 +351,8 @@ export default function GerarWorkspace({ perfilInicial }: { perfilInicial?: stri
         ? trechosModo === "only"
           ? "Só os trechos indicados"
           : "Trechos indicados + IA"
-        : clipMode === "compilation"
-          ? "Compilado"
-          : "Clipes individuais",
+        : (clipMode === "compilation" ? "Compilado" : "Clipes individuais") +
+          (gancho ? " · com gancho" : ""),
     },
   ];
 
@@ -494,6 +512,39 @@ export default function GerarWorkspace({ perfilInicial }: { perfilInicial?: stri
                   <CoverUpload value={capa} onChange={setCapa} onUploading={setEnviandoCapa} />
                 </div>
               )}
+            </section>
+
+            {/* 04 — gancho de abertura */}
+            <section className="rounded-lg bg-inset px-4 py-3.5 sm:px-6">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <StepHeader number="04" title="Gancho de abertura" id="cm-passo-4" />
+                  <p id="cm-gancho-desc" className="mt-1.5 text-body text-ink-dim">
+                    Os primeiros segundos mostram a fala mais forte do clipe — tipo
+                    &ldquo;pronto, morremo&rdquo; — e então ele começa do início.
+                  </p>
+                </div>
+                <label htmlFor="cm-gancho" className="relative mt-0.5 inline-flex flex-shrink-0 cursor-pointer">
+                  <input
+                    id="cm-gancho"
+                    type="checkbox"
+                    role="switch"
+                    checked={gancho}
+                    onChange={(e) => escolherGancho(e.target.checked)}
+                    aria-labelledby="cm-passo-4"
+                    aria-describedby="cm-gancho-desc"
+                    className="peer sr-only"
+                  />
+                  <span
+                    aria-hidden
+                    className="h-6 w-11 rounded-full bg-line-strong transition-colors peer-checked:bg-ink peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-ink"
+                  />
+                  <span
+                    aria-hidden
+                    className="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-raised shadow-sm transition-transform peer-checked:translate-x-5 peer-checked:bg-mint-strong"
+                  />
+                </label>
+              </div>
             </section>
 
             {/* Configurações extras */}

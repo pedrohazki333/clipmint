@@ -240,6 +240,7 @@ async def create_job(
             payload.facecam_rect.model_dump_json() if payload.facecam_rect else None
         ),
         cover_path=cover_path,
+        opening_hook=payload.opening_hook,
         status="queued",
     )
     db.add(job)
