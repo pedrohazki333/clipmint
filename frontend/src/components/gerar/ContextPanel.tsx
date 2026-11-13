@@ -24,6 +24,40 @@ export interface ResumoLinha {
 }
 
 /**
+ * Qual perfil está valendo, logo abaixo da prévia — é ele que dá a cor e a fonte
+ * que a prévia mostra. Discreto, mas clicável: leva ao seletor de perfil.
+ */
+function PerfilDaPrevia({
+  nome,
+  onTrocar,
+  escuro = false,
+}: {
+  nome: string | null;
+  onTrocar: () => void;
+  escuro?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onTrocar}
+      title={nome ? `Perfil: ${nome} — trocar` : "Escolher um perfil"}
+      className={`group mx-auto mt-2.5 flex max-w-full items-center justify-center gap-1.5 rounded-full px-2 py-0.5 text-[0.6875rem] transition-colors ${
+        escuro ? "text-white/70 hover:bg-white/10 hover:text-white" : "text-ink-muted hover:bg-inset hover:text-ink"
+      }`}
+    >
+      <span
+        className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${
+          nome ? "bg-mint-strong" : escuro ? "border border-white/50" : "border border-ink-muted"
+        }`}
+        aria-hidden
+      />
+      <span className="sr-only">Perfil selecionado: </span>
+      <span className="truncate font-medium">{nome ?? "Sem perfil"}</span>
+    </button>
+  );
+}
+
+/**
  * A composição do estado vazio: tipografia, formas e a prévia do estilo escolhido.
  *
  * Sem foto de gente: não há foto própria nem licenciada, e um rosto de terceiro
@@ -31,7 +65,19 @@ export interface ResumoLinha {
  * entra a prévia do clipe — a mesma que a tela de estilo usa, nas medidas do
  * render —, que muda a cada escolha à esquerda. O que se vê é o que sai.
  */
-function Composicao({ style, layout, mode }: { style: ClipStyle; layout: LayoutMode; mode: SubtitleMode }) {
+function Composicao({
+  style,
+  layout,
+  mode,
+  perfil,
+  onTrocarPerfil,
+}: {
+  style: ClipStyle;
+  layout: LayoutMode;
+  mode: SubtitleMode;
+  perfil: string | null;
+  onTrocarPerfil: () => void;
+}) {
   return (
     // Sangra até a borda de cima e a da direita, como uma página de revista: as
     // margens negativas desfazem o respiro do painel só deste lado. No xl ela
@@ -73,6 +119,7 @@ function Composicao({ style, layout, mode }: { style: ClipStyle; layout: LayoutM
             <ClipPreview style={style} layout={layout} mode={mode} />
           </div>
         </div>
+        <PerfilDaPrevia nome={perfil} onTrocar={onTrocarPerfil} escuro />
       </figure>
 
       {/* O título editorial */}
@@ -131,6 +178,8 @@ function VideoIdentificado({
   style,
   layout,
   mode,
+  perfil,
+  onTrocarPerfil,
 }: {
   meta: MetaState;
   url: string;
@@ -138,6 +187,8 @@ function VideoIdentificado({
   style: ClipStyle;
   layout: LayoutMode;
   mode: SubtitleMode;
+  perfil: string | null;
+  onTrocarPerfil: () => void;
 }) {
   const dados = meta.status === "ok" ? meta.data : null;
   const carregando = meta.status === "loading" || meta.status === "idle";
@@ -155,7 +206,7 @@ function VideoIdentificado({
 
       {/* No xl o bloco encolhe com a janela; miniatura e prévia medem-se pela altura dele. */}
       <div className="xl:h-[18.75rem] xl:min-h-[9rem] xl:shrink xl:[container-type:size]">
-        <div className="grid grid-cols-[minmax(0,1fr)_7.5rem] gap-5 sm:grid-cols-[minmax(0,1fr)_9.5rem] sm:gap-6 xl:grid-cols-[minmax(0,1fr)_min(9.5rem,calc((100cqh-1.75rem)*0.5625))]">
+        <div className="grid grid-cols-[minmax(0,1fr)_7.5rem] gap-5 sm:grid-cols-[minmax(0,1fr)_9.5rem] sm:gap-6 xl:grid-cols-[minmax(0,1fr)_min(9.5rem,calc((100cqh-2rem)*0.5625))]">
           <div className="min-w-0">
             <div className="relative aspect-video overflow-hidden rounded-lg bg-inset xl:max-w-[calc((100cqh-6rem)*16/9)]">
               {dados?.thumbnail_url ? (
@@ -208,9 +259,7 @@ function VideoIdentificado({
 
           <div>
             <ClipPreview style={style} layout={layout} mode={mode} />
-            <p className="tabular mt-2 text-center text-[0.625rem] uppercase tracking-[0.14em] text-ink-muted">
-              Prévia
-            </p>
+            <PerfilDaPrevia nome={perfil} onTrocar={onTrocarPerfil} />
           </div>
         </div>
       </div>
@@ -318,6 +367,8 @@ export default function ContextPanel({
   style,
   layout,
   mode,
+  perfil,
+  onTrocarPerfil,
 }: {
   urlValida: boolean;
   url: string;
@@ -326,14 +377,26 @@ export default function ContextPanel({
   style: ClipStyle;
   layout: LayoutMode;
   mode: SubtitleMode;
+  /** Nome do perfil escolhido; nulo = sem perfil. */
+  perfil: string | null;
+  onTrocarPerfil: () => void;
 }) {
   return (
     <div className="flex flex-col gap-8 xl:min-h-0 xl:flex-1">
       {urlValida ? (
-        <VideoIdentificado meta={meta} url={url} resumo={resumo} style={style} layout={layout} mode={mode} />
+        <VideoIdentificado
+          meta={meta}
+          url={url}
+          resumo={resumo}
+          style={style}
+          layout={layout}
+          mode={mode}
+          perfil={perfil}
+          onTrocarPerfil={onTrocarPerfil}
+        />
       ) : (
         <div className="flex flex-col gap-6 xl:min-h-0 xl:shrink">
-          <Composicao style={style} layout={layout} mode={mode} />
+          <Composicao style={style} layout={layout} mode={mode} perfil={perfil} onTrocarPerfil={onTrocarPerfil} />
           <Trio />
         </div>
       )}

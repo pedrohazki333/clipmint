@@ -142,6 +142,16 @@ export default function GerarWorkspace({ perfilInicial }: { perfilInicial?: stri
           } else {
             setPerfilAusente(true);
           }
+          return;
+        }
+        // Sem perfil pedido, a página abre com o último que gerou alguma coisa:
+        // quem tem um canal só não precisa escolhê-lo de novo a cada vídeo.
+        const ultimo = lista
+          .filter((p) => p.last_generated_at)
+          .sort((a, b) => Date.parse(b.last_generated_at!) - Date.parse(a.last_generated_at!))[0];
+        if (ultimo) {
+          setPerfilId(ultimo.id);
+          aplicarPerfil(ultimo);
         }
       })
       .catch(() => setPerfis([]));
@@ -358,11 +368,15 @@ export default function GerarWorkspace({ perfilInicial }: { perfilInicial?: stri
   }, [medirRolagem]);
 
   function alternarExtras() {
-    const abrindo = !extrasAbertos;
-    setExtrasAbertos(abrindo);
-    // Abriu: traz as opções para a vista — dentro do painel, ou na página.
-    if (!abrindo) return;
+    if (extrasAbertos) setExtrasAbertos(false);
+    else abrirExtras();
+  }
+
+  /** Abre as configurações extras e as traz para a vista — dentro do painel, ou na página. */
+  function abrirExtras(focar?: string) {
+    setExtrasAbertos(true);
     requestAnimationFrame(() => {
+      if (focar) document.getElementById(focar)?.focus({ preventScroll: true });
       const secao = document.getElementById("cm-extras-secao");
       const painel = rolagem.current;
       if (!secao || !painel) return;
@@ -651,6 +665,8 @@ export default function GerarWorkspace({ perfilInicial }: { perfilInicial?: stri
           style={estilo}
           layout={layout}
           mode={escolhaLegenda.mode}
+          perfil={perfil?.name ?? null}
+          onTrocarPerfil={() => abrirExtras("cm-perfil")}
         />
       </aside>
 
