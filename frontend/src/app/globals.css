@@ -288,3 +288,18 @@
 @media (prefers-reduced-motion: reduce) {
   .cm-progress-fill { animation: none; background-image: none; }
 }
+
+/* Prévia do clipe: a legenda que dá para arrastar (ClipPreview com onMoverLegenda). */
+[data-arrastavel~="legenda"] [data-preview="legenda"] {
+  cursor: ns-resize;
+  touch-action: none;
+  outline: 1px dashed rgb(255 255 255 / 0.55);
+  outline-offset: 6px;
+}
+
+[data-arrastavel~="marca"] [data-preview="marca"] {
+  cursor: move;
+  touch-action: none;
+  outline: 1px dashed rgb(255 255 255 / 0.55);
+  outline-offset: 4px;
+}

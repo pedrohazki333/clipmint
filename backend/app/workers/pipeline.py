@@ -41,8 +41,8 @@ from app.services.analyzer import AnalysisResult, ViralClip, analyze_virality
 from app.services.audio_events import detect_gaps
 from app.services.scene_events import describe_events
 from app.services.clipper import (
+    cut_and_crop,
     cut_and_stack,
-    cut_cover,
     cut_fullscreen,
     cut_original,
     cut_vertical,
@@ -768,7 +768,6 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
             manual_ranges = _parse_segments_json(job.manual_clips)
             manual_mode = job.manual_mode or "only"
             facecam_json = job.facecam_rect
-            cover_path = job.cover_path
             opening_hook = bool(job.opening_hook)
             perfil_do_job = await db.get(Profile, job.profile_id) if job.profile_id else None
             clip_style = style_for_job(job, perfil_do_job)
@@ -1101,7 +1100,7 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                             style=clip_style,
                         )
                     else:
-                        file_path, file_size = await cut_cover(
+                        file_path, file_size = await cut_and_crop(
                             job_id=job_id,
                             clip_id=task.clip_id,
                             video_path=source_path,
@@ -1110,11 +1109,9 @@ async def _execute_pipeline(job_id: str, resume: bool) -> None:
                             words=clip_words,
                             subtitle_mode=subtitle_mode,
                             banner_text=task.banner_text,
-                            keyword=task.keyword,
                             source_type=source_type,
                             profile_id=profile_id,
                             style=clip_style,
-                            custom_cover_path=cover_path,
                         )
 
                 await _update_clip(

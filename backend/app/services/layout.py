@@ -208,8 +208,14 @@ def load_bar_style(
 
 
 def _load_bar_font(font_key: str, size: int) -> ImageFont.FreeTypeFont:
-    """Fonte da faixa; família desconhecida ou ausente cai na lista genérica."""
-    label_paths = BAR_FONTS.get(font_key) or BAR_FONTS[BAR_DEFAULT_FONT]
+    """Fonte da faixa e do banner; família ausente cai na lista genérica."""
+    if font_key not in BAR_FONTS:
+        # A Archivo do estilo do clipe não está em BAR_FONTS: tem um arquivo por papel.
+        # Importada aqui porque fonts.py importa deste módulo.
+        from app.services.fonts import load_font
+
+        return load_font(font_key, "titulo", size)
+    label_paths = BAR_FONTS[font_key]
     path = _first_existing(label_paths[1])
     if path:
         return ImageFont.truetype(path, size)
@@ -371,6 +377,8 @@ BANNER_DEFAULT_FONT = "condensed"
 _BANNER_MAX_TEXT_W = 840   # largura máxima de uma linha de texto
 _BANNER_PAD_X = 60
 _BANNER_PAD_Y = 34
+#: Maior fonte do banner; ele diminui até o título caber em 2 linhas (ou 3).
+BANNER_MAX_SIZE = 60
 _LINE_SPACING = 1.08
 
 # Remove emojis/símbolos que a fonte não renderiza
@@ -512,7 +520,7 @@ def generate_banner(
     font, lines = None, None
     for max_lines in (2, 3):
         min_size = 44 if max_lines == 2 else 34
-        for size in range(60, min_size - 1, -2):
+        for size in range(BANNER_MAX_SIZE, min_size - 1, -2):
             f = _load_bar_font(font_key, size)
             for n in range(1, max_lines + 1):
                 wrapped = _balanced_wrap(words, f, _BANNER_MAX_TEXT_W, n)

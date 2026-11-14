@@ -192,6 +192,7 @@ async def create_job(
                 cor=estilo.legenda.cor,
                 estilo=payload.caption_style,
                 tamanho=estilo.legenda.tamanho,
+                altura=estilo.legenda.altura,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

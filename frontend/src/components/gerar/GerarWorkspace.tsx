@@ -17,6 +17,7 @@ import {
   createProfile,
   estimateJob,
   getApiErrorMessage,
+  getClipWatermarkUrl,
   getVideoMetadata,
   listProfiles,
 } from "@/lib/api";
@@ -31,7 +32,6 @@ import { PERSONAL_NICHES } from "@/personal";
 
 import CaptionPicker from "./CaptionPicker";
 import ContextPanel, { type MetaState, type ResumoLinha } from "./ContextPanel";
-import CoverUpload, { type CapaEnviada } from "./CoverUpload";
 import LayoutPicker from "./LayoutPicker";
 import VideoLinkField from "./VideoLinkField";
 import { captionChoice, captionChoiceFor, styleWithChoice, type CaptionChoice } from "./choices";
@@ -135,17 +135,6 @@ export default function GerarWorkspace({ perfilInicial }: { perfilInicial?: stri
   const [trechos, setTrechos] = useState("");
   const [trechosModo, setTrechosModo] = useState<ManualMode>("only");
   const [extrasAbertos, setExtrasAbertos] = useState(false);
-  // A capa enviada (só no layout "cover"). Fica guardada se a pessoa olhar outro
-  // layout e voltar; só vai no pedido quando o layout é o de capa.
-  const [capa, setCapa] = useState<CapaEnviada | null>(null);
-  const [enviandoCapa, setEnviandoCapa] = useState(false);
-  useEffect(() => {
-    const url = capa?.url;
-    return () => {
-      if (url) URL.revokeObjectURL(url);
-    };
-  }, [capa?.url]);
-  const capaValendo = layout === "cover" ? capa : null;
 
   /** Aplica o que o perfil diz: rubrica, layout e legenda. */
   const aplicarPerfil = useCallback((p: Profile | null) => {
@@ -276,7 +265,6 @@ export default function GerarWorkspace({ perfilInicial }: { perfilInicial?: stri
       opening_hook: gancho,
       manual_clips: trechos.trim() || undefined,
       manual_mode: trechosModo,
-      cover_upload_id: capaValendo?.id,
     };
   }
 
@@ -300,10 +288,6 @@ export default function GerarWorkspace({ perfilInicial }: { perfilInicial?: stri
     e.preventDefault();
     if (enviando || enviado) return;
     setErro("");
-    if (enviandoCapa) {
-      setErro("Espere a capa terminar de enviar.");
-      return;
-    }
     if (!urlLimpa) {
       setUrlErro("Cole o link de um vídeo do YouTube.");
       document.getElementById("cm-url")?.focus();
@@ -507,11 +491,6 @@ export default function GerarWorkspace({ perfilInicial }: { perfilInicial?: stri
                   labelledBy="cm-passo-3"
                 />
               </div>
-              {layout === "cover" && (
-                <div className="mt-3">
-                  <CoverUpload value={capa} onChange={setCapa} onUploading={setEnviandoCapa} />
-                </div>
-              )}
             </section>
 
             {/* 04 — gancho de abertura */}
@@ -740,7 +719,10 @@ export default function GerarWorkspace({ perfilInicial }: { perfilInicial?: stri
           mode={escolhaLegenda.mode}
           perfil={perfil?.name ?? null}
           onTrocarPerfil={() => abrirExtras("cm-perfil")}
-          coverUrl={capaValendo?.url ?? null}
+          // Sem arte enviada o endereço dá 404, e a prévia simplesmente não mostra marca.
+          watermarkUrl={
+            perfil ? getClipWatermarkUrl({ source: rubricaEfetiva, profileId: perfil.id }) : null
+          }
         />
       </aside>
 

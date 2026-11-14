@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from app import clip_style
-from app.services import subtitler, title_card
+from app.services import clipper, layout, subtitler, title_card
 
 _TS = Path(__file__).resolve().parents[2] / "frontend" / "src" / "lib" / "clipStyle.ts"
 _FONTE = _TS.read_text(encoding="utf-8")
@@ -34,7 +34,6 @@ def _medida(nome: str) -> float:
         ("OUTLINE", clip_style.OUTLINE),
         ("WHITE", clip_style.WHITE),
         ("DEFAULT_FONT_KEY", clip_style.DEFAULT_FONT),
-        ("BAND_HANDLE_COLOR", title_card.BAND_HANDLE_COLOR),
     ],
 )
 def test_constantes_iguais(nome, valor):
@@ -72,13 +71,13 @@ def test_padrao_igual():
         ("titlePadY", title_card.TITLE_PAD_Y),
         ("handleSize", title_card.HANDLE_SIZE),
         ("handleGap", title_card.HANDLE_GAP),
-        ("bandY", title_card.BAND_Y),
-        ("bandH", title_card.BAND_H),
-        ("bandBorder", title_card.BAND_BORDER),
-        ("bandTitleSize", title_card.BAND_TITLE_SIZE),
-        ("bandLineHeight", title_card.BAND_LINE_HEIGHT),
-        ("bandHandleSize", title_card.BAND_HANDLE_SIZE),
-        ("bandHandleGap", title_card.BAND_HANDLE_GAP),
+        ("coverH", layout.COVER_H),
+        ("bannerTitleSize", layout.BANNER_MAX_SIZE),
+        ("bannerPadY", layout._BANNER_PAD_Y),
+        ("barH", clipper.COVER_BAR_H),
+        ("barTextFrac", layout._BAR_TEXT_FRAC),
+        ("barTracking", layout._BAR_TEXT_TRACKING),
+        ("barGap", layout._BAR_TEXT_GAP),
         ("boxPaddingX", subtitler.BOX_PADDING_X),
         ("boxRadius", subtitler.BOX_RADIUS),
         ("boxNeighborGap", subtitler.BOX_NEIGHBOR_GAP),
@@ -110,3 +109,42 @@ def test_fatores_de_tamanho_iguais():
 )
 def test_as_regras_de_contraste_existem_na_tela(frase_ts):
     assert frase_ts in _FONTE
+
+
+@pytest.mark.parametrize(
+    "nome,valor",
+    [
+        ("CAPTION_Y_DEFAULT", clip_style.CAPTION_Y_DEFAULT),
+        ("CAPTION_Y_MIN", clip_style.CAPTION_Y_MIN),
+        ("CAPTION_Y_MAX", clip_style.CAPTION_Y_MAX),
+    ],
+)
+def test_limites_da_altura_da_legenda_iguais(nome, valor):
+    assert int(re.search(rf"export const {nome} = (\d+)", _FONTE).group(1)) == valor
+
+
+def test_altura_padrao_e_a_de_sempre():
+    assert clip_style.CAPTION_Y_DEFAULT == subtitler.caption_geometry("fullscreen").center_y
+
+
+@pytest.mark.parametrize(
+    "nome,valor",
+    [
+        ("WATERMARK_MIN_WIDTH", clip_style.WATERMARK_MIN_WIDTH),
+        ("WATERMARK_MAX_WIDTH", clip_style.WATERMARK_MAX_WIDTH),
+        ("WATERMARK_MIN_OPACITY", clip_style.WATERMARK_MIN_OPACITY),
+    ],
+)
+def test_limites_da_marca_dagua_iguais(nome, valor):
+    assert float(re.search(rf"export const {nome} = ([\d.]+)", _FONTE).group(1)) == valor
+
+
+def test_layouts_da_marca_dagua_iguais():
+    bloco = re.search(r"export const WATERMARK_LAYOUTS = \[(.*?)\]", _FONTE).group(1)
+    assert tuple(re.findall(r'"(\w+)"', bloco)) == clip_style.WATERMARK_LAYOUTS
+
+
+def test_padrao_da_marca_dagua_igual():
+    bloco = re.search(r"export function defaultWatermark.*?\n\}", _FONTE, re.S).group(0)
+    fora = clip_style.WatermarkPlacement()
+    assert f"x: {fora.x}, y: {fora.y}" in bloco

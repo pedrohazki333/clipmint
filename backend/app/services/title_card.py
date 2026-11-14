@@ -22,8 +22,13 @@ from app.services.safe_area import Rect, unsafe_areas
 logger = logging.getLogger(__name__)
 
 # ─── Layout A: medidas no quadro de 1080x1920 ─────────────────────────────────
-TITLE_X, TITLE_Y = 53, 197
-TITLE_MAX_RIGHT = 909
+# Canto superior esquerdo, dentro da área que o celular mostra. Num celular mais alto que
+# 9:16 (a maioria), o TikTok amplia o vídeo até a altura da tela e corta ~95px de cada
+# lateral: a margem antiga de 53px sumia, e o título ficava colado na borda. Em x=140 sobra
+# uma margem visível parecida com a de antes. O topo em 290 deixa folga abaixo da barra de
+# pesquisa, que nesses celulares desce até y≈180 do quadro.
+TITLE_X, TITLE_Y = 140, 290
+TITLE_MAX_RIGHT = 940
 TITLE_SIZE = 72
 TITLE_LINE_HEIGHT = 1.32
 TITLE_PAD_X, TITLE_PAD_Y = 24, 8
@@ -115,8 +120,8 @@ BAND_HANDLE_COLOR = "#C9C9CF"
 BAND_HANDLE_GAP = 12
 # A faixa cruza a coluna da direita do TikTok (y de 800 a 1500), então o texto tem o
 # mesmo limite do título do layout A.
-BAND_TEXT_X = TITLE_X
-BAND_TEXT_RIGHT = TITLE_MAX_RIGHT
+BAND_TEXT_X = 53
+BAND_TEXT_RIGHT = 909
 
 
 class BandLayout(NamedTuple):
@@ -234,7 +239,8 @@ def generate_fullscreen_title(
     """
     Título e @ do layout A, numa imagem com fundo transparente.
 
-    Cada linha tem a própria caixa, com a largura do próprio texto. Devolve None
+    Cada linha tem a própria caixa, com a largura do próprio texto, alinhada à esquerda.
+    Devolve None
     quando não há nada a desenhar, e o render simplesmente não sobrepõe imagem.
     """
     texto = clean_title(title) if style.titulo.ligado else ""

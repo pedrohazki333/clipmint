@@ -65,7 +65,7 @@ export function styleWithChoice(base: ClipStyle, value: CaptionChoice): ClipStyl
 /** Os nomes curtos dos layouts, para os cartões. O longo fica em LAYOUT_LABELS. */
 export const LAYOUT_SHORT: Record<LayoutMode, string> = {
   fullscreen: "Tela cheia",
-  cover: "Capa + faixa",
+  cover: "Capa + banner",
   streamer: "Facecam",
   crop: "Crop 9:16",
   original: "Original",

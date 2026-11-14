@@ -12,7 +12,6 @@ export const INK = "#0B0B0C";
 export const OUTLINE = "#000000";
 export const WHITE = "#FFFFFF";
 export const MIN_CONTRAST = 4.5;
-export const BAND_HANDLE_COLOR = "#C9C9CF";
 
 export const PALETTE: Record<string, string> = {
   rosa: "#FF395E",
@@ -23,24 +22,92 @@ export const PALETTE: Record<string, string> = {
 
 export const DEFAULT_FONT_KEY = "archivo";
 
+/**
+ * O centro da legenda, em pixels do quadro de 1080x1920. Os limites a mantêm fora do
+ * topo e da base que a interface do TikTok cobre.
+ */
+export const CAPTION_Y_DEFAULT = 1205;
+export const CAPTION_Y_MIN = 260;
+export const CAPTION_Y_MAX = 1450;
+
+/** Layouts em que a altura escolhida vale; os outros posicionam a legenda sozinhos. */
+export function captionHeightApplies(layout: string): boolean {
+  return layout !== "original" && layout !== "streamer";
+}
+
+export function clampCaptionY(y: number): number {
+  return Math.round(Math.min(CAPTION_Y_MAX, Math.max(CAPTION_Y_MIN, y)));
+}
+
 export type CaptionEstilo = "caixa" | "cor";
 export type CaptionTamanho = "P" | "M" | "G";
 
+/** Layouts em que a arte da conta (marca d'água do clipe) pode entrar. */
+export const WATERMARK_LAYOUTS = ["fullscreen", "cover", "crop", "original", "streamer"] as const;
+export type WatermarkLayout = (typeof WATERMARK_LAYOUTS)[number];
+export const WATERMARK_MIN_WIDTH = 0.05;
+export const WATERMARK_MAX_WIDTH = 0.6;
+export const WATERMARK_MIN_OPACITY = 0.1;
+
+/** Onde a arte fica: centro e largura em frações do quadro, como o render usa. */
+export interface WatermarkPlacement {
+  ligado: boolean;
+  x: number;
+  y: number;
+  largura: number;
+  opacidade: number;
+}
+
+/** O padrão de cada layout: só o streamer começa com a arte, como era antes. */
+export function defaultWatermark(layout: string): WatermarkPlacement {
+  if (layout === "streamer") {
+    return { ligado: true, x: 0.5, y: 0.794, largura: 0.185, opacidade: 0.7 };
+  }
+  return { ligado: false, x: 0.8, y: 0.12, largura: 0.185, opacidade: 0.7 };
+}
+
+/** A posição deste layout, com o padrão se o estilo veio sem ela. */
+export function watermarkFor(style: ClipStyle, layout: string): WatermarkPlacement {
+  return style.marca_dagua?.[layout as WatermarkLayout] ?? defaultWatermark(layout);
+}
+
+export function withWatermark(
+  style: ClipStyle,
+  layout: string,
+  mudanca: Partial<WatermarkPlacement>,
+): ClipStyle {
+  const todos = Object.fromEntries(
+    WATERMARK_LAYOUTS.map((l) => [l, watermarkFor(style, l)]),
+  ) as Record<WatermarkLayout, WatermarkPlacement>;
+  const atual = todos[layout as WatermarkLayout];
+  if (!atual) return style;
+  const novo = { ...atual, ...mudanca };
+  novo.x = Math.min(1, Math.max(0, novo.x));
+  novo.y = Math.min(1, Math.max(0, novo.y));
+  novo.largura = Math.min(WATERMARK_MAX_WIDTH, Math.max(WATERMARK_MIN_WIDTH, novo.largura));
+  novo.opacidade = Math.min(1, Math.max(WATERMARK_MIN_OPACITY, novo.opacidade));
+  return { ...style, marca_dagua: { ...todos, [layout]: novo } };
+}
+
 export interface ClipStyle {
   marca: string;
-  legenda: { cor: string; estilo: CaptionEstilo; tamanho: CaptionTamanho };
+  legenda: { cor: string; estilo: CaptionEstilo; tamanho: CaptionTamanho; altura: number };
   titulo: { ligado: boolean; fundo: string; texto: string };
   arroba: { texto: string; ligado: boolean };
   fonte: string;
+  marca_dagua: Record<WatermarkLayout, WatermarkPlacement>;
 }
 
 export function defaultStyle(): ClipStyle {
   return {
     marca: DEFAULT_BRAND,
-    legenda: { cor: DEFAULT_BRAND, estilo: "caixa", tamanho: "M" },
+    legenda: { cor: DEFAULT_BRAND, estilo: "caixa", tamanho: "M", altura: CAPTION_Y_DEFAULT },
     titulo: { ligado: true, fundo: INK, texto: WHITE },
     arroba: { texto: "", ligado: true },
     fonte: DEFAULT_FONT_KEY,
+    marca_dagua: Object.fromEntries(
+      WATERMARK_LAYOUTS.map((l) => [l, defaultWatermark(l)]),
+    ) as Record<WatermarkLayout, WatermarkPlacement>,
   };
 }
 
@@ -49,22 +116,25 @@ export const MEASURES = {
   canvasW: 1080,
   canvasH: 1920,
   previewScale: 0.375,
-  titleX: 53,
-  titleY: 197,
-  titleMaxRight: 909,
+  titleX: 140,
+  titleY: 290,
+  titleMaxRight: 940,
   titleSize: 72,
   titleLineHeight: 1.32,
   titlePadX: 24,
   titlePadY: 8,
   handleSize: 32,
   handleGap: 14,
-  bandY: 800,
-  bandH: 256,
-  bandBorder: 8,
-  bandTitleSize: 67,
-  bandLineHeight: 1.12,
-  bandHandleSize: 29,
-  bandHandleGap: 12,
+  // "Capa + banner": a capa vai até 768, o banner fica centrado nessa emenda e a faixa
+  // do @ encosta embaixo dele (layout.generate_banner e generate_divider_bar).
+  coverH: 768,
+  bannerTitleSize: 60,
+  bannerLineHeight: 1.3,
+  bannerPadY: 34,
+  barH: 54,
+  barTextFrac: 0.4,
+  barTracking: 0.18,
+  barGap: 2.4,
   captionY: 1205,
   captionSizeFullscreen: 88,
   captionSizeCover: 80,
@@ -94,13 +164,6 @@ export function contrastRatio(a: string, b: string): number {
   };
   const [claro, escuro] = [luminance(a), luminance(b)].sort((x, y) => y - x);
   return (claro + 0.05) / (escuro + 0.05);
-}
-
-/** O @ da faixa fica no cinza da especificação, salvo onde ele não se lê. */
-export function bandHandleColor(style: ClipStyle): string {
-  return contrastRatio(BAND_HANDLE_COLOR, style.titulo.fundo) >= MIN_CONTRAST
-    ? BAND_HANDLE_COLOR
-    : style.titulo.texto;
 }
 
 /**

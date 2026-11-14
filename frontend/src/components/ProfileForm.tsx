@@ -1,14 +1,14 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 
 import { AVATARS, AVATAR_LABEL, AvatarIcon, avatarKey } from "@/lib/avatars";
 import { PUBLIC_NICHES } from "@/lib/features";
 import { layoutAllowed, layoutsFor } from "@/lib/layouts";
 import { PERSONAL_NICHES } from "@/personal";
-import { createProfile, getApiErrorMessage, updateProfile } from "@/lib/api";
+import { createProfile, getApiErrorMessage, getClipWatermarkUrl, updateProfile } from "@/lib/api";
 import {
   applyBrandDraft,
   brandSujo,
@@ -95,6 +95,23 @@ export default function ProfileForm({ profile }: Props) {
       cancelado = true;
     };
   }, [sourceType, profile?.id]);
+
+  // A arte da marca d'água do clipe, para a prévia do estilo: a recém-escolhida (antes
+  // de salvar) ou a que já está gravada neste perfil.
+  const arteLocal = useMemo(
+    () => (brand.clipWatermark.file ? URL.createObjectURL(brand.clipWatermark.file) : null),
+    [brand.clipWatermark.file],
+  );
+  useEffect(() => {
+    return () => {
+      if (arteLocal) URL.revokeObjectURL(arteLocal);
+    };
+  }, [arteLocal]);
+  const arteDaMarca =
+    arteLocal ??
+    (brand.clipWatermark.saved && !brand.clipWatermark.remove && profile?.id
+      ? getClipWatermarkUrl({ source: sourceType, profileId: profile.id })
+      : null);
 
   function mudarMarca(v: BrandDraft) {
     tocouNaMarca.current = true;
@@ -296,6 +313,8 @@ export default function ProfileForm({ profile }: Props) {
           mode={subtitle}
           fonts={fonts}
           disabled={salvando}
+          layouts={layoutsFor(sourceType)}
+          watermarkUrl={arteDaMarca}
         />
 
         {/*

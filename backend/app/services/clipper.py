@@ -3,12 +3,10 @@ Serviço de corte e composição de clips usando FFmpeg.
 
 Layout final 1080x1920:
   - Capa estática no topo (print de expressão marcante — layout.generate_cover)
-  - Banner de título (retângulo vermelho — layout.generate_banner) sobre a emenda
-  - Faixa da conta logo abaixo do banner, com o @ repetido (só quando o nicho
-    tem um nome configurado — layout.generate_divider_bar, a mesma do streamer)
-  - Vídeo rodando embaixo, com legendas. O crop 9:16 é dinâmico (face tracking)
-    quando settings.face_tracking_enabled está ligado; caso contrário fica fixo
-    no centro do frame.
+  - Banner de título (layout.generate_banner, nas cores do estilo) sobre a emenda
+  - Faixa da conta logo abaixo do banner, com o @ repetido (só quando o estilo
+    tem um @ — layout.generate_divider_bar, a mesma do streamer)
+  - Vídeo rodando embaixo, com legendas e o rosto acompanhado (face tracking).
 
 Filtergraph: [sendcmd →] crop → scale → pad(canvas) → overlay(capa)
              → overlay(banner) → overlay(faixa) → ass → setsar
@@ -28,9 +26,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from app.clip_style import ClipStyle
+from app.clip_style import ClipStyle, WatermarkPlacement
 from app.config import settings
-from app.services.face_tracker import track_faces, static_tracking, SNAP_THRESHOLD
+from app.services.face_tracker import track_faces, SNAP_THRESHOLD
 from app.services.facecam import (
     CamPhase,
     FacecamRect,
@@ -157,138 +155,53 @@ async def cut_and_crop(
     subtitle_mode: str,
     banner_text: str = "",
     source_type: str | None = None,
-    # Perfil que originou o clipe. Decide de qual pasta vêm os presets de
-    # marca; None = os do nicho, que é o comportamento de sempre.
+    # Perfil que originou o clipe. Decide de qual pasta vêm a logo e os presets.
     profile_id: str | None = None,
     style: Optional[ClipStyle] = None,
 ) -> tuple[str, int]:
     """
-    Corta o segmento e monta o clip final: capa + banner + vídeo com face
-    tracking e legendas.
+    Layout "Capa + banner": a capa com o rosto em cima, o banner do título sobre a
+    emenda, a faixa do @ logo abaixo dele e quem fala embaixo, com legenda.
 
-    Args:
-        job_id: ID do job para logging e organização dos arquivos.
-        clip_id: ID do clip para nomeação do arquivo de saída.
-        video_path: Caminho do vídeo original.
-        start_time: Início do clip em segundos.
-        end_time: Fim do clip em segundos.
-        words: Lista de palavras com timestamps para geração de legendas.
-        subtitle_mode: 'word_highlight', 'traditional', ou 'none'.
-        banner_text: Título exibido no retângulo vermelho (vazio = sem banner).
+      ┌──────────────┐ 0
+      │     CAPA     │  quadro parado do rosto mais expressivo do clipe
+      ├──[ BANNER ]──┤ 768  centrado na emenda; a faixa do @ encosta embaixo dele
+      │  QUEM FALA   │  com face tracking e a legenda em y≈1205
+      └──────────────┘ 1920
 
-    Returns:
-        Tupla (output_path, file_size_bytes).
+    As cores e a fonte do banner e da faixa vêm do estilo do clipe, o mesmo da tela
+    de estilo: fundo e texto do título no banner, fundo do título e cor da marca na
+    faixa. Título desligado tira o banner; @ desligado ou vazio tira a faixa.
     """
+    style = style or ClipStyle()
     clip_dir = settings.clips_dir / job_id
     clip_dir.mkdir(parents=True, exist_ok=True)
-
     duration = end_time - start_time
     logger.info(
-        f"[{job_id}] Cutting clip {clip_id}: "
-        f"[{start_time:.1f}s–{end_time:.1f}s] ({duration:.1f}s)"
+        f"[{job_id}] Capa + banner {clip_id}: [{start_time:.1f}s–{end_time:.1f}s] ({duration:.1f}s)"
     )
 
-    # Detecta marcas de terceiros primeiro (a capa precisa das regiões);
-    # face tracking + capa rodam em paralelo na sequência
-    watermark = user_watermark_path(source_type, profile_id)
-    brand = await asyncio.to_thread(
-        detect_brand_regions, video_path, start_time, end_time
+    inputs, parts, src_label, n_inputs = await _brand_layers(
+        video_path, start_time, end_time, source_type, profile_id
     )
-    qr_regions = brand["qr"]
-    all_regions = brand["qr"] + brand["static"]
-
+    # Um depois do outro: o tracker e a capa carregam o MediaPipe.
+    crop_filter = await _face_crop_filter(
+        job_id, clip_id, video_path, start_time, end_time, clip_dir, VIDEO_W / VIDEO_H
+    )
+    brand = await asyncio.to_thread(detect_brand_regions, video_path, start_time, end_time)
     cover_path = str(clip_dir / f"{clip_id}_cover.png")
-    cover_job = asyncio.to_thread(
+    cover_method = await asyncio.to_thread(
         generate_cover, video_path, start_time, end_time, cover_path,
-        watermark_path=watermark,
+        watermark_path=user_watermark_path(source_type, profile_id),
         qr_regions=brand["qr"],
         static_regions=brand["static"],
     )
-    if settings.face_tracking_enabled:
-        # Um depois do outro: os dois carregam o MediaPipe e extraem quadros, e
-        # juntos competem pela memória sem ganhar nada que se note num render.
-        tracking = await track_faces(video_path, start_time, end_time)
-        cover_method = await cover_job
-    else:
-        tracking = static_tracking()
-        cover_method = await cover_job
-    logger.info(
-        f"[{job_id}] Face tracking: method={tracking['method']}, "
-        f"keyframes={len(tracking.get('keyframes', []))}, "
-        f"confidence={tracking['confidence']:.0%} | cover: {cover_method} | "
-        f"QR: {len(qr_regions)} | static marks: {len(brand['static'])} | "
-        f"watermark: {'yes' if watermark else 'no'}"
-    )
+    logger.info(f"[{job_id}] Capa de {clip_id}: {cover_method}")
 
-    src_width, src_height = await get_video_dimensions(video_path)
-    logger.info(f"[{job_id}] Source: {src_width}x{src_height}")
-
-    crop_w, crop_h = _crop_dimensions(src_width, src_height, VIDEO_W / VIDEO_H)
-    cy = _clamp(
-        int(src_height * tracking["center_y"] - crop_h / 2), 0, src_height - crop_h
-    )
-
-    keyframes = tracking.get("keyframes", [])
-    if tracking["method"] == "mediapipe" and len(keyframes) >= 2:
-        # Crop dinâmico: sendcmd atualiza o x do crop ao longo do tempo
-        cmd_path = str(clip_dir / f"{clip_id}_track.cmd")
-        x0 = _write_track_commands(cmd_path, keyframes, duration, src_width, crop_w)
-        crop_filter = (
-            f"sendcmd=f={_escape_filter_path(cmd_path)},"
-            f"crop@dyn={crop_w}:{crop_h}:{x0}:{cy}"
-        )
-    else:
-        x0 = _crop_x(tracking["center_x"], src_width, crop_w)
-        crop_filter = f"crop={crop_w}:{crop_h}:{x0}:{cy}"
-
-    # ── Monta o filter_complex ────────────────────────────────────────────────
-    inputs = ["-ss", str(start_time), "-i", video_path]
-    n_inputs = 1
-    parts: list[str] = []
-
-    # Neutralização de marcas de terceiros ANTES do crop (coordenadas da
-    # fonte): delogo borra QRs e logos de canal; a logo do usuário é
-    # sobreposta nos QRs. Como acontece pré-crop, acompanha o face tracking.
-    src_label = "0:v"
-    if all_regions:
-        delogos = ",".join(
-            _delogo_filter(x, y, w, h, src_width, src_height)
-            for (x, y, w, h) in all_regions
-        )
-        parts.append(f"[{src_label}]{delogos}[clean]")
-        src_label = "clean"
-
-        if watermark and qr_regions:
-            from PIL import Image
-
-            logo_w, logo_h = Image.open(watermark).size
-            wm_idx = n_inputs
-            inputs += ["-i", watermark]
-            n_inputs += 1
-
-            wm_labels = [f"wm{i}" for i in range(len(qr_regions))]
-            if len(qr_regions) > 1:
-                parts.append(
-                    f"[{wm_idx}:v]split={len(qr_regions)}"
-                    + "".join(f"[{l}]" for l in wm_labels)
-                )
-            else:
-                parts.append(f"[{wm_idx}:v]null[{wm_labels[0]}]")
-
-            for i, (x, y, w, h) in enumerate(qr_regions):
-                scale = min(w * 0.95 / logo_w, h * 0.95 / logo_h)
-                lw = max(2, int(logo_w * scale) // 2 * 2)
-                lh = max(2, int(logo_h * scale) // 2 * 2)
-                ox = x + (w - lw) // 2
-                oy = y + (h - lh) // 2
-                parts.append(f"[{wm_labels[i]}]scale={lw}:{lh}[ws{i}]")
-                parts.append(f"[{src_label}][ws{i}]overlay={ox}:{oy}[qr{i}]")
-                src_label = f"qr{i}"
-
-    # vídeo → área inferior do canvas (pad preserva fps/timing do vídeo)
     cover_idx = n_inputs
     inputs += ["-i", cover_path]
     n_inputs += 1
+    # Vídeo na área de baixo do canvas (o pad preserva fps e timing do vídeo).
     parts.append(
         f"[{src_label}]{crop_filter},"
         f"scale={VIDEO_W}:{VIDEO_H}:flags=lanczos,"
@@ -297,13 +210,14 @@ async def cut_and_crop(
     parts.append(f"[base][{cover_idx}:v]overlay=0:0[withcover]")
     last_label = "withcover"
 
-    bar_bottom = COVER_H  # onde a faixa da conta encosta, se não houver banner
+    bar_bottom = COVER_H  # onde a faixa encosta, se não houver banner
 
-    if banner_text.strip():
+    titulo = banner_text.strip() if style.titulo.ligado else ""
+    if titulo:
         banner_path = str(clip_dir / f"{clip_id}_banner.png")
         _, banner_h = await asyncio.to_thread(
-            generate_banner, banner_text, banner_path, None, None, None,
-            source_type, profile_id,
+            generate_banner, titulo, banner_path,
+            style.titulo.fundo, style.titulo.texto, style.fonte,
         )
         banner_y = BANNER_CENTER_Y - banner_h // 2
         bar_bottom = banner_y + banner_h
@@ -316,41 +230,35 @@ async def cut_and_crop(
         )
         last_label = "withbanner"
 
-    # Faixa da conta, colada na borda de baixo do banner. Só sai quando o nicho
-    # tem um nome configurado: sem isso a faixa escreveria o nome do canal do
-    # vídeo de origem — o dono do podcast, não a conta que publica o clipe.
-    bar_name = load_bar_style(source_type, profile_id).name
-    if bar_name:
+    # A faixa só sai com um @: sem ele ela escreveria o nome do canal de origem, que é
+    # o dono do podcast, e não a conta que publica o clipe.
+    arroba = style.arroba.texto if style.arroba.ligado else ""
+    if arroba:
         bar_path = str(clip_dir / f"{clip_id}_bar.png")
         await asyncio.to_thread(
             generate_divider_bar,
             CANVAS_W, COVER_BAR_H, bar_path, None,
-            bar_name, None, None, None, source_type, profile_id,
+            arroba, style.titulo.fundo, style.marca, style.fonte,
         )
         bar_idx = n_inputs
         inputs += ["-i", bar_path]
         n_inputs += 1
         parts.append(f"[{last_label}][{bar_idx}:v]overlay=0:{bar_bottom}[withbar]")
         last_label = "withbar"
-        logger.info(
-            f"[{job_id}] Faixa da conta {CANVAS_W}x{COVER_BAR_H} em "
-            f"y={bar_bottom} ({bar_name!r})"
-        )
 
+    last_label, n_inputs = _watermark_layer(
+        inputs, parts, last_label, n_inputs, style, "cover", CANVAS_W, CANVAS_H,
+        source_type, profile_id,
+    )
     _subtitle_tail(
         parts, last_label, clip_dir, clip_id, words, start_time, end_time, subtitle_mode,
         style=style, layout="cover",
     )
 
-    chain = ";".join(parts)
-
+    # Input seeking (-ss antes de -i) é exato com re-encode e zera o timestamp do
+    # filtergraph: os keyframes do tracking casam 1:1 com o sendcmd.
     final_path = str(clip_dir / f"{clip_id}.mp4")
-
-    # Input seeking (-ss antes de -i) é frame-accurate com re-encode e zera o
-    # timestamp do filtergraph — os keyframes do tracking casam 1:1 com o sendcmd.
-    return await _encode(
-        job_id, clip_id, inputs, chain, duration, final_path
-    )
+    return await _encode(job_id, clip_id, inputs, ";".join(parts), duration, final_path)
 
 
 #: Maior fração do quadro que o delogo pode cobrir (ver _brand_layers).
@@ -489,7 +397,8 @@ def _subtitle_tail(
             output_path=ass_path,
             style=style,
             geometry=caption_geometry(
-                layout, style.legenda.tamanho, canvas_w, canvas_h, margin_v
+                layout, style.legenda.tamanho, canvas_w, canvas_h, margin_v,
+                altura=style.legenda.altura,
             ),
             family=family,
         )
@@ -677,8 +586,13 @@ async def cut_fullscreen(
     if overlay is not None:
         inputs += ["-i", title_path]
         parts.append(f"[{last_label}][{n_inputs}:v]overlay={overlay.x}:{overlay.y}[titled]")
+        n_inputs += 1
         last_label = "titled"
 
+    last_label, n_inputs = _watermark_layer(
+        inputs, parts, last_label, n_inputs, style, "fullscreen", CANVAS_W, CANVAS_H,
+        source_type, profile_id,
+    )
     _subtitle_tail(
         parts, last_label, clip_dir, clip_id, words, start_time, end_time, subtitle_mode,
         style=style, layout="fullscreen",
@@ -719,7 +633,8 @@ async def cut_vertical(
         f"[{start_time:.1f}s–{end_time:.1f}s] ({duration:.1f}s)"
     )
 
-    inputs, parts, src_label, _ = await _brand_layers(
+    style = style or ClipStyle()
+    inputs, parts, src_label, n_inputs = await _brand_layers(
         video_path, start_time, end_time, source_type, profile_id
     )
 
@@ -736,8 +651,12 @@ async def cut_vertical(
         f"[{src_label}]crop={crop_w}:{crop_h}:{x0}:{y0},"
         f"scale={CANVAS_W}:{CANVAS_H}:flags=lanczos[base]"
     )
+    last_label, _ = _watermark_layer(
+        inputs, parts, "base", n_inputs, style, "crop", CANVAS_W, CANVAS_H,
+        source_type, profile_id,
+    )
     _subtitle_tail(
-        parts, "base", clip_dir, clip_id, words, start_time, end_time, subtitle_mode,
+        parts, last_label, clip_dir, clip_id, words, start_time, end_time, subtitle_mode,
         style=style, layout="crop",
     )
 
@@ -779,15 +698,20 @@ async def cut_original(
         f"em {src_width}x{src_height}"
     )
 
-    inputs, parts, src_label, _ = await _brand_layers(
+    style = style or ClipStyle()
+    inputs, parts, src_label, n_inputs = await _brand_layers(
         video_path, start_time, end_time, source_type, profile_id
     )
 
     # `null` só dá um rótulo à saída: sem nenhum filtro de vídeo, o
     # filter_complex não teria como nomear a cadeia para o -map.
     parts.append(f"[{src_label}]null[base]")
+    last_label, _ = _watermark_layer(
+        inputs, parts, "base", n_inputs, style, "original", src_width, src_height,
+        source_type, profile_id,
+    )
     _subtitle_tail(
-        parts, "base", clip_dir, clip_id, words, start_time, end_time, subtitle_mode,
+        parts, last_label, clip_dir, clip_id, words, start_time, end_time, subtitle_mode,
         style=style, layout="original", canvas_w=src_width, canvas_h=src_height,
     )
 
@@ -1012,22 +936,11 @@ async def cut_and_stack(
         )
         last_label = "withbanneranim"
 
-    # A marca da conta entra depois da faixa e ANTES da legenda: se as duas se
-    # encontrarem, quem tem que continuar legível é a legenda.
-    watermark_art = clip_watermark_path(source_type, profile_id)
-    if watermark_art:
-        extra_inputs += ["-i", watermark_art]
-        parts.extend(
-            _clip_watermark_filters(
-                input_idx=next_input,
-                base_label=last_label,
-                out_label="withwm",
-                canvas_w=geo.canvas_w,
-                canvas_h=geo.canvas_h,
-            )
-        )
-        next_input += 1
-        last_label = "withwm"
+    # A marca da conta entra depois da faixa e ANTES da legenda.
+    last_label, next_input = _watermark_layer(
+        extra_inputs, parts, last_label, next_input, style or ClipStyle(), "streamer",
+        geo.canvas_w, geo.canvas_h, source_type, profile_id,
+    )
 
     _subtitle_tail(
         parts, last_label, clip_dir, clip_id, words, start_time, end_time, subtitle_mode,
@@ -1210,7 +1123,12 @@ def _gameplay_crop_size(
 
 
 def _clip_watermark_filters(
-    input_idx: int, base_label: str, out_label: str, canvas_w: int, canvas_h: int
+    input_idx: int,
+    base_label: str,
+    out_label: str,
+    canvas_w: int,
+    canvas_h: int,
+    placement: WatermarkPlacement,
 ) -> list[str]:
     """
     Filtros que escalam a arte, baixam a opacidade e a assentam sobre o clipe.
@@ -1224,18 +1142,49 @@ def _clip_watermark_filters(
     `colorchannelmixer=aa` multiplica o alfa em vez de substituí-lo — o recorte
     da arte continua recortado, só fica translúcido.
     """
-    width = max(2, round(canvas_w * settings.clip_watermark_width))
-    opacity = min(1.0, max(0.0, settings.clip_watermark_opacity))
-    center_y = round(canvas_h * settings.clip_watermark_center_y)
+    width = max(2, round(canvas_w * placement.largura) // 2 * 2)
+    opacity = min(1.0, max(0.0, placement.opacidade))
+    center_x = round(canvas_w * placement.x)
+    center_y = round(canvas_h * placement.y)
 
     return [
         f"[{input_idx}:v]scale={width}:-1:flags=lanczos,"
         f"format=rgba,colorchannelmixer=aa={opacity:.3f}[cwm]",
-        # overlay_h só é conhecido pelo FFmpeg em tempo de execução, então o
-        # centro vira expressão em vez de número.
-        f"[{base_label}][cwm]overlay=(main_w-overlay_w)/2:"
+        # overlay_w/overlay_h só são conhecidos pelo FFmpeg em tempo de execução,
+        # então o centro vira expressão em vez de número.
+        f"[{base_label}][cwm]overlay={center_x}-overlay_w/2:"
         f"{center_y}-overlay_h/2[{out_label}]",
     ]
+
+
+def _watermark_layer(
+    inputs: list[str],
+    parts: list[str],
+    last_label: str,
+    next_input: int,
+    style: ClipStyle,
+    layout: str,
+    canvas_w: int,
+    canvas_h: int,
+    source_type: str | None,
+    profile_id: str | None,
+) -> tuple[str, int]:
+    """
+    A arte da conta por cima do vídeo, o clipe inteiro, onde o estilo manda neste layout.
+
+    Entra depois do título e ANTES da legenda: se as duas se encontrarem, quem tem que
+    continuar legível é a legenda. Sem arte enviada, ou desligada neste layout, nada
+    muda. Devolve o rótulo e o próximo índice de input.
+    """
+    lugar = style.marca_dagua.get(layout)
+    arte = clip_watermark_path(source_type, profile_id)
+    if not (lugar and lugar.ligado and arte):
+        return last_label, next_input
+    inputs += ["-i", arte]
+    parts.extend(
+        _clip_watermark_filters(next_input, last_label, "withwm", canvas_w, canvas_h, lugar)
+    )
+    return "withwm", next_input + 1
 
 
 def _streamer_caption_margin(geo) -> int:

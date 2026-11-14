@@ -71,14 +71,15 @@ function Composicao({
   mode,
   perfil,
   onTrocarPerfil,
-  coverUrl,
+  watermarkUrl,
 }: {
-  coverUrl: string | null;
   style: ClipStyle;
   layout: LayoutMode;
   mode: SubtitleMode;
   perfil: string | null;
   onTrocarPerfil: () => void;
+  /** A arte da marca d'água do clipe do perfil; null = sem perfil. */
+  watermarkUrl: string | null;
 }) {
   return (
     // Sangra até a borda de cima e a da direita, como uma página de revista: as
@@ -118,7 +119,7 @@ function Composicao({
             <span className="absolute bottom-0 right-0 h-3 w-3 border-b-2 border-r-2 border-mint-strong" />
           </span>
           <div className="overflow-hidden rounded-[6px] shadow-[0_18px_40px_-18px_rgb(0_0_0/0.6)]">
-            <ClipPreview style={style} layout={layout} mode={mode} coverUrl={coverUrl} />
+            <ClipPreview style={style} layout={layout} mode={mode} watermarkUrl={watermarkUrl} />
           </div>
         </div>
         <PerfilDaPrevia nome={perfil} onTrocar={onTrocarPerfil} escuro />
@@ -182,9 +183,8 @@ function VideoIdentificado({
   mode,
   perfil,
   onTrocarPerfil,
-  coverUrl,
+  watermarkUrl,
 }: {
-  coverUrl: string | null;
   meta: MetaState;
   url: string;
   resumo: ResumoLinha[];
@@ -193,6 +193,8 @@ function VideoIdentificado({
   mode: SubtitleMode;
   perfil: string | null;
   onTrocarPerfil: () => void;
+  /** A arte da marca d'água do clipe do perfil; null = sem perfil. */
+  watermarkUrl: string | null;
 }) {
   const dados = meta.status === "ok" ? meta.data : null;
   const carregando = meta.status === "loading" || meta.status === "idle";
@@ -262,7 +264,7 @@ function VideoIdentificado({
           </div>
 
           <div>
-            <ClipPreview style={style} layout={layout} mode={mode} coverUrl={coverUrl} />
+            <ClipPreview style={style} layout={layout} mode={mode} watermarkUrl={watermarkUrl} />
             <PerfilDaPrevia nome={perfil} onTrocar={onTrocarPerfil} />
           </div>
         </div>
@@ -373,10 +375,8 @@ export default function ContextPanel({
   mode,
   perfil,
   onTrocarPerfil,
-  coverUrl,
+  watermarkUrl,
 }: {
-  /** A capa enviada (layout "cover"), para a prévia mostrar. */
-  coverUrl: string | null;
   urlValida: boolean;
   url: string;
   meta: MetaState;
@@ -387,6 +387,8 @@ export default function ContextPanel({
   /** Nome do perfil escolhido; nulo = sem perfil. */
   perfil: string | null;
   onTrocarPerfil: () => void;
+  /** A arte da marca d'água do clipe do perfil; null = sem perfil. */
+  watermarkUrl: string | null;
 }) {
   return (
     <div className="flex flex-col gap-8 xl:min-h-0 xl:flex-1">
@@ -400,7 +402,7 @@ export default function ContextPanel({
           mode={mode}
           perfil={perfil}
           onTrocarPerfil={onTrocarPerfil}
-          coverUrl={coverUrl}
+          watermarkUrl={watermarkUrl}
         />
       ) : (
         <div className="flex flex-col gap-6 xl:min-h-0 xl:shrink">
@@ -410,7 +412,7 @@ export default function ContextPanel({
             mode={mode}
             perfil={perfil}
             onTrocarPerfil={onTrocarPerfil}
-            coverUrl={coverUrl}
+            watermarkUrl={watermarkUrl}
           />
           <Trio />
         </div>

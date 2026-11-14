@@ -205,9 +205,14 @@ def caption_geometry(
     canvas_w: int = 1080,
     canvas_h: int = 1920,
     margin_v: Optional[int] = None,
+    altura: int = 1205,
 ) -> CaptionGeometry:
     """
     A posição da legenda em cada layout.
+
+    `altura` é o centro da legenda no quadro de 1080x1920, escolhido no estilo. Não vale
+    no `original`, que tem a resolução da fonte, nem com `margin_v`, que é de quem calcula
+    a posição pela geometria (o streamer, abaixo da faixa).
 
     `original` mantém a resolução da fonte, que pode ser deitada: a escala sai da menor
     proporção e a legenda desce para perto da borda, onde costuma ficar num vídeo 16:9.
@@ -227,7 +232,7 @@ def caption_geometry(
     if margin_v is not None:
         center_y = canvas_h - margin_v - size // 2
     else:
-        center_y = round(1205 * canvas_h / 1920)
+        center_y = round(altura * canvas_h / 1920)
     return CaptionGeometry(
         canvas_w, canvas_h, center_y, size, round(contorno * k), round(CAPTION_MAX_WIDTH * k)
     )

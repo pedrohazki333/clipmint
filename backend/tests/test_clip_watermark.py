@@ -14,6 +14,7 @@ Duas coisas já quebraram na mão e são o que os testes aqui prendem:
 
 import pytest
 
+from app.clip_style import ClipStyle, WatermarkPlacement, default_watermark
 from app.config import settings
 from app.services.branding import CLIP_WATERMARK_FILE, WATERMARK_FILE, preset_path
 from app.services.clipper import _clip_watermark_filters
@@ -64,10 +65,11 @@ def test_art_is_per_niche(tmp_path, monkeypatch):
 
 # ─── Geometria do overlay ─────────────────────────────────────────────────────
 
-def _filters(canvas_w=1080, canvas_h=1920):
+def _filters(canvas_w=1080, canvas_h=1920, placement=None):
     return _clip_watermark_filters(
         input_idx=2, base_label="withbar", out_label="withwm",
         canvas_w=canvas_w, canvas_h=canvas_h,
+        placement=placement or default_watermark("streamer"),
     )
 
 
@@ -102,7 +104,7 @@ def test_anchored_by_the_center_not_the_top():
     _, overlay = _filters()
 
     assert "overlay_h/2" in overlay
-    assert "(main_w-overlay_w)/2" in overlay
+    assert "540-overlay_w/2" in overlay
 
 
 def test_alpha_is_multiplied_not_replaced():
@@ -110,7 +112,7 @@ def test_alpha_is_multiplied_not_replaced():
     scale, _ = _filters()
 
     assert "format=rgba" in scale
-    assert f"colorchannelmixer=aa={settings.clip_watermark_opacity:.3f}" in scale
+    assert "colorchannelmixer=aa=0.700" in scale
 
 
 def test_labels_are_wired_to_the_chain():
@@ -121,10 +123,32 @@ def test_labels_are_wired_to_the_chain():
     assert overlay.endswith("[withwm]")
 
 
-@pytest.mark.parametrize("opacity,expected", [(2.0, "1.000"), (-1.0, "0.000")])
-def test_opacity_outside_the_range_is_clamped(monkeypatch, opacity, expected):
-    """Um valor absurdo no .env não pode gerar filtro que o FFmpeg recusa."""
-    monkeypatch.setattr(settings, "clip_watermark_opacity", opacity)
-    scale, _ = _filters()
+def test_streamer_continua_como_era_sem_ninguem_escolher_nada():
+    """Quem nunca mexeu na marca tem o streamer de antes: ligada, centrada, a 70%."""
+    estilo = ClipStyle()
+    assert estilo.marca_dagua["streamer"].ligado
+    assert not any(estilo.marca_dagua[l].ligado for l in ("fullscreen", "cover", "crop", "original"))
 
-    assert f"colorchannelmixer=aa={expected}" in scale
+
+def test_posicao_tamanho_e_opacidade_vem_do_estilo():
+    lugar = WatermarkPlacement(ligado=True, x=0.25, y=0.5, largura=0.30, opacidade=0.4)
+    scale, overlay = _filters(placement=lugar)
+    assert "scale=324:-1" in scale
+    assert "colorchannelmixer=aa=0.400" in scale
+    assert "overlay=270-overlay_w/2:960-overlay_h/2" in overlay
+
+
+def test_estilo_salvo_antes_ganha_o_padrao_em_todos_os_layouts():
+    estilo = ClipStyle.model_validate({"marca": "#FFD23F"})
+    assert set(estilo.marca_dagua) == {"fullscreen", "cover", "crop", "original", "streamer"}
+
+
+def test_layout_inventado_e_recusado():
+    with pytest.raises(ValueError):
+        ClipStyle.model_validate({"marca_dagua": {"tiktok": {"ligado": True}}})
+
+
+@pytest.mark.parametrize("campo,valor", [("x", 1.5), ("largura", 0.9), ("opacidade", 0.0)])
+def test_valores_fora_dos_limites_sao_recusados(campo, valor):
+    with pytest.raises(ValueError):
+        WatermarkPlacement(**{campo: valor})

@@ -112,7 +112,10 @@ def test_destaque_do_job_preserva_o_resto_do_estilo_do_perfil(api):
         json={
             "name": "P",
             "source_type": "podcast",
-            "style": {"marca": "#3EC8FF", "legenda": {"cor": "#FFD23F", "estilo": "cor"}},
+            "style": {
+                "marca": "#3EC8FF",
+                "legenda": {"cor": "#FFD23F", "estilo": "cor", "altura": 1400},
+            },
         },
     ).json()
     job = api.post(
@@ -124,6 +127,7 @@ def test_destaque_do_job_preserva_o_resto_do_estilo_do_perfil(api):
     assert estilo.legenda.estilo == "caixa"
     assert estilo.legenda.cor == "#FFD23F"
     assert estilo.marca == "#3EC8FF"
+    assert estilo.legenda.altura == 1400
 
 
 def test_destaque_desconhecido_e_recusado(api):
@@ -232,3 +236,21 @@ def test_migracao_leva_o_rosa_antigo_para_o_coral_e_so_ele(tmp_path, monkeypatch
     assert json.loads(estilos["rosa"]) == {"marca": "#FF395E", "legenda": {"cor": "#FF395E"}}
     assert estilos["amarelo"] == amarelo
     assert estilos["antigo"] is None
+
+
+def test_altura_da_legenda_salva_no_perfil_e_volta_na_leitura(api):
+    """O que a tela de estilo grava ao arrastar a legenda tem que voltar ao reabrir."""
+    perfil = api.post(
+        "/api/profiles",
+        json={"name": "P", "source_type": "podcast", "style": {"legenda": {"altura": 1400}}},
+    ).json()
+    assert api.get(f"/api/profiles/{perfil['id']}").json()["style"]["legenda"]["altura"] == 1400
+
+    estilo = api.get(f"/api/profiles/{perfil['id']}").json()["style"]
+    estilo["legenda"]["altura"] = 1300
+    r = api.put(
+        f"/api/profiles/{perfil['id']}",
+        json={"name": "P", "source_type": "podcast", "style": estilo},
+    )
+    assert r.status_code == 200, r.text
+    assert api.get(f"/api/profiles/{perfil['id']}").json()["style"]["legenda"]["altura"] == 1300

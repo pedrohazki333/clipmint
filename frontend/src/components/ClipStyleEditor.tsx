@@ -1,11 +1,23 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
 import ClipPreview from "@/components/ClipPreview";
 import ColorField from "@/components/ColorField";
 import FontField from "@/components/FontField";
 import {
+  CAPTION_Y_DEFAULT,
+  CAPTION_Y_MAX,
+  CAPTION_Y_MIN,
   PALETTE,
+  WATERMARK_MAX_WIDTH,
+  WATERMARK_MIN_OPACITY,
+  WATERMARK_MIN_WIDTH,
+  captionHeightApplies,
+  clampCaptionY,
   defaultStyle,
+  watermarkFor,
+  withWatermark,
   isHex,
   styleProblems,
   type CaptionEstilo,
@@ -13,6 +25,7 @@ import {
   type ClipStyle,
 } from "@/lib/clipStyle";
 import type { FontOption } from "@/lib/brand";
+import { LAYOUT_LABELS } from "@/lib/layouts";
 import type { LayoutMode, SubtitleMode } from "@/lib/types";
 
 /**
@@ -91,15 +104,38 @@ export default function ClipStyleEditor({
   mode,
   fonts,
   disabled,
+  layouts,
+  watermarkUrl,
 }: {
   value: ClipStyle;
   onChange: (v: ClipStyle) => void;
+  /** O layout padrão do perfil: é com ele que a prévia abre. */
   layout: LayoutMode;
   mode: SubtitleMode;
   fonts: FontOption[];
   disabled?: boolean;
+  /** Os layouts deste nicho, para ver a prévia (e posicionar a marca) em cada um. */
+  layouts: LayoutMode[];
+  /** A arte da marca d'água do clipe; null = nenhuma enviada. */
+  watermarkUrl: string | null;
 }) {
+  // A prévia pode mostrar outro layout sem mudar o padrão do perfil: a marca d'água
+  // tem uma posição por layout, e é aqui que se escolhe qual está sendo ajustada.
+  const [layoutPrevia, setLayoutPrevia] = useState<LayoutMode>(layout);
+  useEffect(() => setLayoutPrevia(layout), [layout]);
+  const previa = layouts.includes(layoutPrevia) ? layoutPrevia : layout;
+  const nomeDaPrevia = LAYOUT_LABELS[previa].nome;
+
+  const marca = watermarkFor(value, previa);
+  const mudarMarca = (mudanca: Parameters<typeof withWatermark>[2]) =>
+    onChange(withWatermark(value, previa, mudanca));
+  const ligadaEm = layouts.filter((l) => watermarkFor(value, l).ligado);
+
   const problemas = styleProblems(value);
+  const alturaVale = captionHeightApplies(previa);
+  const altura = value.legenda.altura ?? CAPTION_Y_DEFAULT;
+  const moverLegenda = (nova: number) =>
+    onChange({ ...value, legenda: { ...value.legenda, altura: clampCaptionY(nova) } });
   const opcoesDeFonte = [
     { key: "archivo", label: "Archivo" },
     ...fonts.filter((f) => f.key !== "archivo"),
@@ -115,8 +151,38 @@ export default function ClipStyleEditor({
 
       <div className="flex flex-col gap-6 lg:flex-row-reverse lg:items-start lg:justify-end">
         <div className="w-full lg:sticky lg:top-4 lg:w-[405px] lg:flex-shrink-0">
-          <ClipPreview style={value} layout={layout} mode={mode} />
-          <p className="mt-2 text-label text-ink-muted">Prévia com texto de exemplo.</p>
+          {layouts.length > 1 && (
+            <div className="mb-2 flex flex-wrap gap-1.5" role="group" aria-label="Layout da prévia">
+              {layouts.map((l) => (
+                <button
+                  key={l}
+                  type="button"
+                  aria-pressed={previa === l}
+                  onClick={() => setLayoutPrevia(l)}
+                  className={`rounded-sm border px-2.5 py-1 text-label transition-colors ${
+                    previa === l
+                      ? "border-mint bg-mint-soft text-ink"
+                      : "border-line bg-inset text-ink-dim hover:border-line-strong"
+                  }`}
+                >
+                  {LAYOUT_LABELS[l].nome}
+                </button>
+              ))}
+            </div>
+          )}
+          <ClipPreview
+            style={value}
+            layout={previa}
+            mode={mode}
+            onMoverLegenda={disabled ? undefined : moverLegenda}
+            watermarkUrl={watermarkUrl}
+            onMoverMarca={disabled ? undefined : (x, y) => mudarMarca({ x, y })}
+          />
+          <p className="mt-2 text-label text-ink-muted">
+            Prévia com texto de exemplo.
+            {alturaVale && mode !== "none" && !disabled && " Arraste a legenda para mudar a altura."}
+            {watermarkUrl && marca.ligado && !disabled && " Arraste a marca d'água para posicioná-la."}
+          </p>
         </div>
 
         <div className="flex min-w-0 flex-1 flex-col gap-5">
@@ -128,7 +194,7 @@ export default function ClipStyleEditor({
               disabled={disabled}
             />
             <p className="text-label text-ink-muted">
-              Aparece na palavra em destaque do título e nas bordas da faixa.
+              Aparece na palavra em destaque do título e no @ da faixa.
             </p>
           </Grupo>
 
@@ -179,6 +245,45 @@ export default function ClipStyleEditor({
                   {tamanho.nome}
                 </button>
               ))}
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between gap-3">
+                <label htmlFor="cm-legenda-altura" className="text-body text-ink-dim">
+                  Altura na tela
+                </label>
+                {altura !== CAPTION_Y_DEFAULT && (
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => moverLegenda(CAPTION_Y_DEFAULT)}
+                    className="text-label text-ink-muted underline-offset-2 hover:text-ink hover:underline disabled:opacity-50"
+                  >
+                    Voltar ao padrão
+                  </button>
+                )}
+              </div>
+              {/* Invertido: à direita a legenda desce, como ela anda na prévia. */}
+              <div className="flex items-center gap-3">
+                <span className="text-label text-ink-muted">Mais alto</span>
+                <input
+                  id="cm-legenda-altura"
+                  type="range"
+                  min={CAPTION_Y_MIN}
+                  max={CAPTION_Y_MAX}
+                  step={5}
+                  value={altura}
+                  disabled={disabled || !alturaVale}
+                  onChange={(e) => moverLegenda(Number(e.target.value))}
+                  aria-valuetext={`${Math.round(((altura - CAPTION_Y_MIN) / (CAPTION_Y_MAX - CAPTION_Y_MIN)) * 100)}% para baixo`}
+                  className="w-full max-w-xs accent-[var(--color-ink)]"
+                />
+                <span className="text-label text-ink-muted">Mais baixo</span>
+              </div>
+              <p className="text-label text-ink-muted">
+                {alturaVale
+                  ? "Desça a legenda se ela cobre o rosto de quem fala. Os limites a mantêm longe da interface do TikTok."
+                  : "Neste layout a legenda tem lugar fixo; a altura vale para tela cheia, capa + banner e crop."}
+              </p>
             </div>
           </Grupo>
 
@@ -242,6 +347,79 @@ export default function ClipStyleEditor({
                 }
                 className="w-full max-w-xs rounded-sm border border-line bg-inset px-3 py-2 text-body text-ink placeholder-ink-muted outline-none focus:border-ink"
               />
+            )}
+          </Grupo>
+
+          <Grupo titulo="Marca d'água do clipe">
+            {!watermarkUrl ? (
+              <p className="text-label text-ink-muted">
+                Envie a arte em &ldquo;Marca d&apos;água do clipe&rdquo;, na seção Marca mais
+                abaixo, e salve. Depois é só escolher aqui em quais layouts ela aparece e
+                arrastá-la na prévia.
+              </p>
+            ) : (
+              <>
+                <label className="flex items-center gap-2 text-body text-ink-dim">
+                  <input
+                    type="checkbox"
+                    checked={marca.ligado}
+                    disabled={disabled}
+                    onChange={(e) => mudarMarca({ ligado: e.target.checked })}
+                  />
+                  Mostrar no layout {nomeDaPrevia}
+                </label>
+                {marca.ligado && (
+                  <>
+                    <div className="flex items-center gap-3">
+                      <label htmlFor="cm-marca-tamanho" className="w-20 text-label text-ink-muted">
+                        Tamanho
+                      </label>
+                      <input
+                        id="cm-marca-tamanho"
+                        type="range"
+                        min={Math.round(WATERMARK_MIN_WIDTH * 100)}
+                        max={Math.round(WATERMARK_MAX_WIDTH * 100)}
+                        step={1}
+                        value={Math.round(marca.largura * 100)}
+                        disabled={disabled}
+                        onChange={(e) => mudarMarca({ largura: Number(e.target.value) / 100 })}
+                        aria-valuetext={`${Math.round(marca.largura * 100)}% da largura do vídeo`}
+                        className="w-full max-w-xs accent-[var(--color-ink)]"
+                      />
+                      <span className="w-10 text-right text-label text-ink-muted">
+                        {Math.round(marca.largura * 100)}%
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <label htmlFor="cm-marca-opacidade" className="w-20 text-label text-ink-muted">
+                        Opacidade
+                      </label>
+                      <input
+                        id="cm-marca-opacidade"
+                        type="range"
+                        min={Math.round(WATERMARK_MIN_OPACITY * 100)}
+                        max={100}
+                        step={5}
+                        value={Math.round(marca.opacidade * 100)}
+                        disabled={disabled}
+                        onChange={(e) => mudarMarca({ opacidade: Number(e.target.value) / 100 })}
+                        aria-valuetext={`${Math.round(marca.opacidade * 100)}%`}
+                        className="w-full max-w-xs accent-[var(--color-ink)]"
+                      />
+                      <span className="w-10 text-right text-label text-ink-muted">
+                        {Math.round(marca.opacidade * 100)}%
+                      </span>
+                    </div>
+                  </>
+                )}
+                <p className="text-label text-ink-muted">
+                  Cada layout guarda a sua posição: troque o layout acima da prévia para
+                  ajustar outro.{" "}
+                  {ligadaEm.length
+                    ? `Aparece em: ${ligadaEm.map((l) => LAYOUT_LABELS[l].nome).join(", ")}.`
+                    : "Não aparece em nenhum layout."}
+                </p>
+              </>
             )}
           </Grupo>
 

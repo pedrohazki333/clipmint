@@ -454,7 +454,8 @@ class Settings(BaseSettings):
     # 15/08/2026 (casamento de 0.977): a arte ocupava 200px de largura num
     # canvas de 1080 e o centro dela ficava a 79.4% da altura, centralizada na
     # horizontal. Frações, e não pixels, para o mesmo enquadramento valer se a
-    # saída deixar de ser 1080x1920.
+    # saída deixar de ser 1080x1920. Hoje é só o PADRÃO do streamer: a posição de
+    # cada layout é do estilo do perfil (ClipStyle.marca_dagua).
     clip_watermark_width: float = 0.185     # largura, em frações da largura
     clip_watermark_center_y: float = 0.794  # centro vertical, em frações da altura
     clip_watermark_opacity: float = 0.70    # 1.0 = opaca; multiplica o alfa da arte

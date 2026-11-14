@@ -85,7 +85,20 @@ def _titulo(tmp_path, title, keyword=None, style=None):
 
 def test_titulo_na_posicao_da_especificacao(tmp_path):
     overlay, _ = _titulo(tmp_path, GANCHOS_REAIS[0])
-    assert (overlay.x, overlay.y) == (53, 197)
+    assert (overlay.x, overlay.y) == (140, 290)
+
+
+#: Quanto um celular de 19,5:9 corta de cada lateral do quadro de 1080x1920.
+_CORTE_LATERAL = round((1080 - 1920 * 9 / 19.5) / 2)
+
+
+@pytest.mark.parametrize("gancho", GANCHOS_REAIS)
+def test_titulo_e_arroba_na_esquerda_e_fora_do_corte_lateral(tmp_path, gancho):
+    overlay, _ = _titulo(tmp_path, gancho, style=ClipStyle(arroba={"texto": "@hzpodclips"}))
+    for rect in overlay.rects:
+        assert rect.x == TITLE_X
+        assert rect.x >= _CORTE_LATERAL + 30
+        assert rect.x + rect.w <= 1080 - _CORTE_LATERAL
 
 
 @pytest.mark.parametrize("gancho", GANCHOS_REAIS)
@@ -412,7 +425,7 @@ def test_tela_cheia_sempre_acompanha_o_rosto(render, monkeypatch):
 
 def test_tela_cheia_sobrepoe_o_titulo_no_lugar_certo(render):
     _tela_cheia()
-    assert "overlay=53:197" in _cadeia(render)
+    assert "overlay=140:290" in _cadeia(render)
 
 
 def test_tela_cheia_sem_titulo_nem_arroba_nao_sobrepoe_nada(render):

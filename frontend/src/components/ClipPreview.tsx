@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 
 import { FONT_STACKS, fontStack } from "@/components/FontField";
 import {
@@ -8,7 +14,9 @@ import {
   MEASURES as M,
   SIZE_FACTORS,
   WHITE,
-  bandHandleColor,
+  captionHeightApplies,
+  clampCaptionY,
+  watermarkFor,
   isHex,
   type ClipStyle,
 } from "@/lib/clipStyle";
@@ -91,20 +99,16 @@ function Pessoa({ tom, zoom = 1, style }: { tom: string; zoom?: number; style?: 
 function Titulo({
   style,
   size,
-  bloco,
 }: {
   style: ClipStyle;
   size: number;
-  /** Na faixa o fundo é a própria faixa; no layout A, cada linha tem a sua caixa. */
-  bloco: boolean;
 }) {
   const fundo = cor(style.titulo.fundo, "#0B0B0C");
   const texto = cor(style.titulo.texto, WHITE);
   const marca = cor(style.marca, DEFAULT_BRAND);
-  const linhas = bloco ? EXEMPLO_LINHAS_B : EXEMPLO_LINHAS_A;
   return (
     <>
-      {linhas.map((linha) => (
+      {EXEMPLO_LINHAS_A.map((linha) => (
         <div key={linha}>
           <span
             style={{
@@ -112,12 +116,8 @@ function Titulo({
               fontSize: px(size),
               color: texto,
               whiteSpace: "nowrap",
-              ...(bloco
-                ? {}
-                : {
-                    background: fundo,
-                    padding: `${px(M.titlePadY)} ${px(M.titlePadX)}`,
-                  }),
+              background: fundo,
+              padding: `${px(M.titlePadY)} ${px(M.titlePadX)}`,
             }}
           >
             {linha.split(" ").map((palavra, i, todas) => (
@@ -160,12 +160,14 @@ function Legenda({
     paintOrder: "stroke fill",
   };
 
+  const centro = captionHeightApplies(layout) ? (style.legenda.altura ?? M.captionY) : M.captionY;
   return (
     <div
       data-preview="legenda"
       style={{
         position: "absolute",
-        top: px(M.captionY),
+        zIndex: 2,
+        top: px(centro),
         left: 0,
         right: 0,
         transform: "translateY(-50%)",
@@ -211,17 +213,17 @@ function Legenda({
   );
 }
 
-function Arroba({ style, faixa }: { style: ClipStyle; faixa: boolean }) {
+function Arroba({ style }: { style: ClipStyle }) {
   if (!style.arroba.ligado) return null;
   const texto = style.arroba.texto.trim() || "@suaconta";
   return (
     <div
       style={{
         ...handleFont(style.fonte),
-        fontSize: px(faixa ? M.bandHandleSize : M.handleSize),
-        color: faixa ? bandHandleColor(style) : WHITE,
-        textShadow: faixa ? undefined : `${px(2)} ${px(2)} ${px(6)} rgba(0,0,0,.66)`,
-        marginTop: px(faixa ? (style.titulo.ligado ? M.bandHandleGap : 0) : M.handleGap),
+        fontSize: px(M.handleSize),
+        color: WHITE,
+        textShadow: `${px(2)} ${px(2)} ${px(6)} rgba(0,0,0,.66)`,
+        marginTop: px(M.handleGap),
         whiteSpace: "nowrap",
       }}
     >
@@ -245,49 +247,76 @@ function LayoutA({ style, mode }: { style: ClipStyle; mode: SubtitleMode }) {
       >
         {style.titulo.ligado && (
           <div style={{ lineHeight: M.titleLineHeight }}>
-            <Titulo style={style} size={M.titleSize} bloco={false} />
+            <Titulo style={style} size={M.titleSize} />
           </div>
         )}
-        <Arroba style={style} faixa={false} />
+        <Arroba style={style} />
       </div>
       <Legenda style={style} layout="fullscreen" mode={mode} />
     </>
   );
 }
 
-function LayoutB({
-  style,
-  mode,
-  coverUrl,
-}: {
-  style: ClipStyle;
-  mode: SubtitleMode;
-  coverUrl?: string | null;
-}) {
+/** O nome da faixa, repetido de ponta a ponta como o render escreve. */
+function FaixaDoArroba({ style, top }: { style: ClipStyle; top: number }) {
+  const fundo = cor(style.titulo.fundo, "#0B0B0C");
   const marca = cor(style.marca, DEFAULT_BRAND);
-  const painel = M.bandY + M.bandH;
+  const nome = style.arroba.texto.trim().toUpperCase();
+  const tamanho = Math.floor(M.barH * M.barTextFrac);
+  const fio = `color-mix(in srgb, ${marca} 18%, ${fundo})`;
+  return (
+    <div
+      data-preview="faixa"
+      style={{
+        position: "absolute",
+        top: px(top),
+        left: 0,
+        right: 0,
+        height: px(M.barH),
+        boxSizing: "border-box",
+        background: fundo,
+        borderTop: `1px solid ${fio}`,
+        borderBottom: `1px solid ${fio}`,
+        overflow: "hidden",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        whiteSpace: "nowrap",
+        ...titleFont(style.fonte),
+        fontSize: px(tamanho),
+        letterSpacing: `${M.barTracking}em`,
+        color: marca,
+      }}
+    >
+      {Array.from({ length: 7 }, (_, i) => (
+        <span key={i} style={{ display: "inline-flex", alignItems: "center", flexShrink: 0 }}>
+          {i > 0 && (
+            <span
+              style={{
+                color: `color-mix(in srgb, ${marca} 45%, ${fundo})`,
+                margin: `0 ${px((tamanho * M.barGap) / 2)}`,
+              }}
+            >
+              •
+            </span>
+          )}
+          {nome}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function LayoutB({ style, mode }: { style: ClipStyle; mode: SubtitleMode }) {
+  const linhas = style.titulo.ligado ? EXEMPLO_LINHAS_B : [];
+  const linhaH = M.bannerTitleSize * M.bannerLineHeight;
+  const bannerH = linhas.length ? linhas.length * linhaH + 2 * M.bannerPadY : 0;
+  const bannerY = M.coverH - bannerH / 2;
+  const temArroba = style.arroba.ligado && style.arroba.texto.trim() !== "";
   return (
     <>
-      {coverUrl ? (
-        // A capa enviada, recortada como o servidor recorta: pelo centro, cheia.
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={coverUrl}
-          alt=""
-          data-preview="capa-enviada"
-          style={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            width: "100%",
-            height: px(M.bandY),
-            objectFit: "cover",
-          }}
-        />
-      ) : (
-        <Pessoa tom="#3a4a6b" zoom={1.1} style={{ top: 0, left: 0, right: 0, height: px(M.bandY) }} />
-      )}
-      {!coverUrl && <div
+      <Pessoa tom="#3a4a6b" zoom={1.1} style={{ top: 0, left: 0, right: 0, height: px(M.coverH) }} />
+      <div
         data-preview="capa-rotulo"
         style={{
           position: "absolute",
@@ -300,35 +329,36 @@ function LayoutB({
           fontSize: 10,
         }}
       >
-        Capa: a reação mais forte do clipe
-      </div>}
-      <Pessoa tom="#5b5247" style={{ top: px(painel), left: 0, right: 0, bottom: 0 }} />
-      <div
-        data-preview="faixa"
-        style={{
-          position: "absolute",
-          top: px(M.bandY),
-          left: 0,
-          right: 0,
-          height: px(M.bandH),
-          boxSizing: "border-box",
-          background: cor(style.titulo.fundo, "#0B0B0C"),
-          borderTop: `${px(M.bandBorder)} solid ${marca}`,
-          borderBottom: `${px(M.bandBorder)} solid ${marca}`,
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "center",
-          paddingLeft: px(M.titleX),
-          paddingRight: px(M.canvasW - M.titleMaxRight),
-        }}
-      >
-        {style.titulo.ligado && (
-          <div style={{ lineHeight: M.bandLineHeight }}>
-            <Titulo style={style} size={M.bandTitleSize} bloco />
-          </div>
-        )}
-        <Arroba style={style} faixa />
+        Capa: o rosto mais expressivo do clipe
       </div>
+      <Pessoa tom="#5b5247" style={{ top: px(M.coverH), left: 0, right: 0, bottom: 0 }} />
+      {linhas.length > 0 && (
+        <div
+          data-preview="banner"
+          style={{
+            position: "absolute",
+            top: px(bannerY),
+            left: 0,
+            right: 0,
+            height: px(bannerH),
+            background: cor(style.titulo.fundo, "#0B0B0C"),
+            color: cor(style.titulo.texto, WHITE),
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            alignItems: "center",
+            ...titleFont(style.fonte),
+            fontSize: px(M.bannerTitleSize),
+            lineHeight: px(linhaH),
+            whiteSpace: "nowrap",
+          }}
+        >
+          {linhas.map((linha) => (
+            <div key={linha}>{linha}</div>
+          ))}
+        </div>
+      )}
+      {temArroba && <FaixaDoArroba style={style} top={linhas.length ? bannerY + bannerH : M.coverH} />}
       <Legenda style={style} layout="cover" mode={mode} />
     </>
   );
@@ -382,13 +412,19 @@ export default function ClipPreview({
   style,
   layout,
   mode,
-  coverUrl,
+  onMoverLegenda,
+  watermarkUrl,
+  onMoverMarca,
 }: {
   style: ClipStyle;
   layout: LayoutMode;
   mode: SubtitleMode;
-  /** No layout "cover", a capa enviada no lugar da figura de exemplo. */
-  coverUrl?: string | null;
+  /** Com ele, a legenda pode ser arrastada na prévia para cima e para baixo. */
+  onMoverLegenda?: (altura: number) => void;
+  /** A arte da conta. Sem ela (ou desligada neste layout), a prévia não mostra marca. */
+  watermarkUrl?: string | null;
+  /** Com ele, a arte pode ser arrastada para qualquer lugar do quadro. */
+  onMoverMarca?: (x: number, y: number) => void;
 }) {
   const largura = M.canvasW * S;
   const altura = M.canvasH * S;
@@ -407,6 +443,58 @@ export default function ClipPreview({
     return () => observador.disconnect();
   }, [largura]);
 
+  // O que está sendo arrastado e, na marca, onde o dedo pegou nela: sem essa folga o
+  // centro da arte pularia para baixo do cursor no primeiro movimento.
+  const arrastando = useRef<{ alvo: "legenda" | "marca"; dx: number; dy: number } | null>(null);
+  const legendaArrastavel =
+    Boolean(onMoverLegenda) && mode !== "none" && captionHeightApplies(layout);
+  const marca = watermarkFor(style, layout);
+  const [arteFalhou, setArteFalhou] = useState(false);
+  useEffect(() => setArteFalhou(false), [watermarkUrl]);
+  const mostraMarca = Boolean(watermarkUrl) && marca.ligado && !arteFalhou;
+  const marcaArrastavel = mostraMarca && Boolean(onMoverMarca);
+
+  // A posição sai do retângulo na tela, que já inclui a escala do quadro.
+  function fracao(e: ReactPointerEvent<HTMLDivElement>): { fx: number; fy: number } {
+    const caixa = e.currentTarget.getBoundingClientRect();
+    return {
+      fx: (e.clientX - caixa.left) / caixa.width,
+      fy: (e.clientY - caixa.top) / caixa.height,
+    };
+  }
+
+  function comecar(e: ReactPointerEvent<HTMLDivElement>) {
+    const alvo = e.target as HTMLElement;
+    const { fx, fy } = fracao(e);
+    if (marcaArrastavel && alvo.closest('[data-preview="marca"]')) {
+      arrastando.current = { alvo: "marca", dx: fx - marca.x, dy: fy - marca.y };
+    } else if (legendaArrastavel && alvo.closest('[data-preview="legenda"]')) {
+      arrastando.current = { alvo: "legenda", dx: 0, dy: 0 };
+    } else {
+      return;
+    }
+    e.currentTarget.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  }
+
+  function mover(e: ReactPointerEvent<HTMLDivElement>) {
+    const atual = arrastando.current;
+    if (!atual) return;
+    const { fx, fy } = fracao(e);
+    if (atual.alvo === "legenda") {
+      onMoverLegenda?.(clampCaptionY(fy * M.canvasH));
+    } else {
+      const limita = (v: number) => Math.round(Math.min(1, Math.max(0, v)) * 1000) / 1000;
+      onMoverMarca?.(limita(fx - atual.dx), limita(fy - atual.dy));
+    }
+  }
+
+  function soltar(e: ReactPointerEvent<HTMLDivElement>) {
+    if (!arrastando.current) return;
+    arrastando.current = null;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+  }
+
   return (
     <div ref={moldura} style={{ width: "100%", maxWidth: largura, height: altura * fator }}>
       <div
@@ -422,13 +510,43 @@ export default function ClipPreview({
           transform: `scale(${fator})`,
           transformOrigin: "top left",
         }}
+        data-arrastavel={
+          [legendaArrastavel && "legenda", marcaArrastavel && "marca"].filter(Boolean).join(" ") ||
+          undefined
+        }
+        onPointerDown={comecar}
+        onPointerMove={mover}
+        onPointerUp={soltar}
+        onPointerCancel={soltar}
       >
         {layout === "fullscreen" ? (
           <LayoutA style={style} mode={mode} />
         ) : layout === "cover" ? (
-          <LayoutB style={style} mode={mode} coverUrl={coverUrl} />
+          <LayoutB style={style} mode={mode} />
         ) : (
           <LayoutSimples style={style} layout={layout} mode={mode} />
+        )}
+        {mostraMarca && (
+          // A arte por cima do título e por baixo da legenda, como o render a assenta.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={watermarkUrl!}
+            alt=""
+            data-preview="marca"
+            draggable={false}
+            onError={() => setArteFalhou(true)}
+            style={{
+              position: "absolute",
+              zIndex: 1,
+              left: px(marca.x * M.canvasW),
+              top: px(marca.y * M.canvasH),
+              width: px(marca.largura * M.canvasW),
+              height: "auto",
+              transform: "translate(-50%, -50%)",
+              opacity: marca.opacidade,
+              userSelect: "none",
+            }}
+          />
         )}
       </div>
     </div>

@@ -70,10 +70,21 @@ def _hex(value: str) -> str:
     return value.upper()
 
 
+#: Onde fica o centro da legenda, em pixels do quadro de 1080x1920. O padrão é o de
+#: sempre; os limites a mantêm fora do topo e da base que a interface do TikTok cobre
+#: (ver services/safe_area.py), mesmo no tamanho grande.
+CAPTION_Y_DEFAULT = 1205
+CAPTION_Y_MIN = 260
+CAPTION_Y_MAX = 1450
+
+
 class CaptionStyle(BaseModel):
     cor: str = DEFAULT_BRAND
     estilo: Literal["caixa", "cor"] = "caixa"
     tamanho: Literal["P", "M", "G"] = "M"
+    # Escolhida pela pessoa: num podcast a altura de sempre pode cair na boca de quem
+    # fala, e só quem conhece o enquadramento do canal sabe onde ela atrapalha menos.
+    altura: int = Field(default=CAPTION_Y_DEFAULT, ge=CAPTION_Y_MIN, le=CAPTION_Y_MAX)
 
     _cor = field_validator("cor")(_hex)
 
@@ -117,6 +128,51 @@ class HandleStyle(BaseModel):
         return (value or "").strip()
 
 
+#: Layouts em que a arte da conta (a marca d'água do clipe) pode entrar.
+WATERMARK_LAYOUTS: tuple[str, ...] = ("fullscreen", "cover", "crop", "original", "streamer")
+WATERMARK_MIN_WIDTH, WATERMARK_MAX_WIDTH = 0.05, 0.60
+WATERMARK_MIN_OPACITY = 0.10
+
+
+class WatermarkPlacement(BaseModel):
+    """
+    Onde e como a arte da conta aparece num layout, o clipe inteiro.
+
+    Tudo em frações do quadro, e não em pixels: o layout original tem a resolução da
+    fonte, que pode ser deitada, e a mesma escolha precisa valer nele. `x` e `y` são o
+    CENTRO da arte, para ela não andar quando a pessoa troca por uma arte mais alta.
+    """
+
+    ligado: bool = False
+    x: float = Field(default=0.80, ge=0.0, le=1.0)
+    y: float = Field(default=0.12, ge=0.0, le=1.0)
+    largura: float = Field(default=0.185, ge=WATERMARK_MIN_WIDTH, le=WATERMARK_MAX_WIDTH)
+    opacidade: float = Field(default=0.70, ge=WATERMARK_MIN_OPACITY, le=1.0)
+
+
+def default_watermark(layout: str) -> WatermarkPlacement:
+    """
+    O de antes desta escolha existir: só o streamer tinha a arte, centrada, com as
+    medidas do clipe de referência (CLIP_WATERMARK_* no .env). Os outros layouts começam
+    sem ela, e quem ligar parte do canto de cima.
+    """
+    if layout == "streamer":
+        from app.config import settings
+
+        return WatermarkPlacement(
+            ligado=True,
+            x=0.5,
+            y=min(1.0, max(0.0, settings.clip_watermark_center_y)),
+            largura=min(WATERMARK_MAX_WIDTH, max(WATERMARK_MIN_WIDTH, settings.clip_watermark_width)),
+            opacidade=min(1.0, max(WATERMARK_MIN_OPACITY, settings.clip_watermark_opacity)),
+        )
+    return WatermarkPlacement()
+
+
+def _default_watermarks() -> dict[str, WatermarkPlacement]:
+    return {layout: default_watermark(layout) for layout in WATERMARK_LAYOUTS}
+
+
 class ClipStyle(BaseModel):
     """O que um perfil diz sobre o visual dos clipes. Medidas ficam no render."""
 
@@ -125,6 +181,18 @@ class ClipStyle(BaseModel):
     titulo: TitleStyle = Field(default_factory=TitleStyle)
     arroba: HandleStyle = Field(default_factory=HandleStyle)
     fonte: str = DEFAULT_FONT
+    # A arte da conta, por layout: cada um tem a sua geometria, e o canto livre de um é
+    # o rosto de outro.
+    marca_dagua: dict[str, WatermarkPlacement] = Field(default_factory=_default_watermarks)
+
+    @field_validator("marca_dagua", mode="after")
+    @classmethod
+    def todos_os_layouts(cls, value: dict[str, WatermarkPlacement]) -> dict[str, WatermarkPlacement]:
+        # Um estilo salvo antes, ou que só mandou um layout, fica com o padrão nos outros.
+        desconhecidos = set(value) - set(WATERMARK_LAYOUTS)
+        if desconhecidos:
+            raise ValueError(f"Layout desconhecido na marca d'água: {', '.join(sorted(desconhecidos))}.")
+        return {layout: value.get(layout) or default_watermark(layout) for layout in WATERMARK_LAYOUTS}
 
     _marca = field_validator("marca")(_hex)
 

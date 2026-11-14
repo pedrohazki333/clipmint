@@ -17,7 +17,7 @@ fontes do branding. Títulos: peso 900, largura 75–78%, caixa alta. Legenda: p
 
 - Quem fala ocupa 1080x1920, com o face tracking existente
   (`services/face_tracker.py`) guiando o recorte 9:16.
-- Título no topo: x=53, y=197, largura máxima até x=909. Fonte de 72px, line-height
+- Título no canto superior esquerdo, dentro da área segura: x=140, y=290, largura máxima até x=940 (era x=53, y=197; ver D143). Fonte de 72px, line-height
   1.32, texto branco dentro de caixa #0B0B0C com padding 8px/24px, uma caixa por
   linha. Uma palavra-chave do título na cor da marca.
 - @ do perfil uma vez só, logo abaixo do título: 32px, peso 700, branco com sombra

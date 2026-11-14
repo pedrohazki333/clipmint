@@ -220,8 +220,6 @@ export interface CreateJobPayload {
    * perfil (ou o padrão, sem perfil). O perfil não muda.
    */
   caption_style?: "caixa" | "cor";
-  /** Só no layout "cover": o id de POST /covers. Omitido = capa escolhida do clipe. */
-  cover_upload_id?: string;
   /** Abre cada clipe com a fala mais forte dele (até 4 s) antes do começo. */
   opening_hook?: boolean;
 }

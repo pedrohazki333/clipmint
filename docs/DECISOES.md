@@ -2162,6 +2162,46 @@ de três linhas só aparecem no clipe de verdade.
 Salvar pela tela foi testado de ponta a ponta com um perfil descartável, apagado no fim, e salvar
 o `hzpodclips` faz o estilo derivado virar linha no banco com os mesmos valores.
 
+### D141. "Capa + banner" volta ao desenho anterior
+
+Testado no celular, o layout B (D138) e a capa enviada pesaram: a capa editada polui a tela
+e a faixa de 256px ocupa espaço demais para o que ela diz. O dono pediu o anterior de volta.
+`cut_and_crop` volta ao pipeline: capa do rosto em 768px, banner centrado na emenda e a
+faixa do @ encostada embaixo dele.
+
+Volta com o que foi corrigido depois: o rosto é sempre acompanhado (era só com
+`face_tracking_enabled`, desligado no `.env`), a limpeza de marcas é a de `_brand_layers`,
+com o teto de área, e as cores e a fonte do banner e da faixa saem do estilo do clipe, e
+não mais de `banner_colors.json` e `bar_style.json`, que a tela de estilo não grava: fundo e
+texto do título no banner, fundo do título e marca na faixa. Título ou @ desligados tiram
+banner ou faixa.
+
+O campo de capa enviada saiu de "Gerar clipes". `cut_cover`, `cover_picker`, a faixa de
+`title_card` e o `POST /covers` ficam no código, sem uso, para voltar se o dono quiser.
+
+### D142. A altura da legenda é escolhida no estilo
+
+Com a capa do layout antigo (D141), quem fala começa em 768px, e a legenda em y=1205 cai
+na boca. Não existe uma altura certa para todo canal: depende de como a câmera enquadra.
+`legenda.altura` é o centro da legenda no quadro de 1080x1920, padrão 1205 (o de sempre,
+então estilos salvos não mudam). Ajusta-se na tela de estilo, com um controle deslizante
+ou arrastando a legenda na prévia.
+
+Limites de 260 a 1450: até no tamanho G a linha fica fora do topo e da base que o TikTok
+cobre (`safe_area`). Vale em tela cheia, capa + banner e crop. No `original` (resolução da
+fonte) e no streamer (abaixo da faixa) a posição sai da geometria, e a altura é ignorada.
+
+### D143. O título da tela cheia entra na área que o celular mostra
+
+No celular, o título do layout A saía colado na borda esquerda e encostado na barra de
+pesquisa. A maioria dos celulares é mais alta que 9:16, e o TikTok amplia o vídeo até a
+altura da tela: num 19,5:9 cortam-se ~95px de cada lateral do quadro de 1080, e a margem
+de 53px sumia. A barra de pesquisa desce até y≈180 do quadro, e o título começava em 197.
+
+O título continua no canto superior esquerdo, alinhado à esquerda, só que em x=140 (largura
+até x=940) e com o topo em y=290. Centrar foi tentado e recusado pelo dono: o desenho é o
+de canto. A faixa do layout B, sem uso desde D141, manteve as medidas antigas.
+
 ---
 
 ## Adiado, com destino definido

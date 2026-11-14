@@ -56,8 +56,8 @@ export default function ClipWatermarkSettings({
             Marca d&apos;água do clipe
           </p>
           <p className="mt-1 text-label text-ink-muted">
-            Sua arte sobre o gameplay, a 70% de opacidade. Só vale para clipes em
-            modo streamer.
+            Sua arte por cima do clipe. Em quais layouts ela aparece, onde, em que
+            tamanho e opacidade se escolhe no Estilo do clipe, acima.
           </p>
         </div>
 
